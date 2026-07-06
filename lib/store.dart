@@ -29,6 +29,12 @@ class ScenarioStore extends ChangeNotifier {
   List<String> inventoryOf(String scenarioId) => _inventory[scenarioId] ?? const [];
   int progressOf(Scenario s) => doneOf(s.scenarioId).length;
 
+  /// 완료한 '기억석 조각' 수(식음 노드 제외) — 진행률·완료 판정용.
+  int stoneProgressOf(Scenario s) {
+    final done = doneOf(s.scenarioId).toSet();
+    return s.stoneNodes.where((n) => done.contains(n.nodeId)).length;
+  }
+
   /// 저장된 탐험·진행 복원 (앱 시작·로그인 직후).
   Future<void> load() async {
     final p = await SharedPreferences.getInstance();

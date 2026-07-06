@@ -147,18 +147,23 @@ class Objective {
   Map<String, dynamic> toJson() => {'order': order, 'hints': hints};
 }
 
-/// 퀘스트 노드 한 개 (= 방문 장소 1곳 = 기억석 조각 1개)
+/// 퀘스트 노드 한 개 (= 방문 장소 1곳).
+/// kind="spot"이면 기억석 조각 노드, kind="food"/"cafe"면 경유 식음 노드(조각 아님).
 class QuestNode {
   final int order;
   final String nodeId;
   final String? name;
+  final String kind; // "spot"(기억석) | "food" | "cafe"
   final double? mapX; // 경도
   final double? mapY; // 위도
   final double? distM;
   final int triggerRadiusM;
-  final String fragmentId;
+  final String fragmentId; // 기억석 조각 id. 식음 노드는 빈 문자열(조각 아님)
   final String npcDialogue;
   final bool isFinale;
+  final int? priceBand; // 식음: 가격대 밴드 1~4(미상 null)
+  final String? priceBandLabel; // 식음: ₩~₩₩₩₩ 표시용
+  final Map<String, dynamic>? coupon; // 식음: 상권 쿠폰
   final Mission? mission; // 타입별 미션(핵심: 노드마다 다른 종류)
   final Quiz? quiz; // 앱 호환: 질문형 미션이면 채워짐
   final Objective? objective; // AR 지령+힌트
@@ -167,6 +172,7 @@ class QuestNode {
     required this.order,
     required this.nodeId,
     required this.name,
+    this.kind = 'spot',
     required this.mapX,
     required this.mapY,
     required this.distM,
@@ -174,22 +180,35 @@ class QuestNode {
     required this.fragmentId,
     required this.npcDialogue,
     required this.isFinale,
+    this.priceBand,
+    this.priceBandLabel,
+    this.coupon,
     this.mission,
     this.quiz,
     this.objective,
   });
 
+  /// 식음(카페·식당) 경유 노드인가 — 기억석 조각 아님.
+  bool get isFood => kind == 'food' || kind == 'cafe';
+
+  /// 기억석 조각 노드인가.
+  bool get isStone => !isFood;
+
   factory QuestNode.fromJson(Map<String, dynamic> j) => QuestNode(
         order: j['order'] ?? 0,
         nodeId: j['node_id'] ?? '',
         name: j['name'],
+        kind: (j['kind'] ?? 'spot').toString(),
         mapX: (j['map_x'] as num?)?.toDouble(),
         mapY: (j['map_y'] as num?)?.toDouble(),
         distM: (j['dist_m'] as num?)?.toDouble(),
         triggerRadiusM: j['trigger_radius_m'] ?? 100,
-        fragmentId: j['fragment_id'] ?? '',
+        fragmentId: j['fragment_id'] ?? '', // 식음 노드는 null → ''
         npcDialogue: j['npc_dialogue'] ?? '',
         isFinale: j['is_finale'] ?? false,
+        priceBand: (j['price_band'] as num?)?.toInt(),
+        priceBandLabel: j['price_band_label'],
+        coupon: j['coupon'] as Map<String, dynamic>?,
         mission: j['mission'] != null ? Mission.fromJson(j['mission'] as Map<String, dynamic>) : null,
         quiz: j['quiz'] != null ? Quiz.fromJson(j['quiz'] as Map<String, dynamic>) : null,
         objective: j['objective'] != null ? Objective.fromJson(j['objective'] as Map<String, dynamic>) : null,
@@ -199,6 +218,7 @@ class QuestNode {
         'order': order,
         'node_id': nodeId,
         'name': name,
+        'kind': kind,
         'map_x': mapX,
         'map_y': mapY,
         'dist_m': distM,
@@ -206,6 +226,9 @@ class QuestNode {
         'fragment_id': fragmentId,
         'npc_dialogue': npcDialogue,
         'is_finale': isFinale,
+        if (priceBand != null) 'price_band': priceBand,
+        if (priceBandLabel != null) 'price_band_label': priceBandLabel,
+        if (coupon != null) 'coupon': coupon,
         if (mission != null) 'mission': mission!.toJson(),
         if (quiz != null) 'quiz': quiz!.toJson(),
         if (objective != null) 'objective': objective!.toJson(),
@@ -270,6 +293,7 @@ class Scenario {
   final String region;
   final List<QuestNode> nodeSequence;
   final String? anchorNodeId;
+  final int? _stoneTotal; // 서버 제공 조각 총수(식음 제외). null이면 노드에서 계산
 
   Scenario({
     required this.scenarioId,
@@ -277,13 +301,21 @@ class Scenario {
     required this.region,
     required this.nodeSequence,
     required this.anchorNodeId,
-  });
+    int? stoneTotal,
+  }) : _stoneTotal = stoneTotal;
+
+  /// 기억석 조각 노드만(식음 제외). 진행률·조각수 표시는 전부 이걸 기준으로.
+  List<QuestNode> get stoneNodes => nodeSequence.where((n) => n.isStone).toList();
+
+  /// 조각 총수 — 서버값 우선, 없으면 관광 노드 수로 폴백.
+  int get stoneTotal => _stoneTotal ?? stoneNodes.length;
 
   factory Scenario.fromJson(Map<String, dynamic> j) => Scenario(
         scenarioId: j['scenario_id'] ?? '',
         title: j['title'] ?? '',
         region: j['region'] ?? '',
         anchorNodeId: j['anchor_node_id'],
+        stoneTotal: (j['stone_total'] as num?)?.toInt(),
         nodeSequence: ((j['node_sequence'] ?? []) as List)
             .map((e) => QuestNode.fromJson(e as Map<String, dynamic>))
             .toList(),
@@ -294,6 +326,7 @@ class Scenario {
         'title': title,
         'region': region,
         'anchor_node_id': anchorNodeId,
+        'stone_total': stoneTotal,
         'node_sequence': nodeSequence.map((n) => n.toJson()).toList(),
       };
 }

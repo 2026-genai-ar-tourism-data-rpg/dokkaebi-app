@@ -23,10 +23,11 @@ class QuestTabScreen extends StatelessWidget {
       listenable: ScenarioStore.I,
       builder: (context, _) {
         final mine = ScenarioStore.I.scenarios;
-        int p(Scenario s) => ScenarioStore.I.progressOf(s);
-        final inProgress = mine.where((s) => p(s) > 0 && p(s) < s.nodeSequence.length).toList();
+        // 진행/완료는 기억석 조각(식음 제외) 기준
+        int p(Scenario s) => ScenarioStore.I.stoneProgressOf(s);
+        final inProgress = mine.where((s) => p(s) > 0 && p(s) < s.stoneTotal).toList();
         final notStarted = mine.where((s) => p(s) == 0).toList();
-        final completed = mine.where((s) => s.nodeSequence.isNotEmpty && p(s) >= s.nodeSequence.length).toList();
+        final completed = mine.where((s) => s.stoneTotal > 0 && p(s) >= s.stoneTotal).toList();
 
         return ListView(
           padding: const EdgeInsets.all(16),
@@ -113,8 +114,8 @@ class _MyScenarioCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final p = ScenarioStore.I.progressOf(s);
-    final total = s.nodeSequence.length;
+    final p = ScenarioStore.I.stoneProgressOf(s);
+    final total = s.stoneTotal;
     final (badgeText, badgeColor) = switch (status) {
       _Status.inProgress => ('진행 중 $p/$total', AppColors.gold),
       _Status.notStarted => ('시작 전', AppColors.purple),

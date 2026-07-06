@@ -112,14 +112,18 @@ class _ScenarioScreenState extends State<ScenarioScreen> {
         builder: (context, _) {
           final done = ScenarioStore.I.doneOf(scn.scenarioId).toSet();
           final inventory = ScenarioStore.I.inventoryOf(scn.scenarioId);
-          final allDone = done.length >= scn.nodeSequence.length && scn.nodeSequence.isNotEmpty;
+          // 진행률·완료는 기억석 조각(식음 제외) 기준
+          final stoneIds = scn.stoneNodes.map((n) => n.nodeId).toSet();
+          final stoneDone = done.where(stoneIds.contains).length;
+          final stoneTotal = scn.stoneTotal;
+          final allDone = stoneTotal > 0 && stoneDone >= stoneTotal;
           return ListView(
             padding: const EdgeInsets.all(12),
             children: [
-              Text('${scn.region} · ${done.length}/${scn.nodeSequence.length}조각',
+              Text('${scn.region} · $stoneDone/$stoneTotal조각',
                   style: Theme.of(context).textTheme.titleMedium),
               const SizedBox(height: 8),
-              ProgressBar(scn.nodeSequence.isEmpty ? 0 : done.length / scn.nodeSequence.length,
+              ProgressBar(stoneTotal == 0 ? 0 : stoneDone / stoneTotal,
                   color: AppColors.purple),
               const SizedBox(height: 10),
               // 연계: 모은 단서·조각
@@ -155,11 +159,16 @@ class _ScenarioScreenState extends State<ScenarioScreen> {
                     ),
                     title: Row(children: [
                       Expanded(child: Text(n.name ?? n.nodeId)),
-                      if (n.isFinale)
+                      if (n.isFood)
+                        Chip(
+                            label: Text(n.kind == 'cafe' ? '☕ 카페' : '🍜 맛집'),
+                            visualDensity: VisualDensity.compact)
+                      else if (n.isFinale)
                         const Chip(label: Text('🏁 피날레'), visualDensity: VisualDensity.compact),
                     ]),
-                    subtitle: Text(
-                        '${n.distM?.toStringAsFixed(0) ?? '-'}m · ${n.fragmentId}${isDone ? ' · 완료' : ''}'),
+                    subtitle: Text(n.isFood
+                        ? '${n.distM?.toStringAsFixed(0) ?? '-'}m · 쉬어가기${n.priceBandLabel != null ? ' · ${n.priceBandLabel}' : ''}'
+                        : '${n.distM?.toStringAsFixed(0) ?? '-'}m · ${n.fragmentId}${isDone ? ' · 완료' : ''}'),
                     trailing: const Icon(Icons.chevron_right),
                     onTap: () => _play(n, inventory),
                   ),

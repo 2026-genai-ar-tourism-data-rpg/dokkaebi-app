@@ -72,7 +72,8 @@ class _QuestPlayScreenState extends State<QuestPlayScreen> {
     if (ok == true) {
       setState(() {
         _collected = true;
-        _granted = [widget.node.fragmentId]; // 조각 획득(REWARDED)
+        // 식음(경유) 노드는 조각 아님 → 빈 fragmentId를 grant하지 않음. UX 상세는 정찬희 TODO.
+        _granted = widget.node.fragmentId.isEmpty ? [] : [widget.node.fragmentId];
       });
     }
   }
