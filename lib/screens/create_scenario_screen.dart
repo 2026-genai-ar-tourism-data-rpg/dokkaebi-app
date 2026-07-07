@@ -103,7 +103,7 @@ class _CreateScenarioScreenState extends State<CreateScenarioScreen> {
         endLat: double.tryParse(_endLat.text),
         endLng: double.tryParse(_endLng.text),
         transport: _transport,
-        wishlistContentIds: _selected.map((s) => s.contentId).toList(),
+        wishlist: _selected, // content_id + 좌표·이름 함께 전달(합성 앵커 배치용)
         budget: int.tryParse(_budget.text),
         withDialogue: _withDialogue,
       );

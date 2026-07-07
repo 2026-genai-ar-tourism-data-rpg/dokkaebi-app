@@ -81,14 +81,16 @@ class ApiClient {
   }
 
   /// 시나리오 생성 — 입력 contract(아키텍처 5-6)를 서버에 전달.
-  /// start/end는 좌표(앱 GPS/카카오 해석). wishlist는 content_id(자동완성 확정분).
+  /// start/end는 좌표(앱 GPS/카카오 해석). wishlist는 자동완성 확정분(content_id + 좌표·이름).
+  /// ⚠️ 좌표를 반드시 함께 보낸다 — 반경 밖 위시를 서버가 합성 앵커로 배치하려면 필수.
+  ///    (좌표 없으면 서버가 배치 불가로 드롭 → 위시가 조용히 무시됨)
   Future<Scenario> generateScenario({
     required double startLat,
     required double startLng,
     double? endLat,
     double? endLng,
     String transport = 'walk',
-    List<String> wishlistContentIds = const [],
+    List<SearchCandidate> wishlist = const [],
     int? budget,
     String region = '종로',
     bool withDialogue = true,
@@ -98,7 +100,14 @@ class ApiClient {
       'start': {'lat': startLat, 'lng': startLng},
       if (endLat != null && endLng != null) 'end': {'lat': endLat, 'lng': endLng},
       'transport': transport,
-      'wishlist': wishlistContentIds.map((c) => {'content_id': c}).toList(),
+      'wishlist': wishlist
+          .map((c) => <String, dynamic>{
+                'content_id': c.contentId,
+                if (c.name != null) 'name': c.name,
+                if (c.lat != null) 'lat': c.lat,
+                if (c.lng != null) 'lng': c.lng,
+              })
+          .toList(),
       if (budget != null) 'budget': budget,
       'region': region,
       'with_dialogue': withDialogue,
