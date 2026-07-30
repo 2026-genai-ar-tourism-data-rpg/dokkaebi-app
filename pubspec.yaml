@@ -19,6 +19,12 @@ publish_to: 'none' # Remove this line if you wish to publish to pub.dev
 version: 1.0.0+1
 
 environment:
+  # Dart SDK 하한만 둔다. Flutter SDK는 팀원 간 버전이 갈려 있어(3.24 ↔ 3.44)
+  # 상한/하한을 박으면 누군가는 pub get 자체가 막힌다.
+  # 대신 버전 의존 API를 코드에서 쓰지 않는 것으로 해결한다:
+  #   - ThemeData.cardTheme 사용 금지 (3.27에서 CardTheme→CardThemeData로 타입 변경)
+  #     → theme.dart의 dokkaebiCardShape를 사용처에서 직접 지정
+  # 새로 버전 의존 API를 만나면 같은 방식으로 회피하고 여기에 적어둘 것.
   sdk: ^3.5.3
 
 # Dependencies specify other packages that your package needs in order to work.
