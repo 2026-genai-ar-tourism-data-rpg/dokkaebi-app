@@ -51,6 +51,13 @@ TextStyle dokkaebiTitle({
       letterSpacing: letterSpacing,
     );
 
+/// Material Card 공용 외형 — ThemeData.cardTheme을 안 쓰는 대신 여기서 통일.
+/// (SDK 버전 간 CardTheme/CardThemeData 타입 분기를 피하기 위함)
+final dokkaebiCardShape = RoundedRectangleBorder(
+  borderRadius: BorderRadius.circular(16),
+  side: const BorderSide(color: AppColors.border),
+);
+
 /// 등급별 색 (전설=금 / 영웅=은은한 금 / 희귀=파랑 / 일반=회색)
 Color tierColor(String tier) {
   switch (tier) {
@@ -94,14 +101,12 @@ ThemeData buildDokkaebiTheme() {
       foregroundColor: AppColors.textPrimary,
       titleTextStyle: dokkaebiTitle(size: 20),
     ),
-    cardTheme: CardThemeData(
-      color: AppColors.surface,
-      elevation: 0,
-      shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(16),
-        side: const BorderSide(color: AppColors.border),
-      ),
-    ),
+    // ⚠️ cardTheme은 일부러 두지 않는다 — SDK 버전 간 타입이 갈린다.
+    //   Flutter ~3.26: cardTheme: CardTheme(...) / 3.27+: cardTheme: CardThemeData(...)
+    //   팀 SDK가 3.24 ↔ 3.44로 섞여 있어 어느 쪽을 써도 반대편 빌드가 깨졌다.
+    //   Material Card 사용처가 1곳뿐이라 그 자리에서 직접 스타일링하는 쪽이 싸다.
+    //   → 공용 카드는 GlowCard/ParchmentCard(Container 기반), Material Card가 필요하면
+    //     아래 dokkaebiCardShape + AppColors.surface를 직접 지정.
     inputDecorationTheme: InputDecorationTheme(
       filled: true,
       fillColor: AppColors.surface,

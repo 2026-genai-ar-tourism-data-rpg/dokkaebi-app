@@ -13,6 +13,7 @@ import 'package:flutter/material.dart';
 import '../api/api_client.dart';
 import '../models/scenario.dart';
 import '../store.dart';
+import '../theme.dart';
 import 'scenario_screen.dart';
 
 class CreateScenarioScreen extends StatefulWidget {
@@ -189,8 +190,13 @@ class _CreateScenarioScreenState extends State<CreateScenarioScreen> {
               padding: EdgeInsets.only(top: 8),
               child: Text('검색 결과 없음', style: TextStyle(color: Colors.grey)),
             ),
+          // 외형은 theme의 cardTheme이 아니라 여기서 지정 — SDK 버전 간
+          // CardTheme/CardThemeData 타입 분기를 피하려 테마에서 뺐다(theme.dart 주석).
           ..._results.map((c) => Card(
                 margin: const EdgeInsets.only(top: 6),
+                color: AppColors.surface,
+                elevation: 0,
+                shape: dokkaebiCardShape,
                 child: ListTile(
                   dense: true,
                   leading: const Icon(Icons.place_outlined),
