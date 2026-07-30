@@ -12,6 +12,7 @@ import '../store.dart';
 import '../theme.dart';
 import '../widgets/ui.dart';
 import 'create_scenario_screen.dart';
+import 'quest_journey_screen.dart';
 import 'scenario_screen.dart';
 
 class QuestTabScreen extends StatelessWidget {
@@ -34,6 +35,12 @@ class QuestTabScreen extends StatelessWidget {
           children: [
             const SectionHeader('QUEST LOG', '퀘스트 일지'),
             const SizedBox(height: 16),
+
+            // 새 퀘스트 시작하기 — 종로의 기억석 플레이 여정(setup→…→엔딩)
+            _StartJourneyButton(scenario: inProgress.isNotEmpty
+                ? inProgress.first
+                : (notStarted.isNotEmpty ? notStarted.first : (mine.isNotEmpty ? mine.first : null))),
+            const SizedBox(height: 20),
 
             // 지역 메인 퀘스트 (지역 챕터 — 운영 스토리)
             const Text('🗡 지역 메인 퀘스트', style: TextStyle(color: AppColors.gold, fontSize: 13, fontWeight: FontWeight.w600)),
@@ -102,6 +109,56 @@ class QuestTabScreen extends StatelessWidget {
           const Text('기억석 2/5 복원', style: TextStyle(color: AppColors.textSecondary, fontSize: 12)),
         ]),
       );
+}
+
+/// 새 퀘스트 시작하기 — 종로의 기억석 플레이 여정 진입 히어로 버튼.
+class _StartJourneyButton extends StatelessWidget {
+  final Scenario? scenario;
+  const _StartJourneyButton({this.scenario});
+
+  @override
+  Widget build(BuildContext context) {
+    return GestureDetector(
+      onTap: () => Navigator.push(
+        context,
+        MaterialPageRoute(builder: (_) => QuestJourneyScreen(scenario: scenario)),
+      ),
+      child: Container(
+        padding: const EdgeInsets.fromLTRB(18, 16, 16, 16),
+        decoration: BoxDecoration(
+          gradient: const LinearGradient(
+            begin: Alignment.topLeft, end: Alignment.bottomRight,
+            colors: [Color(0xFFE8C268), Color(0xFFC89A3A)],
+          ),
+          borderRadius: BorderRadius.circular(16),
+          boxShadow: [BoxShadow(color: const Color(0xFFE8C268).withOpacity(0.3), blurRadius: 22, offset: const Offset(0, 8))],
+        ),
+        child: Row(children: [
+          Container(
+            width: 44, height: 44, alignment: Alignment.center,
+            decoration: BoxDecoration(
+              color: const Color(0xFF17130F).withOpacity(0.85),
+              shape: BoxShape.circle,
+              border: Border.all(color: const Color(0xFFF4C860), width: 1.5),
+            ),
+            child: Text('訓', style: dokkaebiTitle(size: 22, color: const Color(0xFFF4C860))),
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+              Text('새 퀘스트 시작하기',
+                  style: dokkaebiTitle(size: 18, color: const Color(0xFF3A2A08))),
+              const SizedBox(height: 2),
+              Text(scenario != null ? '${scenario!.region} · ${scenario!.title}' : '종로, 잊혀진 글씨의 비밀',
+                  maxLines: 1, overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(color: Color(0xFF5A430E), fontSize: 12, fontWeight: FontWeight.w600)),
+            ]),
+          ),
+          const Icon(Icons.play_circle_fill, color: Color(0xFF3A2A08), size: 30),
+        ]),
+      ),
+    );
+  }
 }
 
 enum _Status { inProgress, notStarted, completed }
