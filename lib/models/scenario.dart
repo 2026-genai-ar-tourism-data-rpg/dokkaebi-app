@@ -159,6 +159,7 @@ class QuestNode {
   final double? distM;
   final int triggerRadiusM;
   final String fragmentId; // 기억석 조각 id. 식음 노드는 빈 문자열(조각 아님)
+  final int? stoneNo; // 기억석 조각 번호(1-base). 식음 노드는 null
   final String npcDialogue;
   final bool isFinale;
   final int? priceBand; // 식음: 가격대 밴드 1~4(미상 null)
@@ -178,6 +179,7 @@ class QuestNode {
     required this.distM,
     required this.triggerRadiusM,
     required this.fragmentId,
+    this.stoneNo,
     required this.npcDialogue,
     required this.isFinale,
     this.priceBand,
@@ -204,6 +206,7 @@ class QuestNode {
         distM: (j['dist_m'] as num?)?.toDouble(),
         triggerRadiusM: j['trigger_radius_m'] ?? 100,
         fragmentId: j['fragment_id'] ?? '', // 식음 노드는 null → ''
+        stoneNo: (j['stone_no'] as num?)?.toInt(),
         npcDialogue: j['npc_dialogue'] ?? '',
         isFinale: j['is_finale'] ?? false,
         priceBand: (j['price_band'] as num?)?.toInt(),
@@ -224,6 +227,7 @@ class QuestNode {
         'dist_m': distM,
         'trigger_radius_m': triggerRadiusM,
         'fragment_id': fragmentId,
+        if (stoneNo != null) 'stone_no': stoneNo,
         'npc_dialogue': npcDialogue,
         'is_finale': isFinale,
         if (priceBand != null) 'price_band': priceBand,
