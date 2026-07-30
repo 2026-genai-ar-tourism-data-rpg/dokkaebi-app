@@ -9,8 +9,10 @@
 // [v1] Scenario · QuestNode + fromJson — 2026-06-18 kys (app-scaffold/kys/v1)
 // ============================================================
 import 'node_schema.dart';
+import 'route_tree.dart';
 
 export 'node_schema.dart';
+export 'route_tree.dart';
 
 /// 퀴즈 (생성 시 고정 콘텐츠)
 class Quiz {
@@ -187,6 +189,10 @@ class QuestNode {
   final String? clue; // 단서 이름(단서설계규칙) — grants의 clue 편의 접근
   final List<String> success; // 성공 판정식(코드 고정)
 
+  // ── 경로 분기 (dokkaebi-ai#24) ──
+  final String pathId; // "main"(본선) | "b1"(샛길)
+  final NodeBranch? branch; // 분기 노드면 갈림길 프롬프트+갈래
+
   QuestNode({
     required this.order,
     required this.nodeId,
@@ -215,6 +221,8 @@ class QuestNode {
     this.hintLadder,
     this.clue,
     this.success = const [],
+    this.pathId = 'main',
+    this.branch,
   });
 
   /// 식음(카페·식당) 경유 노드인가 — 기억석 조각 아님.
@@ -286,6 +294,10 @@ class QuestNode {
             ? HintLadder.fromJson((j['hint_ladder'] as Map).cast<String, dynamic>())
             : null,
         clue: j['clue']?.toString(),
+        pathId: (j['path_id'] ?? 'main').toString(),
+        branch: j['branch'] != null
+            ? NodeBranch.fromJson((j['branch'] as Map).cast<String, dynamic>())
+            : null,
         // success는 판정식 문자열("tap:글씨파편>=1") — 분해하지 않고 그대로 보관
         success: (j['success'] is List)
             ? (j['success'] as List).map((e) => e.toString()).toList()
@@ -320,6 +332,8 @@ class QuestNode {
         if (hintLadder != null) 'hint_ladder': hintLadder!.toJson(),
         if (clue != null) 'clue': clue,
         if (success.isNotEmpty) 'success': success,
+        if (pathId != 'main') 'path_id': pathId,
+        if (branch != null) 'branch': branch!.toJson(),
       };
 }
 
@@ -383,6 +397,10 @@ class Scenario {
   final String? anchorNodeId;
   final int? _stoneTotal; // 서버 제공 조각 총수(식음 제외). null이면 노드에서 계산
 
+  // ── 경로 분기 (dokkaebi-ai#24) — 선형이면 isBranching=false, routeTree=null ──
+  final bool isBranching;
+  final RouteTree? routeTree;
+
   Scenario({
     required this.scenarioId,
     required this.title,
@@ -390,6 +408,8 @@ class Scenario {
     required this.nodeSequence,
     required this.anchorNodeId,
     int? stoneTotal,
+    this.isBranching = false,
+    this.routeTree,
   }) : _stoneTotal = stoneTotal;
 
   /// 기억석 조각 노드만(식음 제외). 진행률·조각수 표시는 전부 이걸 기준으로.
@@ -398,12 +418,34 @@ class Scenario {
   /// 조각 총수 — 서버값 우선, 없으면 관광 노드 수로 폴백.
   int get stoneTotal => _stoneTotal ?? stoneNodes.length;
 
+  QuestNode? nodeById(String nodeId) =>
+      nodeSequence.where((n) => n.nodeId == nodeId).firstOrNull;
+
+  /// **실제 밟는 노드 순서.** 분기 시나리오는 route_tree를 선택대로 순회하고,
+  /// 선형이면 node_sequence 그대로. 화면·진행률은 전부 이걸 기준으로 삼는다.
+  List<QuestNode> playedPath([Map<String, String> choices = const {}]) {
+    final tree = routeTree;
+    if (tree == null || tree.isEmpty) return nodeSequence;
+    return tree.traverse(choices).map(nodeById).whereType<QuestNode>().toList();
+  }
+
+  /// 아직 안 고른 갈림길의 노드들 — "선택 대기" 렌더용.
+  List<QuestNode> pendingBranchNodes(Map<String, String> choices) =>
+      (routeTree?.pendingBranchPoints(choices) ?? const [])
+          .map(nodeById)
+          .whereType<QuestNode>()
+          .toList();
+
   factory Scenario.fromJson(Map<String, dynamic> j) => Scenario(
         scenarioId: j['scenario_id'] ?? '',
         title: j['title'] ?? '',
         region: j['region'] ?? '',
         anchorNodeId: j['anchor_node_id'],
         stoneTotal: (j['stone_total'] as num?)?.toInt(),
+        isBranching: j['is_branching'] ?? false,
+        routeTree: j['route_tree'] != null
+            ? RouteTree.fromJson((j['route_tree'] as Map).cast<String, dynamic>())
+            : null,
         nodeSequence: ((j['node_sequence'] ?? []) as List)
             .map((e) => QuestNode.fromJson(e as Map<String, dynamic>))
             .toList(),
@@ -415,6 +457,13 @@ class Scenario {
         'region': region,
         'anchor_node_id': anchorNodeId,
         'stone_total': stoneTotal,
+        if (isBranching) 'is_branching': isBranching,
+        if (routeTree != null) 'route_tree': routeTree!.toJson(),
         'node_sequence': nodeSequence.map((n) => n.toJson()).toList(),
       };
+}
+
+/// dart:core에는 없는 편의 접근자 (collection 패키지 의존 없이).
+extension _FirstOrNull<E> on Iterable<E> {
+  E? get firstOrNull => isEmpty ? null : first;
 }
