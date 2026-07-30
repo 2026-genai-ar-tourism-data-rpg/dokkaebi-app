@@ -11,6 +11,7 @@ import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 
+import '../game/player_state.dart';
 import '../models/scenario.dart';
 import '../store.dart';
 import '../theme.dart';
@@ -205,17 +206,164 @@ class ScenarioScreen extends StatefulWidget {
 }
 
 class _ScenarioScreenState extends State<ScenarioScreen> {
+  /// 노드 진입 — 게이팅(3절)을 먼저 통과시킨다. **미충족은 차단이 아니라 안내.**
   Future<void> _play(QuestNode n, List<String> inventory) async {
+    final scn = widget.scenario;
+    final state = ScenarioStore.I.stateOf(scn.scenarioId);
+
+    // 갈림길이면 어느 길로 갈지 먼저 받는다
+    if (n.branch != null && !ScenarioStore.I.choicesOf(scn.scenarioId).containsKey(n.nodeId)) {
+      await _askBranch(n);
+      return;
+    }
+
+    if (n.requires.isNotEmpty) {
+      final check = scn.checkEntry(n, state);
+      if (check.needsGuidance) {
+        await _showGuidance(check); // D1/D2 — 안내 모드
+        return;
+      }
+      if (check.softMissing) {
+        // D4 — 진행은 되지만 연계 대사를 못 받는다
+        _snack('${check.missing.map((m) => m.label).join('·')} 없이 가면 도깨비가 알아보지 못하느니.');
+      }
+    }
+
     final granted = await Navigator.push<List<String>>(
       context,
       MaterialPageRoute(
         builder: (_) => QuestPlayScreen(node: n, inventory: inventory),
       ),
     );
-    if (granted != null) {
-      await ScenarioStore.I.completeNode(widget.scenario.scenarioId, n.nodeId, granted);
-    }
+    if (granted == null) return;
+    // 플레이 화면이 준 것 + 노드 스키마 grants를 함께 적용(규칙 5조: 단서는 조각과 동봉)
+    await ScenarioStore.I.completeNode(
+      scn.scenarioId,
+      n.nodeId,
+      [...granted, ...n.effectiveGrants.map((r) => r.toStorageString())],
+    );
   }
+
+  /// 갈림길 선택 — 고른 갈래를 저장하면 이후 동선(playedPath)이 그 길로 바뀐다.
+  Future<void> _askBranch(QuestNode bp) async {
+    final b = bp.branch!;
+    final picked = await showModalBottomSheet<BranchOption>(
+      context: context,
+      backgroundColor: hbBg,
+      shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(22))),
+      builder: (ctx) => SafeArea(
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(20, 16, 20, 20),
+          child: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.start, children: [
+            Text('갈림길', style: hbSerif(20, hbCream, spacing: 0.5)),
+            const SizedBox(height: 8),
+            Text(b.prompt, style: hbSerif(14.5, hbCream2, height: 1.6)),
+            const SizedBox(height: 16),
+            for (final o in b.options)
+              InkWell(
+                onTap: () => Navigator.pop(ctx, o),
+                borderRadius: BorderRadius.circular(12),
+                child: Container(
+                  width: double.infinity,
+                  margin: const EdgeInsets.only(bottom: 9),
+                  padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 13),
+                  decoration: BoxDecoration(
+                    color: o.choiceId == 'main' ? hbTealD.withOpacity(0.14) : hbRed.withOpacity(0.14),
+                    borderRadius: BorderRadius.circular(12),
+                    border: Border.all(color: o.choiceId == 'main' ? hbTealD : hbRed),
+                  ),
+                  child: Text(o.label, style: hbSerif(14, hbCream, height: 1.5)),
+                ),
+              ),
+          ]),
+        ),
+      ),
+    );
+    if (picked == null || !mounted) return;
+    await ScenarioStore.I.chooseBranch(widget.scenario.scenarioId, bp.nodeId, picked.choiceId);
+  }
+
+  /// 안내 모드(D1/D2) — 획득처를 짚어주고 진행판으로 돌려보낸다. 거부가 아니다.
+  Future<void> _showGuidance(RequireCheck c) => showModalBottomSheet<void>(
+        context: context,
+        backgroundColor: hbBg,
+        shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(22))),
+        builder: (ctx) => SafeArea(
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(20, 16, 20, 20),
+            child: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.start, children: [
+              Text(c.isPartial ? '아직 이르니라' : '길을 짚어 주마', style: hbSerif(20, hbCream, spacing: 0.5)),
+              const SizedBox(height: 10),
+              Container(
+                width: double.infinity,
+                padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 13),
+                decoration: BoxDecoration(
+                  color: hbRed.withOpacity(0.10),
+                  borderRadius: BorderRadius.circular(12),
+                  border: Border.all(color: hbRed.withOpacity(0.5)),
+                ),
+                child: Text(c.guidance(), style: hbSerif(14.5, hbCream, height: 1.6)),
+              ),
+              const SizedBox(height: 14),
+              if (c.held.isNotEmpty) ...[
+                Text('이미 지닌 것', style: hbMono(10, hbTeal2, spacing: 2)),
+                const SizedBox(height: 6),
+                Wrap(spacing: 6, runSpacing: 6, children: [
+                  for (final h in c.held) _gateChip(h.label, got: true),
+                ]),
+                const SizedBox(height: 12),
+              ],
+              Text('남은 것 — 미완료 거점', style: hbMono(10, hbRed2, spacing: 2)),
+              const SizedBox(height: 6),
+              Wrap(spacing: 6, runSpacing: 6, children: [
+                for (final m in c.missing) _gateChip(m.label, got: false),
+              ]),
+              if (c.highlightPlaces.isNotEmpty) ...[
+                const SizedBox(height: 12),
+                Text('들러야 할 곳 · ${c.highlightPlaces.join(' · ')}',
+                    style: hbMono(11, hbMuted, spacing: 0.5)),
+              ],
+              const SizedBox(height: 16),
+              SizedBox(
+                width: double.infinity,
+                child: FilledButton(
+                  onPressed: () => Navigator.pop(ctx),
+                  child: Text('진행판으로', style: hbSerif(14.5, hbBg2, w: FontWeight.w700)),
+                ),
+              ),
+            ]),
+          ),
+        ),
+      );
+
+  static Widget _gateChip(String label, {required bool got}) => Container(
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+        decoration: BoxDecoration(
+          color: got ? hbTealD.withOpacity(0.16) : Colors.white.withOpacity(0.04),
+          borderRadius: BorderRadius.circular(999),
+          border: Border.all(color: got ? hbTealD : hbMuted.withOpacity(0.6)),
+        ),
+        child: Text('${got ? '✓' : '✕'} $label',
+            style: hbSerif(12.5, got ? hbTeal3 : hbMuted)),
+      );
+
+  /// 피날레까지 남은 조각 수. 피날레 requires가 있으면 **그 미충족 개수**를 쓴다 —
+  /// stoneTotal은 피날레 노드 자신도 세므로 "남은 조각"으로 쓰면 1개 많아진다.
+  static int _finaleMissing(
+      Scenario scn, PlayerState state, List<QuestNode> stones, Set<String> done) {
+    final f = scn.finaleNode;
+    if (f != null && f.requires.isNotEmpty) {
+      return scn.checkEntry(f, state).missing.length;
+    }
+    // requires 미제공 → 피날레 제외한 조각 노드 중 미완료 수
+    return stones.where((n) => !n.isFinale && !done.contains(n.nodeId)).length;
+  }
+
+  void _snack(String msg) => ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+        content: Text(msg, style: hbSerif(13.5, hbCream)),
+        backgroundColor: hbBg2,
+        behavior: SnackBarBehavior.floating,
+      ));
 
   @override
   Widget build(BuildContext context) {
@@ -227,18 +375,24 @@ class _ScenarioScreenState extends State<ScenarioScreen> {
         builder: (context, _) {
           final done = ScenarioStore.I.doneOf(scn.scenarioId).toSet();
           final inventory = ScenarioStore.I.inventoryOf(scn.scenarioId);
-          final stones = scn.stoneNodes;
+          final state = ScenarioStore.I.stateOf(scn.scenarioId);
+          // **실제 밟는 경로** — 갈림길을 골랐으면 그 갈래만 보인다(선형이면 그대로).
+          final path = ScenarioStore.I.pathOf(scn);
+          final stones = path.where((n) => n.isStone).toList();
           final stoneDone = stones.where((n) => done.contains(n.nodeId)).length;
           final stoneTotal = scn.stoneTotal;
           final allDone = stoneTotal > 0 && stoneDone >= stoneTotal;
-          // 다음 목표 = 시퀀스상 첫 미완료 노드
+          final finaleOpen = scn.finaleUnlocked(state);
+          // 다음 목표 = 경로상 첫 미완료 노드
           QuestNode? next;
-          for (final n in scn.nodeSequence) {
+          for (final n in path) {
             if (!done.contains(n.nodeId)) {
               next = n;
               break;
             }
           }
+          // 대사 연계에 넘길 것 — 조각·단서 이름만(플래그·쿠폰은 제외)
+          final carried = state.carriedNames;
           return ListView(
             padding: const EdgeInsets.fromLTRB(16, 4, 16, 24),
             children: [
@@ -249,19 +403,25 @@ class _ScenarioScreenState extends State<ScenarioScreen> {
 
               // ── C. 다음 목표 CTA ────────────────────────
               if (!allDone && next != null)
-                _NextTarget(node: next, onGo: () => _play(next!, inventory))
+                _NextTarget(node: next, onGo: () => _play(next!, carried))
               else if (allDone)
                 _RestoredBanner(),
               const SizedBox(height: 14),
 
-              // ── 연계 인벤토리(모은 단서) ─────────────────
+              // ── 상태 그래프 — 단서함·성향·쿠폰 ───────────
               if (inventory.isNotEmpty) ...[
-                _InventoryStrip(items: inventory),
+                _StateStrip(state: state),
+                const SizedBox(height: 14),
+              ],
+
+              // ── 피날레 게이팅 안내(하드 requires) ────────
+              if (!finaleOpen && stoneDone > 0) ...[
+                _FinaleLock(missing: _finaleMissing(scn, state, stones, done)),
                 const SizedBox(height: 14),
               ],
 
               // ── D. 동선 지도 ───────────────────────────
-              _RouteMap(nodes: scn.nodeSequence, done: done, nextId: next?.nodeId),
+              _RouteMap(nodes: path, done: done, nextId: next?.nodeId),
               const SizedBox(height: 16),
 
               // ── E. 노드 리스트 (혼불 코스 상세) ─────────
@@ -272,14 +432,20 @@ class _ScenarioScreenState extends State<ScenarioScreen> {
                   Text('코스 상세', style: hbSerif(20, hbCream, spacing: 0.5)),
                 ]),
                 const Spacer(),
+                if (scn.isBranching)
+                  Padding(
+                    padding: const EdgeInsets.only(right: 8),
+                    child: Text('갈림길', style: hbMono(10, hbRed2, spacing: 1.5)),
+                  ),
                 Text('$stoneDone / $stoneTotal', style: hbMono(13, hbIce)),
               ]),
               const SizedBox(height: 10),
-              ...scn.nodeSequence.map((n) => _NodeRow(
+              ...path.map((n) => _NodeRow(
                     node: n,
                     isDone: done.contains(n.nodeId),
                     isNext: n.nodeId == next?.nodeId,
-                    onTap: () => _play(n, inventory),
+                    locked: n.requires.isNotEmpty && !scn.checkEntry(n, state).ok && n.isHardGated,
+                    onTap: () => _play(n, carried),
                   )),
             ],
           );
@@ -410,31 +576,98 @@ class _RestoredBanner extends StatelessWidget {
   }
 }
 
-/// 연계 인벤토리 — 지금까지 모은 단서·조각.
-class _InventoryStrip extends StatelessWidget {
-  final List<String> items;
-  const _InventoryStrip({required this.items});
+/// 상태 그래프 스트립 — 단서함 / 성향(플래그) / 쿠폰·유물을 구분해 보여준다.
+/// 구 _InventoryStrip(문자열 나열)을 대체 — 어휘별로 갈라 대사 연계·엔딩 분기 근거를 드러낸다.
+class _StateStrip extends StatelessWidget {
+  final PlayerState state;
+  const _StateStrip({required this.state});
+
   @override
   Widget build(BuildContext context) {
+    final coupon = state.couponTotal;
     return GlowCard(
       padding: const EdgeInsets.all(14),
       child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-        const Text('🎒 모은 것',
-            style: TextStyle(color: AppColors.textSecondary, fontSize: 12)),
-        const SizedBox(height: 8),
-        Wrap(spacing: 6, runSpacing: 6, children: [
-          for (final i in items)
-            Container(
-              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
-              decoration: BoxDecoration(
-                color: AppColors.surfaceHi,
-                borderRadius: BorderRadius.circular(8),
-                border: Border.all(color: AppColors.border),
-              ),
-              child: Text(i,
-                  style: const TextStyle(fontSize: 11, color: AppColors.textSecondary)),
-            ),
+        Row(children: [
+          Text('모은 것', style: hbSerif(14, hbCream, spacing: 0.3)),
+          const Spacer(),
+          if (state.affinity != 0)
+            Text('친밀도 +${state.affinity}', style: hbMono(10, hbTeal2, spacing: 1)),
+          if (coupon > 0) ...[
+            const SizedBox(width: 8),
+            Text('쿠폰 $coupon원', style: hbMono(10, hbIce, spacing: 1)),
+          ],
         ]),
+        if (state.clues.isNotEmpty) ...[
+          const SizedBox(height: 10),
+          Text('단서함', style: hbMono(9, hbRed2, spacing: 1.5)),
+          const SizedBox(height: 6),
+          Wrap(spacing: 6, runSpacing: 6, children: [
+            for (final c in state.clues) _chip(c, hbRed, hbRed3),
+          ]),
+        ],
+        if (state.fragments.isNotEmpty) ...[
+          const SizedBox(height: 10),
+          Text('기억석 조각', style: hbMono(9, hbTeal2, spacing: 1.5)),
+          const SizedBox(height: 6),
+          Wrap(spacing: 6, runSpacing: 6, children: [
+            for (final f in state.fragments) _chip(f, hbTealD, hbTeal3),
+          ]),
+        ],
+        if (state.flags.isNotEmpty) ...[
+          const SizedBox(height: 10),
+          Text('성향 — 엔딩에 반영된다', style: hbMono(9, hbIce, spacing: 1.5)),
+          const SizedBox(height: 6),
+          Wrap(spacing: 6, runSpacing: 6, children: [
+            for (final f in state.flags) _chip(f, hbIce, hbIce2),
+          ]),
+        ],
+        if (state.relics.isNotEmpty) ...[
+          const SizedBox(height: 10),
+          Text('유물 — 다음 지역까지 지속', style: hbMono(9, hbMuted, spacing: 1.5)),
+          const SizedBox(height: 6),
+          Wrap(spacing: 6, runSpacing: 6, children: [
+            for (final r in state.relics) _chip(r, hbMuted, hbCream2),
+          ]),
+        ],
+      ]),
+    );
+  }
+
+  Widget _chip(String label, Color border, Color fg) => Container(
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+        decoration: BoxDecoration(
+          color: border.withOpacity(0.12),
+          borderRadius: BorderRadius.circular(999),
+          border: Border.all(color: border.withOpacity(0.6)),
+        ),
+        child: Text(label, style: hbSerif(12.5, fg)),
+      );
+}
+
+/// 피날레 잠금 안내 — 조각이 덜 모였을 때. 차단 문구가 아니라 남은 개수 안내.
+class _FinaleLock extends StatelessWidget {
+  /// 피날레 requires 중 아직 못 채운 개수.
+  final int missing;
+  const _FinaleLock({required this.missing});
+
+  @override
+  Widget build(BuildContext context) {
+    final left = missing;
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+      decoration: BoxDecoration(
+        color: hbRed.withOpacity(0.07),
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: hbRed.withOpacity(0.35)),
+      ),
+      child: Row(children: [
+        Icon(Icons.lock_outline, size: 16, color: hbRed2),
+        const SizedBox(width: 10),
+        Expanded(
+          child: Text('피날레는 조각이 다 모여야 열리느니 — $left조각 남았다.',
+              style: hbSerif(13.5, hbCream2, height: 1.5)),
+        ),
       ]),
     );
   }
@@ -445,9 +678,13 @@ class _NodeRow extends StatelessWidget {
   final QuestNode node;
   final bool isDone;
   final bool isNext;
+
+  /// 하드 requires 미충족 — 잠긴 표시만 한다. **탭은 여전히 막지 않는다**(안내 모드로 이어짐).
+  final bool locked;
   final VoidCallback onTap;
   const _NodeRow({
     required this.node, required this.isDone, required this.isNext, required this.onTap,
+    this.locked = false,
   });
 
   @override
@@ -463,7 +700,9 @@ class _NodeRow extends StatelessWidget {
                 : hbIce;
     final subtitle = isFood
         ? '${_dist(node)} · 쉬어가기${node.priceBandLabel != null ? ' · ${node.priceBandLabel}' : ''}'
-        : '${_dist(node)} · ${node.isFinale ? '피날레 조각' : '${node.stoneNo ?? ''}번째 조각'}${isDone ? ' · 완료' : ''}';
+        : locked
+            ? '${_dist(node)} · 아직 조각이 모이지 않았느니'
+            : '${_dist(node)} · ${node.isFinale ? '피날레 조각' : '${node.stoneNo ?? ''}번째 조각'}${isDone ? ' · 완료' : ''}';
 
     return Padding(
       padding: const EdgeInsets.only(bottom: 8),
@@ -490,6 +729,14 @@ class _NodeRow extends StatelessWidget {
                   if (node.isFinale && !isFood) ...[
                     const SizedBox(width: 6),
                     Text('· 피날레', style: hbMono(9, hbIce, spacing: 1)),
+                  ],
+                  if (node.branch != null) ...[
+                    const SizedBox(width: 6),
+                    Text('· 갈림길', style: hbMono(9, hbRed2, spacing: 1)),
+                  ],
+                  if (locked) ...[
+                    const SizedBox(width: 6),
+                    Icon(Icons.lock_outline, size: 12, color: hbMuted),
                   ],
                 ]),
                 const SizedBox(height: 3),
