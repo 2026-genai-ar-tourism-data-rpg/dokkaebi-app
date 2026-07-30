@@ -79,10 +79,8 @@ class HintLadderController extends ChangeNotifier {
   }
 
   /// 진행이 생김(도착·정답·수집 등) → 무진행 타이머 리셋.
-  void noteProgress() {
-    _idle = Duration.zero;
-    notifyListeners();
-  }
+  /// 화면에 보이는 상태(열린 단)는 안 바뀌므로 notify하지 않는다.
+  void noteProgress() => _idle = Duration.zero;
 
   /// 실패(오답·헛탐색) → H1의 `fail1` 조건 트리거.
   void noteFailure() {
@@ -91,9 +89,20 @@ class HintLadderController extends ChangeNotifier {
     _evaluate();
   }
 
-  /// 플레이어가 힌트 버튼을 눌렀다 — 다음 단 강제 개방.
+  /// 플레이어가 힌트 버튼을 눌렀다 — 규칙이 요청형(button)인 단만 개방.
   bool requestNext() {
     if (!canRequestMore) return false;
+    _open(_openTier + 1);
+    return true;
+  }
+
+  /// **대가를 치르고** 다음 단을 즉시 개방(붓털 소비 등). 규칙 대기(idle)를 건너뛴다.
+  ///
+  /// 규칙 5절의 "진행은 항상 가능(데드락 ❌)" 쪽으로만 넓히는 예외 —
+  /// 시간을 기다려야만 열리는 H2를 플레이어가 자원으로 앞당길 수 있게 한다.
+  /// 보상 *종류*는 여전히 불변이고 penaltyFactor만 내려간다.
+  bool forceNext() {
+    if (!hasMore) return false;
     _open(_openTier + 1);
     return true;
   }
@@ -106,20 +115,14 @@ class HintLadderController extends ChangeNotifier {
     notifyListeners();
   }
 
+  /// 개방 조건 평가. **단이 열릴 때만 notify** — 매 tick 알리면 화면이 1초마다 리빌드된다.
   void _evaluate() {
     final next = _openTier + 1;
-    if (next > 3 || next > ladder.filledTiers) {
-      notifyListeners();
-      return;
-    }
+    if (next > 3 || next > ladder.filledTiers) return;
     final rule = _ruleOf(next);
     final failHit = rule.failCount != null && _failures >= rule.failCount!;
     final idleHit = rule.idleSeconds != null && _idle.inSeconds >= rule.idleSeconds!;
-    if (failHit || idleHit) {
-      _open(next);
-    } else {
-      notifyListeners();
-    }
+    if (failHit || idleHit) _open(next);
   }
 
   void _open(int tier) {

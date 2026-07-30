@@ -11,7 +11,10 @@ import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 
+import '../game/hint_ladder_controller.dart';
+import '../game/player_state.dart';
 import '../models/scenario.dart';
+import '../store.dart';
 import '../theme.dart';
 
 // ── 시안 팔레트(로컬 상수) ──────────────────────────────
@@ -42,11 +45,18 @@ String _won(int n) {
   return '$b원';
 }
 
-/// 여정 챕터(목표 장소) — 시안 targets 구조. Scenario 노드에서 채우되 없으면 기본값.
+/// 여정 챕터(목표 장소) — 시안 targets 구조 + **그 챕터를 담당하는 실제 노드**.
+///
+/// node가 있으면 게이팅(requires)·힌트 사다리·grants는 전부 노드 기준으로 돈다.
+/// node가 null이면 시안 기본값만으로 구르는 데모 모드(스키마 미대응 구간).
 class _Target {
   final String name, hanja, title, obj, after; // after: summon-meok|cafe|insa|summon-sejong
   final int dist0;
-  const _Target(this.name, this.hanja, this.dist0, this.title, this.obj, this.after);
+  final QuestNode? node;
+  const _Target(this.name, this.hanja, this.dist0, this.title, this.obj, this.after, {this.node});
+
+  /// 이 챕터에서 얻는 단서 이름(단서설계규칙) — 없으면 시안 기본 체인.
+  String? get clue => node?.clueName;
 }
 
 const _defaultTargets = <_Target>[
@@ -55,6 +65,9 @@ const _defaultTargets = <_Target>[
   _Target('인사동 붓방', '筆', 800, '붓방 간판의 모음', '전통 간판을 담아 모음 ㅏ를 깨워라', 'insa'),
   _Target('광화문 광장', '門', 1200, '마지막 조각, 마음', '세종대왕 앞에서 기억석을 복원하라', 'summon-sejong'),
 ];
+
+/// 시안 기본 단서 체인(申時→ㄱ→ㅏ) — 노드가 clue를 안 주는 데모 모드 폴백.
+const _defaultClues = ['申時', 'ㄱ', 'ㅏ', ''];
 
 class QuestJourneyScreen extends StatefulWidget {
   final Scenario? scenario;
@@ -87,7 +100,6 @@ class _QuestJourneyScreenState extends State<QuestJourneyScreen> with TickerProv
   int trail = 0;
   bool fragTaken = false, showReward = false;
   bool hintOpen = false;
-  int hintStage = 1;
   bool cafeOrdered = false;
   String cafeState = 'idle';
   String insaPhase = 'photo';
@@ -104,45 +116,106 @@ class _QuestJourneyScreenState extends State<QuestJourneyScreen> with TickerProv
 
   late List<_Target> targets;
 
+  // ── 상태 그래프 (시나리오구조화 3절) ──
+  /// 이 플레이의 누적 상태(조각·단서·플래그·친밀도·쿠폰·유물). 진행률·게이팅·엔딩의 기준.
+  final PlayerState pstate = PlayerState();
+
+  /// 갈림길 선택 `{분기노드id: choiceId}` — playedPath 순회에 그대로 넘긴다.
+  final Map<String, String> branchChoices = {};
+
+  /// 안내 모드(D1/D2) 표시용 판정 결과. null이면 안내 없음.
+  RequireCheck? guidance;
+
+  /// 갈림길 선택 대기 중인 노드(있으면 갈림길 화면).
+  QuestNode? branchAt;
+
+  /// 힌트 사다리 — 문구는 노드/콘텐츠, 타이밍은 이 컨트롤러(H1 fail1|idle60 → H2 idle90 → H3 요청).
+  HintLadderController? _hint;
+
+  HintLadderController get hint => _hint ??= _newHint();
+
   // ── 애니메이션 컨트롤러 ──
-  late final AnimationController _float =
-      AnimationController(vsync: this, duration: const Duration(milliseconds: 3200))..repeat(reverse: true);
-  late final AnimationController _pulse =
-      AnimationController(vsync: this, duration: const Duration(milliseconds: 1600))..repeat();
-  late final AnimationController _glow =
-      AnimationController(vsync: this, duration: const Duration(milliseconds: 1400))..repeat(reverse: true);
+  // initState에서 생성한다. `late final ... = AnimationController(...)`(지연 초기화)로 두면
+  // setup 화면만 보고 뒤로 나갈 때 dispose()의 `_float.dispose()`가 **그 자리에서 컨트롤러를
+  // 처음 생성**하고, unmount 중 TickerMode 조상 조회가 일어나 크래시한다.
+  late final AnimationController _float;
+  late final AnimationController _pulse;
+  late final AnimationController _glow;
 
   Timer? _walkTimer, _scanTimer, _summonTimer;
 
   @override
   void initState() {
     super.initState();
+    _float = AnimationController(vsync: this, duration: const Duration(milliseconds: 3200))
+      ..repeat(reverse: true);
+    _pulse = AnimationController(vsync: this, duration: const Duration(milliseconds: 1600))..repeat();
+    _glow = AnimationController(vsync: this, duration: const Duration(milliseconds: 1400))
+      ..repeat(reverse: true);
+    _restoreProgress();
     targets = _resolveTargets(widget.scenario);
   }
 
-  /// Scenario 데이터 → 챕터 매핑(없으면 종로 기본값). 이름/거리만 데이터 연동.
+  /// 저장된 진행 복원 — 갈림길 선택·인벤토리를 먼저 읽어야 경로가 확정된다.
+  void _restoreProgress() {
+    final s = widget.scenario;
+    if (s == null) return;
+    branchChoices.addAll(ScenarioStore.I.choicesOf(s.scenarioId));
+    pstate.applyAll(
+        ScenarioStore.I.inventoryOf(s.scenarioId).map(StateRef.parse));
+    fragments = math.min(4, pstate.fragments.length);
+    coupon = pstate.couponTotal;
+  }
+
+  /// Scenario → 챕터 매핑. **실제 밟는 경로(playedPath)의 조각 노드**를 쓴다 —
+  /// 갈림길을 b1로 골랐으면 샛길 노드가 챕터로 들어온다. 없으면 종로 기본값.
   List<_Target> _resolveTargets(Scenario? s) {
     if (s == null) return _defaultTargets;
-    final stones = s.stoneNodes;
+    final stones = s.playedPath(branchChoices).where((n) => n.isStone).toList();
     if (stones.isEmpty) return _defaultTargets;
-    final out = <_Target>[];
-    for (var i = 0; i < 4; i++) {
-      final d = _defaultTargets[i];
-      if (i < stones.length) {
-        final n = stones[i];
-        out.add(_Target(
-          n.name ?? d.name,
-          d.hanja,
-          n.distM?.round() ?? d.dist0,
-          d.title,
-          n.objective?.order.isNotEmpty == true ? n.objective!.order : d.obj,
-          d.after,
-        ));
-      } else {
-        out.add(d);
-      }
-    }
-    return out;
+    return [
+      for (var i = 0; i < 4; i++)
+        if (i < stones.length)
+          _Target(
+            stones[i].name ?? _defaultTargets[i].name,
+            _defaultTargets[i].hanja,
+            stones[i].distM?.round() ?? _defaultTargets[i].dist0,
+            _defaultTargets[i].title,
+            stones[i].objective?.order.isNotEmpty == true
+                ? stones[i].objective!.order
+                : (stones[i].mission?.order.isNotEmpty == true
+                    ? stones[i].mission!.order
+                    : _defaultTargets[i].obj),
+            _defaultTargets[i].after,
+            node: stones[i],
+          )
+        else
+          _defaultTargets[i],
+    ];
+  }
+
+  /// 현재 챕터의 힌트 사다리 컨트롤러(문구=노드 hint_ladder, 없으면 시안 문구).
+  HintLadderController _newHint() {
+    final ladder = _target.node?.hints ??
+        const HintLadder(h1: '"그늘은 해가 드는 반대편이니라."', h2: '"이로당 처마를 보거라."');
+    return HintLadderController(
+      ladder: ladder.isEmpty
+          ? const HintLadder(h1: '"그늘은 해가 드는 반대편이니라."', h2: '"이로당 처마를 보거라."')
+          : ladder,
+    )
+      ..addListener(_onHintChanged)
+      ..start();
+  }
+
+  void _onHintChanged() {
+    if (mounted) setState(() {});
+  }
+
+  /// 챕터가 바뀌면 사다리 초기화(다음 노드의 문구·타이밍으로 갈아끼움).
+  void _resetHintForChapter() {
+    _hint?.removeListener(_onHintChanged);
+    _hint?.dispose();
+    _hint = null;
   }
 
   @override
@@ -153,6 +226,8 @@ class _QuestJourneyScreenState extends State<QuestJourneyScreen> with TickerProv
     _walkTimer?.cancel();
     _scanTimer?.cancel();
     _summonTimer?.cancel();
+    _hint?.removeListener(_onHintChanged);
+    _hint?.dispose();
     super.dispose();
   }
 
@@ -200,7 +275,28 @@ class _QuestJourneyScreenState extends State<QuestJourneyScreen> with TickerProv
   }
 
   void _verifyGps() {
-    final after = targets[gpsIdx].after;
+    final t = targets[gpsIdx];
+
+    // ── 도착 판정 전 게이팅(3절 규칙 1조) — 미충족은 차단이 아니라 안내 ──
+    final check = _checkTarget(t);
+    if (check != null && check.needsGuidance) {
+      // D1/D2: 피날레 하드 requires 미충족 → 안내 모드(미완료 거점 짚어주기)
+      setState(() => guidance = check);
+      return;
+    }
+    if (check != null && check.softMissing) {
+      // D4: 소프트 미충족 → 진행은 하되 연계 대사를 못 받는다는 것만 알린다
+      _snack('${check.missing.map((m) => m.label).join('·')} 없이 왔구나. 도깨비가 알아보지 못할 것이야.');
+    }
+
+    // ── 갈림길: 이 노드가 분기점이면 선택을 먼저 받는다 ──
+    final bp = _branchPointAt(t);
+    if (bp != null) {
+      setState(() => branchAt = bp);
+      return;
+    }
+
+    final after = t.after;
     if (after == 'summon-meok' || after == 'summon-sejong') {
       setState(() {
         screen = 'summon';
@@ -212,6 +308,101 @@ class _QuestJourneyScreenState extends State<QuestJourneyScreen> with TickerProv
     } else {
       go(after);
     }
+  }
+
+  /// 이 챕터 노드의 requires 판정. 시나리오/노드가 없으면 null(게이팅 없음).
+  RequireCheck? _checkTarget(_Target t) {
+    final s = widget.scenario;
+    final n = t.node;
+    if (s == null || n == null || n.requires.isEmpty) return null;
+    return s.checkEntry(n, pstate);
+  }
+
+  /// 이 챕터 노드가 아직 선택 안 된 갈림길인가.
+  QuestNode? _branchPointAt(_Target t) {
+    final n = t.node;
+    if (n?.branch == null) return null;
+    if (branchChoices.containsKey(n!.nodeId)) return null;
+    return n;
+  }
+
+  /// 갈림길 선택 확정 — 저장하고 경로(targets)를 다시 계산한다.
+  Future<void> _pickBranch(QuestNode bp, BranchOption opt) async {
+    branchChoices[bp.nodeId] = opt.choiceId;
+    final s = widget.scenario;
+    if (s != null) await ScenarioStore.I.chooseBranch(s.scenarioId, bp.nodeId, opt.choiceId);
+    if (!mounted) return;
+    setState(() {
+      targets = _resolveTargets(widget.scenario);
+      branchAt = null;
+    });
+    _verifyGps(); // 선택 후 그 갈래로 계속 진행
+  }
+
+  /// 챕터 보상 확정 — grants를 상태 그래프에 적용하고 영속한다(규칙 5조: 단서는 조각과 동봉).
+  ///
+  /// 노드가 없으면 시안 기본 조각·단서로 대체해 데모 모드에서도 인벤토리가 쌓인다.
+  Future<void> _grantChapter(int chapterIdx, {List<StateRef> extra = const []}) async {
+    final t = targets[chapterIdx.clamp(0, targets.length - 1)];
+    final n = t.node;
+    final refs = <StateRef>[
+      if (n != null)
+        ...n.effectiveGrants
+      else ...[
+        StateRef(kind: StateKind.fragment, value: '글씨조각${chapterIdx + 1}'),
+        if (_defaultClues[chapterIdx.clamp(0, 3)].isNotEmpty)
+          StateRef(kind: StateKind.clue, value: _defaultClues[chapterIdx.clamp(0, 3)]),
+      ],
+      ...extra,
+    ];
+    pstate.applyAll(refs);
+    _resetHintForChapter(); // 다음 챕터 사다리로 교체
+
+    final s = widget.scenario;
+    if (s == null) return;
+    if (n != null) {
+      await ScenarioStore.I.completeNodeWithGrants(s.scenarioId, n, extra: extra);
+    } else {
+      await ScenarioStore.I
+          .completeNode(s.scenarioId, 'chapter_$chapterIdx', refs.map((r) => r.toStorageString()).toList());
+    }
+  }
+
+  /// 선택지 효과(플래그·친밀도·쿠폰) 즉시 적용 + 영속. 규칙 2조: grants 종류는 안 바뀐다.
+  Future<void> _applyChoice(List<StateRef> refs) async {
+    pstate.applyAll(refs);
+    final s = widget.scenario;
+    if (s != null) await ScenarioStore.I.grant(s.scenarioId, refs);
+  }
+
+  /// 피날레 마감 — 조각 복원 + **엔딩 분기**(3절 규칙 3조: 플래그는 여기서만 지불).
+  ///
+  /// 세종 앞 마지막 선택(pick)에 누적 플래그를 얹어 결정한다:
+  /// - `true`(백성을 위한 글) + 호기심 누적 → `good`
+  /// - `true`지만 실리만 쌓였으면 → `normal` (말만 곱게 한 셈)
+  /// - `false`(보상부터) → `normal`
+  Future<void> _finish(String pick) async {
+    final curious = pstate.flags.contains('호기심');
+    final resolved = (pick == 'good' && curious) ? 'good' : 'normal';
+    setState(() {
+      ending = resolved;
+      screen = 'ending';
+      fragments = 4;
+      exp += 200;
+    });
+    await _grantChapter(3);
+    final s = widget.scenario;
+    if (s != null) await ScenarioStore.I.setEnding(s.scenarioId, resolved);
+  }
+
+  void _snack(String msg) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+      content: Text(msg, style: _gowun(13.5, _cream)),
+      backgroundColor: _inkDeep,
+      behavior: SnackBarBehavior.floating,
+      duration: const Duration(seconds: 3),
+    ));
   }
 
   void _restart() {
@@ -240,7 +431,6 @@ class _QuestJourneyScreenState extends State<QuestJourneyScreen> with TickerProv
       fragTaken = false;
       showReward = false;
       hintOpen = false;
-      hintStage = 1;
       cafeOrdered = false;
       cafeState = 'idle';
       insaPhase = 'photo';
@@ -256,7 +446,15 @@ class _QuestJourneyScreenState extends State<QuestJourneyScreen> with TickerProv
       summonFor = null;
       summonPhase = 'scan';
       collOpen = false;
+      guidance = null;
+      branchAt = null;
+      pstate.clear();
+      branchChoices.clear();
+      targets = _resolveTargets(widget.scenario);
     });
+    _resetHintForChapter();
+    final s = widget.scenario;
+    if (s != null) ScenarioStore.I.resetProgress(s.scenarioId);
   }
 
   int get _remain => budget - spent;
@@ -281,9 +479,161 @@ class _QuestJourneyScreenState extends State<QuestJourneyScreen> with TickerProv
         if (showReward) _rewardModal(),
         if (hintOpen) _hintSheet(),
         if (collOpen) _collSheet(),
+        if (branchAt != null) _branchSheet(branchAt!),
+        if (guidance != null) _guidanceSheet(guidance!),
       ]),
     );
   }
+
+  // ════════════════════════════════════════════════════
+  // 갈림길 (route_tree 분기) — 선택지 렌더
+  // ════════════════════════════════════════════════════
+  Widget _branchSheet(QuestNode bp) {
+    final b = bp.branch!;
+    return Positioned.fill(child: Stack(children: [
+      Container(color: Colors.black.withOpacity(0.62)),
+      Align(alignment: Alignment.bottomCenter, child: Container(
+        width: double.infinity,
+        padding: const EdgeInsets.fromLTRB(20, 16, 20, 36),
+        decoration: const BoxDecoration(
+          gradient: LinearGradient(begin: Alignment.topCenter, end: Alignment.bottomCenter, colors: [_parchTop, _parchBot]),
+          borderRadius: BorderRadius.vertical(top: Radius.circular(26)),
+        ),
+        child: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.start, children: [
+          Center(child: Container(width: 44, height: 5, decoration: BoxDecoration(color: const Color(0xFFC9B88F), borderRadius: BorderRadius.circular(999)))),
+          const SizedBox(height: 14),
+          Row(children: [
+            Container(
+              width: 34, height: 34, alignment: Alignment.center,
+              decoration: BoxDecoration(shape: BoxShape.circle, color: _verm.withOpacity(0.12), border: Border.all(color: _verm)),
+              child: Text('岐', style: dokkaebiTitle(size: 16, color: _verm)),
+            ),
+            const SizedBox(width: 10),
+            Expanded(child: Text('갈림길', style: dokkaebiTitle(size: 20, color: _parchInk))),
+          ]),
+          const SizedBox(height: 10),
+          Text(b.prompt, style: dokkaebiTitle(size: 15.5, color: _parchInk, height: 1.6)),
+          const SizedBox(height: 16),
+          for (final o in b.options) ...[
+            GestureDetector(
+              onTap: () => _pickBranch(bp, o),
+              child: Container(
+                width: double.infinity,
+                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+                margin: const EdgeInsets.only(bottom: 10),
+                decoration: BoxDecoration(
+                  color: o.choiceId == 'main' ? const Color(0xFFFBF6E9) : _verm.withOpacity(0.08),
+                  borderRadius: BorderRadius.circular(14),
+                  border: Border.all(color: o.choiceId == 'main' ? const Color(0xFFD8C9A4) : _verm.withOpacity(0.55), width: 1.5),
+                ),
+                child: Row(children: [
+                  Expanded(child: Text(o.label, style: dokkaebiTitle(size: 14.5, color: _parchInk, height: 1.5))),
+                  const SizedBox(width: 8),
+                  Text(o.choiceId == 'main' ? '直' : '岐', style: dokkaebiTitle(size: 16, color: o.choiceId == 'main' ? _bronze : _verm)),
+                ]),
+              ),
+            ),
+          ],
+          const SizedBox(height: 2),
+          Center(child: Text('고른 길은 저장되어 이후 동선에 반영되느니라.',
+              style: const TextStyle(fontSize: 11.5, color: _bronze))),
+        ]),
+      )),
+    ]));
+  }
+
+  // ════════════════════════════════════════════════════
+  // 안내 모드 (D1 피날레 직행 / D2 부분 스킵) — 차단이 아니라 길 안내
+  // ════════════════════════════════════════════════════
+  Widget _guidanceSheet(RequireCheck c) {
+    return Positioned.fill(child: Stack(children: [
+      GestureDetector(onTap: () => setState(() => guidance = null), child: Container(color: Colors.black.withOpacity(0.62))),
+      Align(alignment: Alignment.bottomCenter, child: Container(
+        width: double.infinity,
+        padding: const EdgeInsets.fromLTRB(20, 16, 20, 36),
+        decoration: const BoxDecoration(
+          gradient: LinearGradient(begin: Alignment.topCenter, end: Alignment.bottomCenter, colors: [_parchTop, _parchBot]),
+          borderRadius: BorderRadius.vertical(top: Radius.circular(26)),
+        ),
+        child: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.start, children: [
+          Center(child: Container(width: 44, height: 5, decoration: BoxDecoration(color: const Color(0xFFC9B88F), borderRadius: BorderRadius.circular(999)))),
+          const SizedBox(height: 14),
+          Row(children: [
+            Container(
+              width: 34, height: 34, alignment: Alignment.center,
+              decoration: BoxDecoration(shape: BoxShape.circle, color: _gold.withOpacity(0.16), border: Border.all(color: _goldDim)),
+              child: Text('守', style: dokkaebiTitle(size: 16, color: const Color(0xFF7A5A12))),
+            ),
+            const SizedBox(width: 10),
+            Expanded(child: Text(c.isPartial ? '아직 이르니라' : '길을 짚어 주마', style: dokkaebiTitle(size: 20, color: _parchInk))),
+          ]),
+          const SizedBox(height: 12),
+          // 수호급 NPC의 안내 문구 — 획득처를 역추적해 생성
+          Container(
+            width: double.infinity,
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+            decoration: BoxDecoration(
+              color: const Color(0xFF2A2118).withOpacity(0.06),
+              borderRadius: BorderRadius.circular(14),
+              border: Border.all(color: const Color(0xFFD8C9A4)),
+            ),
+            child: Text(c.guidance(), style: dokkaebiTitle(size: 15, color: _parchInk, height: 1.6)),
+          ),
+          const SizedBox(height: 14),
+          // 가진 것 / 남은 것 (D2 부분 인지)
+          if (c.held.isNotEmpty) ...[
+            Text('이미 지닌 것', style: dokkaebiTitle(size: 13, color: _bronze)),
+            const SizedBox(height: 6),
+            Wrap(spacing: 6, runSpacing: 6, children: [
+              for (final h in c.held) _stateChip(h.label, got: true),
+            ]),
+            const SizedBox(height: 12),
+          ],
+          Text('남은 것 — 미완료 거점', style: dokkaebiTitle(size: 13, color: _verm)),
+          const SizedBox(height: 6),
+          Wrap(spacing: 6, runSpacing: 6, children: [
+            for (final m in c.missing) _stateChip(m.label, got: false),
+          ]),
+          if (c.highlightPlaces.isNotEmpty) ...[
+            const SizedBox(height: 12),
+            Text('들러야 할 곳 · ${c.highlightPlaces.join(' · ')}',
+                style: const TextStyle(fontSize: 12, color: _bronze, height: 1.5)),
+          ],
+          const SizedBox(height: 16),
+          Row(children: [
+            Expanded(child: GestureDetector(
+              onTap: () => setState(() { guidance = null; screen = 'map'; }),
+              child: Container(
+                padding: const EdgeInsets.symmetric(vertical: 14),
+                alignment: Alignment.center,
+                decoration: BoxDecoration(color: _parchInk, borderRadius: BorderRadius.circular(12)),
+                child: Text('진행판 보기', style: dokkaebiTitle(size: 14.5, color: _cream, weight: FontWeight.w700)),
+              ),
+            )),
+          ]),
+          const SizedBox(height: 8),
+          Center(child: GestureDetector(
+            onTap: () => setState(() => guidance = null),
+            child: const Text('닫기', style: TextStyle(fontSize: 12.5, color: _bronze, fontWeight: FontWeight.w700)),
+          )),
+        ]),
+      )),
+    ]));
+  }
+
+  Widget _stateChip(String label, {required bool got}) => Container(
+        padding: const EdgeInsets.symmetric(horizontal: 11, vertical: 6),
+        decoration: BoxDecoration(
+          color: got ? const Color(0xFFFBF6E9) : const Color(0x0A2A2118),
+          borderRadius: BorderRadius.circular(999),
+          border: Border.all(color: got ? _tealDeep.withOpacity(0.6) : const Color(0xFFC9B88F)),
+        ),
+        child: Row(mainAxisSize: MainAxisSize.min, children: [
+          Text(got ? '✓' : '✕', style: TextStyle(fontSize: 11, color: got ? _tealDeep : _bronze, fontWeight: FontWeight.w900)),
+          const SizedBox(width: 5),
+          Text(label, style: dokkaebiTitle(size: 13, color: got ? _parchInk : _bronze)),
+        ]),
+      );
 
   Widget _currentScreen() {
     switch (screen) {
@@ -988,11 +1338,11 @@ class _QuestJourneyScreenState extends State<QuestJourneyScreen> with TickerProv
             ]),
             if (dlgStep == 0) ...[
               const SizedBox(height: 10),
-              _choiceRow('A', _tealDeep, const Color(0xFFEAFFF9), '"세종대왕의 글씨라니, 무슨 일이오?"', '친밀도+', _teal, () => setState(() { flag = 'A'; dlgStep = 1; })),
+              _choiceRow('A', _tealDeep, const Color(0xFFEAFFF9), '"세종대왕의 글씨라니, 무슨 일이오?"', '친밀도+', _teal, () { setState(() { flag = 'A'; dlgStep = 1; }); _applyChoice([const StateRef(kind: StateKind.flag, value: '호기심'), const StateRef(kind: StateKind.affinity, value: '', amount: 1)]); }),
               const SizedBox(height: 8),
-              _choiceRow('B', _goldDim, _parchInk, '"보상은 무엇이오?"', '쿠폰+100', _gold, () => setState(() { flag = 'B'; dlgStep = 1; coupon += 100; })),
+              _choiceRow('B', _goldDim, _parchInk, '"보상은 무엇이오?"', '쿠폰+100', _gold, () { setState(() { flag = 'B'; dlgStep = 1; coupon += 100; }); _applyChoice([const StateRef(kind: StateKind.flag, value: '실리'), const StateRef(kind: StateKind.coupon, value: '', amount: 100)]); }),
               const SizedBox(height: 8),
-              _choiceRow('C', const Color(0xFF3A352E), _soft, '"그냥 빨리 찾겠소."', '바로 진행', _muted, () => setState(() { flag = 'C'; dlgStep = 1; })),
+              _choiceRow('C', const Color(0xFF3A352E), _soft, '"그냥 빨리 찾겠소."', '바로 진행', _muted, () { setState(() { flag = 'C'; dlgStep = 1; }); _applyChoice([const StateRef(kind: StateKind.flag, value: '실속')]); }),
             ] else ...[
               const SizedBox(height: 10),
               _cta('계속 — 도깨비의 시험', () => go('quiz')),
@@ -1102,8 +1452,10 @@ class _QuestJourneyScreenState extends State<QuestJourneyScreen> with TickerProv
         if (quizState == 'correct') return;
         if (correct) {
           setState(() { quizState = 'correct'; exp += 30; coupon += 200; });
+          hint.noteProgress();
         } else {
           setState(() => quizState = 'wrong');
+          hint.noteFailure(); // 실패 1회 → H1 개방(5절 fail1)
         }
       },
       child: AnimatedContainer(
@@ -1351,7 +1703,10 @@ class _QuestJourneyScreenState extends State<QuestJourneyScreen> with TickerProv
             Positioned(
               right: box.maxWidth * .14, bottom: box.maxHeight * .5,
               child: GestureDetector(
-                onTap: () => setState(() { fragTaken = true; showReward = true; fragments = 1; exp += 50; coupon += 500; }),
+                onTap: () {
+                setState(() { fragTaken = true; showReward = true; fragments = 1; exp += 50; coupon += 500; });
+                _grantChapter(0, extra: [const StateRef(kind: StateKind.coupon, value: '', to: '익선동카페', amount: 500)]);
+              },
                 child: _Floaty(anim: _float, child: SizedBox(
                   width: 110, height: 110,
                   child: Stack(alignment: Alignment.center, clipBehavior: Clip.none, children: [
@@ -1543,8 +1898,11 @@ class _QuestJourneyScreenState extends State<QuestJourneyScreen> with TickerProv
         if (cafeState == 'correct') return;
         if (correct) {
           setState(() { cafeState = 'correct'; fragments = 2; exp += 40; coupon = 1300; });
+          hint.noteProgress();
+          _grantChapter(1, extra: [const StateRef(kind: StateKind.coupon, value: '', to: '인사동', amount: 1000)]);
         } else {
           setState(() => cafeState = 'wrong');
+          hint.noteFailure();
         }
       },
       child: AnimatedContainer(
@@ -1670,8 +2028,11 @@ class _QuestJourneyScreenState extends State<QuestJourneyScreen> with TickerProv
         if (insaState == 'opened') return;
         if (isAnswer) {
           setState(() { insaPick = t; insaState = 'opened'; fragments = 3; exp += 40; });
+          hint.noteProgress();
+          _grantChapter(2);
         } else {
           setState(() { insaPick = t; insaState = 'wrong'; });
+          hint.noteFailure();
         }
       },
       child: AnimatedContainer(
@@ -1720,9 +2081,9 @@ class _QuestJourneyScreenState extends State<QuestJourneyScreen> with TickerProv
               ])),
             ]),
             const SizedBox(height: 10),
-            _sejongChoice('"백성을 위한 글이었군요."', '굿 엔딩', _gold, () => setState(() { ending = 'good'; screen = 'ending'; fragments = 4; exp += 200; })),
+            _sejongChoice('"백성을 위한 글이었군요."', '굿 엔딩', _gold, () => _finish('good')),
             const SizedBox(height: 8),
-            _sejongChoice('"보상부터 주시죠."', '노멀 엔딩', _muted, () => setState(() { ending = 'normal'; screen = 'ending'; fragments = 4; exp += 200; })),
+            _sejongChoice('"보상부터 주시죠."', '노멀 엔딩', _muted, () => _finish('normal')),
           ])),
           if (sideOpen) _sideModal(),
         ]);
@@ -1931,26 +2292,51 @@ class _QuestJourneyScreenState extends State<QuestJourneyScreen> with TickerProv
             Row(children: [
               Text('도깨비의 귀띔', style: dokkaebiTitle(size: 19, color: _parchInk)),
               const Spacer(),
-              _hdot(_verm), const SizedBox(width: 5), _hdot(hintStage >= 2 ? _verm : const Color(0xFFC9B88F)), const SizedBox(width: 5), _hdot(const Color(0xFFC9B88F)),
+              // 사다리 단수 표시 — 열린 단만 주홍
+              for (var t = 1; t <= 3; t++) ...[
+                if (t > 1) const SizedBox(width: 5),
+                _hdot(hint.openTier >= t ? _verm : const Color(0xFFC9B88F)),
+              ],
             ]),
             const SizedBox(height: 14),
-            _hintCard('힌트 1', '"그늘은 해가 드는 반대편이니라."'),
-            if (hintStage >= 2) ...[
-              const SizedBox(height: 10),
-              _hintCard('힌트 2', '"이로당 처마를 보거라."'),
-            ] else ...[
+            // 열린 단의 문구만 노출 (H1 fail1|idle60 → H2 idle90 → H3 요청)
+            if (hint.openTier == 0)
+              Container(
+                width: double.infinity,
+                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 16),
+                decoration: BoxDecoration(borderRadius: BorderRadius.circular(14), border: Border.all(color: const Color(0xFFC9B88F), width: 1.5)),
+                child: Text('아직 귀띔할 때가 아니니라. 잠시 헤매어 보거라.',
+                    style: dokkaebiTitle(size: 14, color: _bronze, height: 1.55)),
+              )
+            else
+              for (var t = 1; t <= hint.openTier; t++)
+                if (hint.ladder.textOf(t) != null) ...[
+                  if (t > 1) const SizedBox(height: 10),
+                  _hintCard('힌트 $t', hint.ladder.textOf(t)!),
+                ],
+            // 다음 단 — 붓털을 치르고 앞당기기(데드락 금지 방향의 요청형 개방)
+            if (hint.hasMore) ...[
               const SizedBox(height: 10),
               Container(
                 padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 13),
-                decoration: BoxDecoration(borderRadius: BorderRadius.circular(14), border: Border.all(color: const Color(0xFFC9B88F), width: 1.5, style: BorderStyle.solid)),
+                decoration: BoxDecoration(borderRadius: BorderRadius.circular(14), border: Border.all(color: const Color(0xFFC9B88F), width: 1.5)),
                 child: Row(children: [
                   Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                    const Text('힌트 2 — 장소를 짚어준다', style: TextStyle(fontSize: 13, color: _parchInkSoft, fontWeight: FontWeight.w700)),
-                    Text('보유 붓털 $brush개 · 아낄수록 탐구 보너스 ↑', style: const TextStyle(fontSize: 11, color: _bronze)),
+                    Text('힌트 ${hint.openTier + 1} — ${hint.openTier + 1 == 3 ? '정답에 가깝다' : '장소를 짚어준다'}',
+                        style: const TextStyle(fontSize: 13, color: _parchInkSoft, fontWeight: FontWeight.w700)),
+                    Text('보유 붓털 $brush개 · 아낄수록 탐구 보너스 ↑ (현재 ×${hint.penaltyFactor.toStringAsFixed(1)})',
+                        style: const TextStyle(fontSize: 11, color: _bronze)),
                   ])),
                   GestureDetector(
-                    onTap: () => setState(() { hintStage = 2; brush = math.max(0, brush - 1); }),
-                    child: Container(padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 9), decoration: BoxDecoration(color: _parchInk, borderRadius: BorderRadius.circular(10)), child: const Text('붓털 1개로 열기', style: TextStyle(color: _cream, fontSize: 12.5, fontWeight: FontWeight.w900))),
+                    onTap: brush <= 0 ? null : () => setState(() {
+                      if (hint.forceNext()) brush = math.max(0, brush - 1);
+                    }),
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 9),
+                      decoration: BoxDecoration(color: brush <= 0 ? _bronze : _parchInk, borderRadius: BorderRadius.circular(10)),
+                      child: Text(brush <= 0 ? '붓털 없음' : '붓털 1개로 열기',
+                          style: const TextStyle(color: _cream, fontSize: 12.5, fontWeight: FontWeight.w900)),
+                    ),
                   ),
                 ]),
               ),
@@ -2006,6 +2392,26 @@ class _QuestJourneyScreenState extends State<QuestJourneyScreen> with TickerProv
             const SizedBox(height: 14),
             Container(height: 1, color: const Color(0xFFDDD0B0)),
             const SizedBox(height: 14),
+            // 단서함 — 상태 그래프에 실제로 모인 단서(申時→ㄱ→ㅏ 체인)
+            if (pstate.clues.isNotEmpty) ...[
+              Text('단서함', style: dokkaebiTitle(size: 14, color: _bronze)),
+              const SizedBox(height: 7),
+              Wrap(spacing: 6, runSpacing: 6, children: [
+                for (final c in pstate.clues) _stateChip(c, got: true),
+                if (pstate.flags.isNotEmpty)
+                  for (final f in pstate.flags)
+                    Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 11, vertical: 6),
+                      decoration: BoxDecoration(
+                        color: _gold.withOpacity(0.14),
+                        borderRadius: BorderRadius.circular(999),
+                        border: Border.all(color: _goldDim.withOpacity(0.7)),
+                      ),
+                      child: Text('성향 · $f', style: dokkaebiTitle(size: 12.5, color: const Color(0xFF7A5A12))),
+                    ),
+              ]),
+              const SizedBox(height: 14),
+            ],
             Expanded(child: GridView.count(
               crossAxisCount: 2, mainAxisSpacing: 11, crossAxisSpacing: 11, childAspectRatio: 0.92,
               children: [for (var i = 0; i < 4; i++) _collCard(i, collDefs[i], i < fragments)],
