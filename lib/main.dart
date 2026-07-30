@@ -9,6 +9,7 @@ import 'package:flutter/material.dart';
 
 import 'screens/dex_screen.dart';
 import 'screens/home_screen.dart';
+import 'screens/honbul_home_screen.dart';
 import 'screens/map_screen.dart';
 import 'screens/onboarding_screen.dart';
 import 'screens/profile_screen.dart';
@@ -31,8 +32,9 @@ class DokkaebiApp extends StatelessWidget {
     return MaterialApp(
       title: '도깨비: 팔도의 비밀',
       theme: buildDokkaebiTheme(),
-      // 로그인돼 있으면 메인, 아니면 온보딩 → 로그인
-      home: Session.isLoggedIn ? const MainShell() : const OnboardingScreen(),
+      // 로그인돼 있으면 혼불 메인(신규 디자인), 아니면 온보딩 → 로그인.
+      // 기존 5탭(퀘스트·시나리오)은 나 탭 → "퀘스트·코스 모드"로 진입.
+      home: Session.isLoggedIn ? const HonbulHomeScreen() : const OnboardingScreen(),
       debugShowCheckedModeBanner: false,
     );
   }
