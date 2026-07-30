@@ -53,6 +53,16 @@ class PlayerState {
 
   void applyAll(Iterable<StateRef> refs) => refs.forEach(apply);
 
+  /// 전부 비움 — 코스를 처음부터 다시 시작할 때.
+  void clear() {
+    fragments.clear();
+    clues.clear();
+    flags.clear();
+    relics.clear();
+    coupons.clear();
+    affinity = 0;
+  }
+
   /// 이 상태 참조를 이미 가지고 있는가.
   bool has(StateRef r) => switch (r.kind) {
         StateKind.fragment => fragments.contains(r.value),
