@@ -1,9 +1,16 @@
 // ============================================================
-// [v1] 시나리오 모델 — 서버 응답(ScenarioGenResponse)과 1:1
+// [v2] 시나리오 모델 — 서버 응답(ScenarioGenResponse)과 1:1 + 노드 스키마 v1.1
 // pipeline: 모바일 클라이언트 / 모델 (서버 contract)
-// 구현(요약): Scenario · QuestNode + fromJson. 필드명은 서버 JSON(snake_case) 파싱.
-// 구현일: 2026-06-18 | 작성: kys (app-scaffold/kys/v1)
+// 구현(요약): QuestNode에 3층 문법(motivation/strategy/actions) + 상태 그래프
+//            (grants/requires/requires_mode) + hint_ladder + clue 필드 추가.
+//            전부 옵셔널 — AI 미대응 구간은 기존 mission/quiz/objective로 폴백(하위호환).
+// 구현일: 2026-07-30 | 작성: kys (app-v3-back/kys/v1) · 명세: 시나리오구조화.md 2·3·5절
+// ------------------------------------------------------------
+// [v1] Scenario · QuestNode + fromJson — 2026-06-18 kys (app-scaffold/kys/v1)
 // ============================================================
+import 'node_schema.dart';
+
+export 'node_schema.dart';
 
 /// 퀴즈 (생성 시 고정 콘텐츠)
 class Quiz {
@@ -169,6 +176,17 @@ class QuestNode {
   final Quiz? quiz; // 앱 호환: 질문형 미션이면 채워짐
   final Objective? objective; // AR 지령+힌트
 
+  // ── 노드 스키마 v1.1 (시나리오구조화 2·3·5절) — AI 생성층 대응 전엔 빈 값 ──
+  final List<String> motivation; // 동기 M1~M9 ("M1+M7" → ['M1','M7'])
+  final List<String> strategy; // 전략 S1~S7 ("S4_PHOTO_TRAIL")
+  final List<ActionAtom> actions; // 액션 원자 시퀀스
+  final List<StateRef> grants; // 이 노드가 주는 상태
+  final List<StateRef> requires; // 이 노드가 요구하는 상태
+  final RequiresMode requiresMode; // none | soft | hard(피날레)
+  final HintLadder? hintLadder; // H1~H3 문구 슬롯 + 공개 규칙
+  final String? clue; // 단서 이름(단서설계규칙) — grants의 clue 편의 접근
+  final List<String> success; // 성공 판정식(코드 고정)
+
   QuestNode({
     required this.order,
     required this.nodeId,
@@ -188,6 +206,15 @@ class QuestNode {
     this.mission,
     this.quiz,
     this.objective,
+    this.motivation = const [],
+    this.strategy = const [],
+    this.actions = const [],
+    this.grants = const [],
+    this.requires = const [],
+    this.requiresMode = RequiresMode.none,
+    this.hintLadder,
+    this.clue,
+    this.success = const [],
   });
 
   /// 식음(카페·식당) 경유 노드인가 — 기억석 조각 아님.
@@ -195,6 +222,39 @@ class QuestNode {
 
   /// 기억석 조각 노드인가.
   bool get isStone => !isFood;
+
+  /// 전략 코드만 (`S4_PHOTO_TRAIL` → `S4`).
+  List<String> get strategyCodes => strategy.map(strategyCode).toList();
+
+  /// 이 노드가 주는 상태 — grants 미제공 시 조각/단서 필드로 합성(하위호환).
+  ///
+  /// 구 플로우(fragment_id만 있는 노드)도 상태 그래프에 동일하게 태울 수 있게 한다.
+  List<StateRef> get effectiveGrants {
+    if (grants.isNotEmpty) return grants;
+    return [
+      if (isStone && fragmentId.isNotEmpty) StateRef(kind: StateKind.fragment, value: fragmentId),
+      if (clue != null && clue!.isNotEmpty) StateRef(kind: StateKind.clue, value: clue!),
+    ];
+  }
+
+  /// 이 노드가 주는 단서 이름 — clue 필드 우선, 없으면 grants에서 찾음.
+  String? get clueName {
+    if (clue != null && clue!.isNotEmpty) return clue;
+    for (final g in grants) {
+      if (g.kind == StateKind.clue) return g.value;
+    }
+    return null;
+  }
+
+  /// 힌트 사다리 — hint_ladder 우선, 없으면 구 mission.hints/objective.hints로 폴백.
+  HintLadder get hints {
+    if (hintLadder != null && !hintLadder!.isEmpty) return hintLadder!;
+    final legacy = mission?.hints ?? objective?.hints ?? const <String>[];
+    return HintLadder.fromLegacyHints(legacy);
+  }
+
+  /// 피날레 하드 게이팅 대상인가 (규칙 4조 — 강제 게이트는 피날레 하나뿐).
+  bool get isHardGated => requiresMode == RequiresMode.hard && requires.isNotEmpty;
 
   factory QuestNode.fromJson(Map<String, dynamic> j) => QuestNode(
         order: j['order'] ?? 0,
@@ -215,6 +275,21 @@ class QuestNode {
         mission: j['mission'] != null ? Mission.fromJson(j['mission'] as Map<String, dynamic>) : null,
         quiz: j['quiz'] != null ? Quiz.fromJson(j['quiz'] as Map<String, dynamic>) : null,
         objective: j['objective'] != null ? Objective.fromJson(j['objective'] as Map<String, dynamic>) : null,
+        // ── 스키마 v1.1 — motivation은 npc.motivation에 들어올 수도 있음 ──
+        motivation: parseCodes(j['motivation'] ?? (j['npc'] as Map?)?['motivation']),
+        strategy: parseCodes(j['strategy']),
+        actions: ActionAtom.listFrom(j['actions']),
+        grants: StateRef.listFrom(j['grants']),
+        requires: StateRef.listFrom(j['requires']),
+        requiresMode: requiresModeOf(j['requires_mode']?.toString()),
+        hintLadder: j['hint_ladder'] != null
+            ? HintLadder.fromJson((j['hint_ladder'] as Map).cast<String, dynamic>())
+            : null,
+        clue: j['clue']?.toString(),
+        // success는 판정식 문자열("tap:글씨파편>=1") — 분해하지 않고 그대로 보관
+        success: (j['success'] is List)
+            ? (j['success'] as List).map((e) => e.toString()).toList()
+            : const [],
       );
 
   Map<String, dynamic> toJson() => {
@@ -236,6 +311,15 @@ class QuestNode {
         if (mission != null) 'mission': mission!.toJson(),
         if (quiz != null) 'quiz': quiz!.toJson(),
         if (objective != null) 'objective': objective!.toJson(),
+        if (motivation.isNotEmpty) 'motivation': motivation,
+        if (strategy.isNotEmpty) 'strategy': strategy,
+        if (actions.isNotEmpty) 'actions': actions.map((a) => a.toJson()).toList(),
+        if (grants.isNotEmpty) 'grants': grants.map((g) => g.toStorageString()).toList(),
+        if (requires.isNotEmpty) 'requires': requires.map((r) => r.toStorageString()).toList(),
+        if (requiresMode != RequiresMode.none) 'requires_mode': requiresModeName(requiresMode),
+        if (hintLadder != null) 'hint_ladder': hintLadder!.toJson(),
+        if (clue != null) 'clue': clue,
+        if (success.isNotEmpty) 'success': success,
       };
 }
 
