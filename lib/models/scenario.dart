@@ -193,6 +193,10 @@ class QuestNode {
   final String pathId; // "main"(본선) | "b1"(샛길)
   final NodeBranch? branch; // 분기 노드면 갈림길 프롬프트+갈래
 
+  // ── 위시 앵커 (wishlist.py) ──
+  final bool outOfRadius; // true면 검색 반경 밖 좌표로 합성된 앵커(위치 부정확 가능)
+  final String? source; // 앵커 출처("wishlist" 등)
+
   QuestNode({
     required this.order,
     required this.nodeId,
@@ -223,6 +227,8 @@ class QuestNode {
     this.success = const [],
     this.pathId = 'main',
     this.branch,
+    this.outOfRadius = false,
+    this.source,
   });
 
   /// 식음(카페·식당) 경유 노드인가 — 기억석 조각 아님.
@@ -298,6 +304,8 @@ class QuestNode {
         branch: j['branch'] != null
             ? NodeBranch.fromJson((j['branch'] as Map).cast<String, dynamic>())
             : null,
+        outOfRadius: j['out_of_radius'] ?? false,
+        source: j['source']?.toString(),
         // success는 판정식 문자열("tap:글씨파편>=1") — 분해하지 않고 그대로 보관
         success: (j['success'] is List)
             ? (j['success'] as List).map((e) => e.toString()).toList()
@@ -334,6 +342,8 @@ class QuestNode {
         if (success.isNotEmpty) 'success': success,
         if (pathId != 'main') 'path_id': pathId,
         if (branch != null) 'branch': branch!.toJson(),
+        if (outOfRadius) 'out_of_radius': outOfRadius,
+        if (source != null) 'source': source,
       };
 }
 

@@ -31,6 +31,7 @@ class _CreateScenarioScreenState extends State<CreateScenarioScreen> {
   final _search = TextEditingController();
   String _transport = 'walk';
   bool _withDialogue = true;
+  bool _noMeals = false;
   bool _loading = false;
   bool _searching = false;
   bool _searched = false; // 검색 1회 이상 수행(결과없음 안내용)
@@ -105,6 +106,7 @@ class _CreateScenarioScreenState extends State<CreateScenarioScreen> {
         transport: _transport,
         wishlist: _selected, // content_id + 좌표·이름 함께 전달(합성 앵커 배치용)
         budget: int.tryParse(_budget.text),
+        noMeals: _noMeals,
         withDialogue: _withDialogue,
       );
       ScenarioStore.I.add(scn); // 퀘스트 일지에 남김
@@ -212,6 +214,12 @@ class _CreateScenarioScreenState extends State<CreateScenarioScreen> {
             ),
           ]),
           _num(_budget, '예산(원, 선택)'),
+          SwitchListTile(
+            title: const Text('밥 안 먹음'),
+            subtitle: const Text('켜면 식음(카페·식당) 노드 제외'),
+            value: _noMeals,
+            onChanged: (v) => setState(() => _noMeals = v),
+          ),
           SwitchListTile(
             title: const Text('NPC 대사 LLM 생성'),
             subtitle: const Text('끄면 빠름(고정 대사)'),

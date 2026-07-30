@@ -734,6 +734,10 @@ class _NodeRow extends StatelessWidget {
                     const SizedBox(width: 6),
                     Text('· 갈림길', style: hbMono(9, hbRed2, spacing: 1)),
                   ],
+                  if (node.outOfRadius) ...[
+                    const SizedBox(width: 6),
+                    Text('· 반경 밖', style: hbMono(9, hbRed2, spacing: 1)),
+                  ],
                   if (locked) ...[
                     const SizedBox(width: 6),
                     Icon(Icons.lock_outline, size: 12, color: hbMuted),
