@@ -94,7 +94,7 @@ ThemeData buildDokkaebiTheme() {
       foregroundColor: AppColors.textPrimary,
       titleTextStyle: dokkaebiTitle(size: 20),
     ),
-    cardTheme: CardTheme(
+    cardTheme: CardThemeData(
       color: AppColors.surface,
       elevation: 0,
       shape: RoundedRectangleBorder(

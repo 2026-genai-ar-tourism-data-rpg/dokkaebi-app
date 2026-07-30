@@ -92,6 +92,7 @@ class ApiClient {
     String transport = 'walk',
     List<SearchCandidate> wishlist = const [],
     int? budget,
+    bool noMeals = false,
     String region = '종로',
     bool withDialogue = true,
   }) async {
@@ -109,6 +110,7 @@ class ApiClient {
               })
           .toList(),
       if (budget != null) 'budget': budget,
+      'no_meals': noMeals,
       'region': region,
       'with_dialogue': withDialogue,
     };
