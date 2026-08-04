@@ -26,13 +26,21 @@ class ProfileScreen extends StatelessWidget {
               child: const Icon(Icons.person, color: AppColors.teal),
             ),
             const SizedBox(width: 14),
-            Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: const [
-                Text('용사님', style: TextStyle(color: AppColors.textPrimary, fontSize: 18, fontWeight: FontWeight.bold)),
-                SizedBox(height: 2),
-                Text('탐사 등급 17 · 종로의 기억 복원자', style: TextStyle(color: AppColors.textSecondary, fontSize: 12)),
-              ],
+            // Expanded 필수 — Row 안의 Column은 폭이 무한이라 긴 등급 문구가
+            // 좁은 기기(320px)에서 오른쪽으로 넘친다.
+            const Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text('용사님',
+                      style: TextStyle(
+                          color: AppColors.textPrimary, fontSize: 18, fontWeight: FontWeight.bold)),
+                  SizedBox(height: 2),
+                  Text('탐사 등급 17 · 종로의 기억 복원자',
+                      style: TextStyle(color: AppColors.textSecondary, fontSize: 12),
+                      overflow: TextOverflow.ellipsis),
+                ],
+              ),
             ),
           ]),
         ),

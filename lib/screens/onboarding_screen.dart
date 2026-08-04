@@ -22,19 +22,19 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
 
   static const _pages = [
     (
-      'FORGOTTEN LEGENDS',
-      'Forgotten Legends Awaken',
-      '오래된 저주가 팔도의 정령들을 잠재웠다. 여덟 지역에 흩어진 기억석 조각을 모아라 — 각 조각은 잃어버린 전설의 한 조각이다.',
+      '팔도 기억맥',
+      '기억을 지키는 도깨비',
+      '한반도 곳곳에는 사람들의 역사와 추억을 지켜온 팔도 수호 도깨비가 있다. 하지만 사람들의 발길이 끊긴 장소는 기억이 점점 희미해져 간다.',
     ),
     (
-      'YOUR JOURNEY',
-      '발로 떠나는 탐사',
-      '실제 관광지를 찾아가 GPS로 도착을 인증하고, AR로 숨은 기억석 조각을 수집한다. 도깨비 NPC가 그곳의 진짜 이야기를 들려준다.',
+      '망각귀의 습격',
+      '기억석이 깨어지다',
+      '기억이 약해진 틈을 타 나타난 망각귀가 전국에 흩어진 기억석을 깨뜨려 지역의 역사와 설화, 사람들의 추억을 왜곡하고 있다.',
     ),
     (
-      'BEGIN',
-      '당신의 탐사가 시작된다',
-      '가고 싶은 곳을 고르면 도깨비가 숨은 명소를 잇는 코스를 짜준다. 떠날 준비가 됐는가, 용사여?',
+      '탐사자, 당신',
+      '잊혀진 기억을 되찾아라',
+      '우연히 도깨비를 보는 힘을 얻은 당신은 탐사자가 된다. 실제 장소를 찾아 GPS로 기운을 인증하고 AR로 숨은 기억석을 찾아, 팔도의 대기억석을 되살려라.',
     ),
   ];
 
@@ -48,12 +48,24 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
       body: SafeArea(
         child: Column(
           children: [
-            Align(
-              alignment: Alignment.centerRight,
-              child: TextButton(
-                onPressed: _finish,
-                child: const Text('건너뛰기', style: TextStyle(color: AppColors.textSecondary)),
-              ),
+            Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                Opacity(
+                  opacity: _page > 0 ? 1 : 0,
+                  child: IconButton(
+                    onPressed: _page > 0
+                        ? () => _pc.previousPage(
+                            duration: const Duration(milliseconds: 300), curve: Curves.ease)
+                        : null,
+                    icon: const Icon(Icons.arrow_back_ios_new, size: 18, color: AppColors.textSecondary),
+                  ),
+                ),
+                TextButton(
+                  onPressed: _finish,
+                  child: const Text('건너뛰기', style: TextStyle(color: AppColors.textSecondary)),
+                ),
+              ],
             ),
             Expanded(
               child: PageView.builder(
@@ -110,9 +122,13 @@ class _PageView extends StatelessWidget {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           // 기억석 글로우 (다이아)
+          // ⚠️ 아래 여백 48은 320x568 기기에서 2px 넘쳤다 — 다이아(120) + 여백 +
+          //    제목·본문·인디케이터가 화면 높이를 아슬아슬하게 초과한다.
+          //    가장 좁은 기기만 여백을 줄여 잘림을 없앤다(큰 기기는 시안 그대로).
           Center(
             child: Container(
-              margin: const EdgeInsets.only(bottom: 48),
+              margin: EdgeInsets.only(
+                  bottom: MediaQuery.sizeOf(context).height < 600 ? 32 : 48),
               width: 120,
               height: 120,
               child: Transform.rotate(

@@ -8,7 +8,6 @@
 import 'package:flutter/material.dart';
 
 import 'screens/dex_screen.dart';
-import 'screens/home_screen.dart';
 import 'screens/map_screen.dart';
 import 'screens/onboarding_screen.dart';
 import 'screens/profile_screen.dart';
@@ -31,7 +30,8 @@ class DokkaebiApp extends StatelessWidget {
     return MaterialApp(
       title: '도깨비: 팔도의 비밀',
       theme: buildDokkaebiTheme(),
-      // 로그인돼 있으면 메인, 아니면 온보딩 → 로그인
+      // 로그인돼 있으면 메인 셸(홈=지역 선택 지도), 아니면 온보딩 → 로그인.
+      // 프롤로그는 로그인 직후가 아니라 첫 코스 생성 직후에 뜬다(explore_confirm_screen.dart).
       home: Session.isLoggedIn ? const MainShell() : const OnboardingScreen(),
       debugShowCheckedModeBanner: false,
     );
@@ -47,8 +47,8 @@ class MainShell extends StatefulWidget {
 
 class _MainShellState extends State<MainShell> {
   int _idx = 0;
+  // 홈 탭 = 지역 선택 지도(MapScreen). 별도 지도 탭은 없앴다.
   static const _tabs = [
-    HomeScreen(),
     MapScreen(),
     QuestTabScreen(),
     DexScreen(),
@@ -73,7 +73,6 @@ class _MainShellState extends State<MainShell> {
           onDestinationSelected: (i) => setState(() => _idx = i),
           destinations: const [
             NavigationDestination(icon: Icon(Icons.home_outlined), selectedIcon: Icon(Icons.home), label: '홈'),
-            NavigationDestination(icon: Icon(Icons.map_outlined), selectedIcon: Icon(Icons.map), label: '지도'),
             NavigationDestination(icon: Icon(Icons.military_tech_outlined), selectedIcon: Icon(Icons.military_tech), label: '퀘스트'),
             NavigationDestination(icon: Icon(Icons.menu_book_outlined), selectedIcon: Icon(Icons.menu_book), label: '도감'),
             NavigationDestination(icon: Icon(Icons.person_outline), selectedIcon: Icon(Icons.person), label: '프로필'),

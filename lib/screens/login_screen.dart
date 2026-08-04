@@ -2,13 +2,16 @@
 // [v1] 화면: 로그인 (게스트)
 // pipeline: 모바일 클라이언트 / 인증
 // 구현(요약): 닉네임 입력 → 서버 게스트 로그인(토큰) → 세션 저장 → 메인.
+//            디버그 빌드에선 접속 중인 서버 주소를 화면에 노출(실기기 진단).
 //            카카오/구글은 같은 화면에 버튼 추가 예정(키 발급 후).
-// 구현일: 2026-06-18 | 작성: kys (auth-guest/kys/v1)
+// 구현일: 2026-06-18 (서버주소 진단 배너: 2026-08-04) | 작성: kys (auth-guest/kys/v1)
 // ============================================================
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 
 import '../api/api_client.dart';
-import '../main.dart';
+import '../config.dart';
+import '../main.dart' show MainShell;
 import '../store.dart';
 import '../theme.dart';
 
@@ -16,6 +19,41 @@ class LoginScreen extends StatefulWidget {
   const LoginScreen({super.key});
   @override
   State<LoginScreen> createState() => _LoginScreenState();
+}
+
+/// 디버그 전용 — 지금 어느 서버로 붙는지 화면에 보여준다.
+/// 실기기에서 localhost로 남아 있으면(= 폰 자신을 가리킴) 연결이 절대 안 되므로
+/// "왜 안 되지"로 시간 날리지 않게 경고까지 띄운다.
+class _ServerBanner extends StatelessWidget {
+  @override
+  Widget build(BuildContext context) {
+    final bad = AppConfig.isLoopback && (defaultTargetPlatform == TargetPlatform.android ||
+        defaultTargetPlatform == TargetPlatform.iOS);
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+      decoration: BoxDecoration(
+        color: bad ? Colors.red.withOpacity(0.12) : Colors.white.withOpacity(0.04),
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: bad ? Colors.red.withOpacity(0.5) : Colors.white24),
+      ),
+      child: Column(children: [
+        Text('서버: ${AppConfig.serverBaseUrl}',
+            textAlign: TextAlign.center,
+            style: TextStyle(
+                color: bad ? Colors.red.shade200 : AppColors.textSecondary,
+                fontSize: 11)),
+        if (bad) ...[
+          const SizedBox(height: 4),
+          const Text(
+            '실기기에서 localhost는 폰 자신을 가리킵니다.\n'
+            '--dart-define=SERVER_BASE_URL=http://<PC_IP>:8000 으로 실행하세요.',
+            textAlign: TextAlign.center,
+            style: TextStyle(color: Colors.redAccent, fontSize: 10),
+          ),
+        ],
+      ]),
+    );
+  }
 }
 
 class _LoginScreenState extends State<LoginScreen> {
@@ -98,6 +136,10 @@ class _LoginScreenState extends State<LoginScreen> {
               const Text('카카오·구글 로그인 (준비 중)',
                   textAlign: TextAlign.center,
                   style: TextStyle(color: AppColors.textSecondary, fontSize: 11)),
+              if (kDebugMode) ...[
+                const SizedBox(height: 20),
+                _ServerBanner(),
+              ],
             ],
           ),
         ),

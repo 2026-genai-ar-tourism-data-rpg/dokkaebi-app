@@ -9,7 +9,7 @@ import 'package:flutter/material.dart';
 
 import '../theme.dart';
 import '../widgets/ui.dart';
-import 'create_scenario_screen.dart';
+import 'explore_place_screen.dart';
 
 class MapScreen extends StatefulWidget {
   const MapScreen({super.key});
@@ -22,11 +22,12 @@ class _MapScreenState extends State<MapScreen> {
   static const _filters = ['전체', '전설', '영웅', '희귀'];
 
   // (지역명, 등급, x비율, y비율, 잠금)
+  // MVP 시나리오가 서울 종로구뿐이라 서울 외 지역은 전부 잠금(추후 지역 확장 시 false로).
   static const _pins = [
     ('서울', '전설', 0.42, 0.22, false),
-    ('안동', '영웅', 0.62, 0.34, false),
-    ('전주', '희귀', 0.34, 0.55, false),
-    ('경주', '영웅', 0.68, 0.55, false),
+    ('안동', '영웅', 0.62, 0.34, true),
+    ('전주', '희귀', 0.34, 0.55, true),
+    ('경주', '영웅', 0.68, 0.55, true),
     ('부산', '일반', 0.62, 0.74, true),
     ('제주', '일반', 0.30, 0.90, true),
   ];
@@ -79,8 +80,16 @@ class _MapScreenState extends State<MapScreen> {
             Row(children: const [
               Text('서울', style: TextStyle(color: AppColors.textPrimary, fontSize: 18, fontWeight: FontWeight.bold)),
               SizedBox(width: 8),
-              Text('Seoul · 퀘스트 12개', style: TextStyle(color: AppColors.textSecondary, fontSize: 12)),
-              Spacer(),
+              // Expanded 필수 — 부제가 길어지면(지역명·퀘스트 수) 320px 기기에서
+              // 오른쪽 진행률(68%)을 밀어내 넘친다. Spacer는 남는 공간만 먹으므로
+              // 정작 넘칠 때는 도움이 안 된다.
+              Expanded(
+                child: Text('Seoul · 퀘스트 12개',
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(color: AppColors.textSecondary, fontSize: 12)),
+              ),
+              SizedBox(width: 8),
               Text('68%', style: TextStyle(color: AppColors.gold, fontSize: 18, fontWeight: FontWeight.bold)),
             ]),
             const SizedBox(height: 10),
@@ -88,7 +97,7 @@ class _MapScreenState extends State<MapScreen> {
             const SizedBox(height: 12),
             FilledButton(
               onPressed: () => Navigator.push(
-                  context, MaterialPageRoute(builder: (_) => const CreateScenarioScreen())),
+                  context, MaterialPageRoute(builder: (_) => const ExplorePlaceScreen())),
               child: const Text('이 지역 탐험하기  →'),
             ),
           ]),

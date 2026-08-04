@@ -1,0 +1,121 @@
+{
+  "order": 0,
+  "node_id": "tour_2373420",
+  "name": "아띠인력거",
+  "kind": "spot",
+  "map_x": 126.982559176,
+  "map_y": 37.5793889366,
+  "dist_m": 494.8,
+  "density_tier": "popular",
+  "source": "TourAPI",
+  "out_of_radius": null,
+  "mission": {
+    "type": "RESTORE_AR",
+    "order": "AR로 정자를 복원하고 부재를 제자리에 맞춰라!",
+    "hints": [
+      "주춧돌은 한옥 대들보 아래 위치니라.",
+      "기와는 처마 선에 따라 배열해야 하나니."
+    ],
+    "structure": "북촌 한옥 마을 내 붕괴된 옛 정자",
+    "parts": [
+      "주춧돌",
+      "기둥",
+      "기와 지붕"
+    ],
+    "era": "조선 시대"
+  },
+  "quiz": null,
+  "objective": {
+    "order": "AR로 정자를 복원하고 부재를 제자리에 맞춰라!",
+    "hints": [
+      "주춧돌은 한옥 대들보 아래 위치니라.",
+      "기와는 처마 선에 따라 배열해야 하나니."
+    ]
+  },
+  "trigger_radius_m": 100,
+  "stone_no": 1,
+  "fragment_id": "종로_stone_1of5",
+  "npc_dialogue": "핫! 아띠 인력거로 시간여행 떠나볼까? 🚁 북촌·서촌에서 발구름 한 번에 역사가 팡팡! 라이더 형님의 입담에 외국인 님들도 \"우와~\" 감탄을 멈추지 못하시지~ 🌏 (보조 모터? 그런 건 개나 줘라! 오직 두 다리의 힘으로 달리는 진짜 전통맛!) 🦶💨",
+  "is_finale": false,
+  "motivation": [
+    "M1",
+    "M3"
+  ],
+  "npc": {
+    "name": "먹 도깨비",
+    "archetype": "persona",
+    "motif": "붓·먹",
+    "speech": "~니라, 허허",
+    "motivation": "M1+M3"
+  },
+  "strategy": [
+    "S6_ACCUMULATE"
+  ],
+  "actions": [
+    {
+      "a": "goto",
+      "place": "아띠인력거"
+    },
+    {
+      "a": "listen",
+      "slot": "intro+choices",
+      "choices": [
+        {
+          "id": "A",
+          "text": "무슨 일이 있었는지 자세히 묻는다.",
+          "flags": [
+            "호기심"
+          ],
+          "affinity": 1
+        },
+        {
+          "id": "B",
+          "text": "해야 할 일과 보상을 먼저 확인한다.",
+          "flags": [
+            "실리"
+          ],
+          "reward_mod": {
+            "coupon": 100
+          }
+        },
+        {
+          "id": "C",
+          "text": "주변을 먼저 살펴본다."
+        }
+      ]
+    },
+    {
+      "a": "tap",
+      "target": "주춧돌",
+      "count": [
+        0,
+        3
+      ]
+    },
+    {
+      "a": "report",
+      "npc": "먹 도깨비"
+    }
+  ],
+  "hint_ladder": {
+    "H1": "주춧돌은 한옥 대들보 아래 위치니라.",
+    "H2": "기와는 처마 선에 따라 배열해야 하나니.",
+    "H3": "화면의 목표와 주변 표식을 차례로 대조해 보거라.",
+    "open_rule": [
+      "fail1|idle60",
+      "idle90",
+      "button"
+    ]
+  },
+  "requires": [],
+  "requires_mode": "none",
+  "grants": [
+    "fragment:종로_stone_1of5",
+    "clue:감고 三보"
+  ],
+  "clue": "감고 三보",
+  "success": [
+    "place_verified",
+    "tap:주춧돌>=3"
+  ]
+}

@@ -33,7 +33,9 @@ class DexScreen extends StatelessWidget {
           physics: const NeverScrollableScrollPhysics(),
           mainAxisSpacing: 12,
           crossAxisSpacing: 12,
-          childAspectRatio: 0.85,
+          // 0.85였으나 좁은 기기에서 3.6px 모자랐다 — 텍스트 한 줄 고정 후에도
+          // 여유가 필요해 셀을 조금 더 높게 잡는다.
+          childAspectRatio: 0.78,
           children: [
             _dokkaebi('청룡 도깨비', '전설', '서울', 0.72),
             _dokkaebi('화룡 도깨비', '영웅', '경주', 0.35),
@@ -58,12 +60,23 @@ class DexScreen extends StatelessWidget {
             child: Icon(Icons.local_fire_department, color: c),
           ),
           const Spacer(),
-          Text(tier, style: TextStyle(color: c, fontSize: 11, fontWeight: FontWeight.w600)),
-          Text(name, style: const TextStyle(color: AppColors.textPrimary, fontWeight: FontWeight.bold)),
+          // 좁은 셀(320px 기기에서 내부 폭 ~104px)에서 이름·등급이 여러 줄로 접히면
+          // 카드 높이를 넘겨 오버플로가 난다 → 한 줄 + 말줄임으로 고정.
+          Text(tier,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(color: c, fontSize: 11, fontWeight: FontWeight.w600)),
+          Text(name,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: const TextStyle(
+                  color: AppColors.textPrimary, fontSize: 14, fontWeight: FontWeight.bold)),
           const SizedBox(height: 6),
           ProgressBar(bond, color: c),
           const SizedBox(height: 4),
           Text('친밀도 ${(bond * 100).round()}/100',
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
               style: const TextStyle(color: AppColors.textSecondary, fontSize: 11)),
         ],
       ),
