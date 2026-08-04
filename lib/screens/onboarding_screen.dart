@@ -110,9 +110,13 @@ class _PageView extends StatelessWidget {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           // 기억석 글로우 (다이아)
+          // ⚠️ 아래 여백 48은 320x568 기기에서 2px 넘쳤다 — 다이아(120) + 여백 +
+          //    제목·본문·인디케이터가 화면 높이를 아슬아슬하게 초과한다.
+          //    가장 좁은 기기만 여백을 줄여 잘림을 없앤다(큰 기기는 시안 그대로).
           Center(
             child: Container(
-              margin: const EdgeInsets.only(bottom: 48),
+              margin: EdgeInsets.only(
+                  bottom: MediaQuery.sizeOf(context).height < 600 ? 32 : 48),
               width: 120,
               height: 120,
               child: Transform.rotate(
