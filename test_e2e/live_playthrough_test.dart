@@ -20,6 +20,8 @@ import 'package:dokkaebi_app/models/run.dart';
 import 'package:dokkaebi_app/models/scenario.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
+// ignore_for_file: invalid_use_of_visible_for_testing_member
+// (이 파일은 test/ 밖에 있어 분석기가 테스트로 인식하지 못한다 — 실제로는 테스트다)
 import 'package:shared_preferences/shared_preferences.dart';
 
 /// 종로 경복궁 — 실제 코스를 만들 기준 좌표.

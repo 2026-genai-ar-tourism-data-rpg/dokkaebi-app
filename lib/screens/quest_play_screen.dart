@@ -10,6 +10,8 @@
 import 'package:flutter/material.dart';
 
 import '../api/api_client.dart';
+import '../game/run_session.dart';
+import '../models/run.dart';
 import '../models/scenario.dart';
 import '../theme.dart';
 import '../widgets/ar_frame.dart';
@@ -33,6 +35,8 @@ class _QuestPlayScreenState extends State<QuestPlayScreen> {
   String? _quizFeedback;
   bool _missionAcked = false;
   bool _collected = false;
+  NodeReward? _reward;      // 서버가 계산한 보상(경험치·칭호·다음 노드)
+  String? _serverError;     // 조각 기록 실패 사유 — 사용자에게 보여준다
   String _line = '';
   List<DialogueChoice> _choices = [];
   final List<Map<String, String>> _history = [];
@@ -68,12 +72,33 @@ class _QuestPlayScreenState extends State<QuestPlayScreen> {
         ),
       ),
     );
-    if (ok == true) {
+    if (ok != true) return;
+
+    // AR에서 찾았다고 곧바로 획득 처리하지 않는다 — 조각의 주인은 서버다.
+    // 서버가 GPS 인증·requires·중복을 검사하고, 실패하면 사유를 돌려준다.
+    if (RunSession.I.isActive) {
+      final collected = await RunSession.I.collect(widget.node.nodeId);
+      if (!mounted) return;
+      if (collected == null) {
+        setState(() => _serverError = RunSession.I.error ?? '조각을 기록하지 못했느니라.');
+        return;
+      }
+      final reward = await RunSession.I.complete(widget.node.nodeId);
+      if (!mounted) return;
       setState(() {
         _collected = true;
-        _granted = widget.node.fragmentId.isEmpty ? [] : [widget.node.fragmentId];
+        _granted = [collected.fragmentId];
+        _reward = reward;
+        _serverError = null;
       });
+      return;
     }
+
+    // 서버 세션이 없으면(데모·미리보기) 로컬 표시만 한다.
+    setState(() {
+      _collected = true;
+      _granted = widget.node.fragmentId.isEmpty ? [] : [widget.node.fragmentId];
+    });
   }
 
   Future<void> _start() async {
@@ -175,8 +200,16 @@ class _QuestPlayScreenState extends State<QuestPlayScreen> {
               style: const TextStyle(color: Hanji.inkSoft, fontSize: 14)),
           const SizedBox(height: 16),
           _redButton('도착 인증', onTap: () async {
-            final ok = await Navigator.push<bool>(context,
-                MaterialPageRoute(builder: (_) => LocationVerifyScreen(placeName: n.name ?? '이곳')));
+            // nodeId를 넘겨야 서버 반경 판정을 탄다. 안 넘기면 좌표만 보고 통과한다.
+            final ok = await Navigator.push<bool>(
+              context,
+              MaterialPageRoute(
+                builder: (_) => LocationVerifyScreen(
+                  placeName: n.name ?? '이곳',
+                  nodeId: RunSession.I.isActive ? n.nodeId : null,
+                ),
+              ),
+            );
             if (ok == true) _start();
           }),
         ]),
@@ -362,8 +395,28 @@ class _QuestPlayScreenState extends State<QuestPlayScreen> {
       );
 
   // ── AR 진입 CTA ──────────────────────────────
+  /// 서버가 조각 기록을 거절했을 때의 안내(GPS 미인증·순서 미충족 등).
+  Widget _serverErrorBanner() => Container(
+        margin: const EdgeInsets.only(bottom: 10),
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+        decoration: BoxDecoration(
+          color: Hanji.badge.withOpacity(0.12),
+          borderRadius: BorderRadius.circular(10),
+          border: Border.all(color: Hanji.badge.withOpacity(0.45)),
+        ),
+        child: Row(children: [
+          const Icon(Icons.error_outline, size: 16, color: Hanji.badge),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Text(_serverError!,
+                style: const TextStyle(color: Hanji.ink, fontSize: 12.5, height: 1.4)),
+          ),
+        ]),
+      );
+
   Widget _searchCard() => ParchmentCard(
         child: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.start, children: [
+          if (_serverError != null) _serverErrorBanner(),
           Text('붓을 들 때가 되었구나.', style: dokkaebiTitle(size: 16, color: Hanji.ink)),
           const SizedBox(height: 14),
           _redButton('AR로 기억석 찾기', onTap: _search),
@@ -382,8 +435,28 @@ class _QuestPlayScreenState extends State<QuestPlayScreen> {
             const SizedBox(height: 6),
             Text(_granted.join(', '), style: const TextStyle(color: Hanji.bronze, fontSize: 12)),
           ],
+          // 서버가 계산한 보상 — 로컬 추정이 아니라 실제 지급된 값이다.
+          if (_reward != null) ...[
+            const SizedBox(height: 10),
+            Text('경험치 +${_reward!.expGained}   ·   조각 ${_reward!.progress}/${_reward!.required}',
+                style: const TextStyle(color: Hanji.inkSoft, fontSize: 13)),
+            if (_reward!.dexEntry != null) ...[
+              const SizedBox(height: 4),
+              Text('도감에 «${_reward!.dexEntry}» 추가',
+                  style: const TextStyle(color: Hanji.bronze, fontSize: 12)),
+            ],
+            for (final t in _reward!.titles) ...[
+              const SizedBox(height: 4),
+              Text('🏆 $t',
+                  style: const TextStyle(
+                      color: Hanji.badge, fontSize: 13, fontWeight: FontWeight.w700)),
+            ],
+          ],
           const SizedBox(height: 16),
-          _redButton(n.isFinale ? '기억석 복원 — 완료!' : '다음 장소로',
+          _redButton(
+              _reward?.regionRestored == true
+                  ? '기억석 복원 — 완료!'
+                  : (n.isFinale ? '기억석 복원 — 완료!' : '다음 장소로'),
               onTap: () => Navigator.pop(context, _granted)),
         ]),
       );

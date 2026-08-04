@@ -13,6 +13,25 @@ subprojects {
     project.evaluationDependsOn(":app")
 }
 
+// ── geolocator_android 호환 심 ─────────────────────────────────────────
+// geolocator_android는 자기 build.gradle에서 `flutter.compileSdkVersion`을 참조하는데,
+// 이 확장은 Flutter 3.27+ Gradle 플러그인이 플러그인 서브프로젝트에 등록해 준다.
+// 팀 SDK는 3.24.3이라 없어서 "unknown property 'flutter'"로 평가가 깨진다.
+//
+// SDK 업그레이드를 강요하지 않는다는 원칙(C7)에 따라, 플러그인 서브프로젝트에만
+// 같은 이름의 프로퍼티를 미리 넣어 준다. app 모듈은 진짜 flutter 확장을 쓰므로 건드리지 않는다.
+// ⚠️ Flutter를 3.27+로 올리면 이 블록을 제거할 것 — 진짜 확장과 충돌한다.
+subprojects {
+    if (project.name != "app") {
+        project.ext.flutter = [
+            compileSdkVersion: 35,
+            minSdkVersion    : 21,   // geolocator 요구 최소치
+            targetSdkVersion : 35,
+            ndkVersion       : "27.0.12077973",
+        ]
+    }
+}
+
 tasks.register("clean", Delete) {
     delete rootProject.buildDir
 }

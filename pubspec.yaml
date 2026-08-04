@@ -43,13 +43,16 @@ dependencies:
   # 로그인 토큰·세션 저장 (웹/모바일 지원)
   shared_preferences: ^2.2.0
 
-  # TODO(정찬희): 지도·GPS·실시간·AR (MVP 골격엔 미포함, 컴파일 단순화)
-  #   geolocator · flutter_map(또는 google_maps_flutter) · socket_io_client · ar_flutter_plugin
+  # 위치(GPS) — 노드 반경 도착 판정. 서버 verify-location에 좌표+정확도를 보낸다.
+  # ⚠️ 13+는 Flutter 3.27+를 요구한다(Color.toARGB32). 팀 SDK 3.24.3 기준으로 10.x에 고정.
+  #    android/build.gradle의 geolocator 심도 함께 참고 — SDK 올리면 둘 다 정리할 것.
+  # 아직: flutter_map(지도) · socket_io_client(실시간) · camera(AR)
 
   # The following adds the Cupertino Icons font to your application.
   # Use with the CupertinoIcons class for iOS style icons.
   cupertino_icons: ^1.0.8
   google_fonts: ^6.3.0
+  geolocator: ^10.1.0
 
 dev_dependencies:
   flutter_test:
