@@ -8,7 +8,11 @@ plugins {
 android {
     namespace = "com.dokkaebi.dokkaebi_app"
     compileSdk = flutter.compileSdkVersion
-    ndkVersion = flutter.ndkVersion
+    // 플러그인(path_provider·shared_preferences 등)이 요구하는 NDK로 고정.
+    // flutter.ndkVersion(23.x)을 쓰면 플러그인과 어긋나 경고가 나고,
+    // camera·geolocator처럼 네이티브 의존이 큰 플러그인에선 빌드가 깨진다.
+    // NDK는 하위 호환이므로 요구 버전 중 가장 높은 것을 쓴다.
+    ndkVersion = "27.0.12077973"
 
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_1_8
