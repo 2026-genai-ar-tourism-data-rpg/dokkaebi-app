@@ -58,5 +58,18 @@
 	<true/>
 	<key>UIApplicationSupportsIndirectInputEvents</key>
 	<true/>
+
+	<!-- ── 권한 사유 문구 (iOS는 이 키가 없으면 권한 요청 순간 앱이 강제 종료된다) ──
+	     아직 geolocator·camera 패키지를 넣기 전이지만, 넣는 순간 필요해지고
+	     빠뜨리면 실기기에서만 크래시로 드러나므로 미리 선언해 둔다.
+	     문구는 심사에서 읽히므로 '왜 필요한지'를 구체적으로 쓴다. -->
+	<key>NSLocationWhenInUseUsageDescription</key>
+	<string>기억석 조각이 있는 장소에 도착했는지 확인하기 위해 위치 정보가 필요합니다.</string>
+	<key>NSCameraUsageDescription</key>
+	<string>AR로 기억석 조각을 찾기 위해 카메라를 사용합니다.</string>
+	<key>NSMotionUsageDescription</key>
+	<string>AR 화면에서 조각이 있는 방향을 가리키기 위해 기기의 방향 센서를 사용합니다.</string>
+	<key>NSPhotoLibraryAddUsageDescription</key>
+	<string>탐험 중 찍은 사진을 사진첩에 저장합니다.</string>
 </dict>
 </plist>

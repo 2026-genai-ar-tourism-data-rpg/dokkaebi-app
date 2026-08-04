@@ -20,20 +20,26 @@ class LocationVerifyScreen extends StatefulWidget {
 
 class _LocationVerifyScreenState extends State<LocationVerifyScreen>
     with SingleTickerProviderStateMixin {
-  late final AnimationController _ac =
-      AnimationController(vsync: this, duration: const Duration(seconds: 2))..repeat();
+  // ⚠️ initState에서 생성 — 지연 생성이면 dispose가 최초 접근이 되어 터질 수 있다.
+  late final AnimationController _ac;
+  Timer? _autoAdvance;
 
   @override
   void initState() {
     super.initState();
+    _ac = AnimationController(vsync: this, duration: const Duration(seconds: 2))..repeat();
     // 연출 후 자동 진행(인증 완료로 pop). 실제론 GPS 판정 결과로 분기(정찬희).
-    Timer(const Duration(milliseconds: 1800), () {
+    _autoAdvance = Timer(const Duration(milliseconds: 1800), () {
       if (mounted) Navigator.pop(context, true);
     });
   }
 
   @override
   void dispose() {
+    // 반드시 취소한다 — 사용자가 1.8초 안에 뒤로 가면 타이머가 살아남아
+    // 이미 떠난 화면의 context로 pop을 호출한다(엉뚱한 화면이 닫히고,
+    // 위젯 트리 정리 중이면 "deactivated widget's ancestor" 예외).
+    _autoAdvance?.cancel();
     _ac.dispose();
     super.dispose();
   }

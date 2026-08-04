@@ -151,8 +151,16 @@ class DokkaebiNpc extends StatefulWidget {
 }
 
 class _DokkaebiNpcState extends State<DokkaebiNpc> with SingleTickerProviderStateMixin {
-  late final AnimationController _c =
-      AnimationController(vsync: this, duration: const Duration(milliseconds: 3200))..repeat(reverse: true);
+  // ⚠️ initState에서 생성 — `late final = AnimationController(...)`는 지연 생성이라
+  //    build가 이 컨트롤러를 안 쓰는 분기로 지나가면 dispose()가 최초 접근이 되어
+  //    비활성 element에서 TickerMode를 조회하다 터진다.
+  late final AnimationController _c;
+
+  @override
+  void initState() {
+    super.initState();
+    _c = AnimationController(vsync: this, duration: const Duration(milliseconds: 3200))..repeat(reverse: true);
+  }
   @override
   void dispose() { _c.dispose(); super.dispose(); }
 

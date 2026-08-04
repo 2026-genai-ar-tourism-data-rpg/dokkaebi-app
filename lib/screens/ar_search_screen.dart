@@ -26,8 +26,19 @@ class _ArSearchScreenState extends State<ArSearchScreen> with SingleTickerProvid
   String _mode = 'scan'; // hint | scan | npc
   bool _scanned = false;
   int _hintShown = 1; // 방탈출: 처음 1개만, "다음 힌트"로 단계 노출
-  late final AnimationController _ac =
-      AnimationController(vsync: this, duration: const Duration(milliseconds: 1400))..repeat(reverse: true);
+  // ⚠️ initState에서 생성한다. `late final _ac = AnimationController(...)` 형태로 두면
+  //    지연 생성이라, build가 이 컨트롤러를 안 쓰는 분기(_mode='scan' 등)로만 지나가면
+  //    dispose()의 _ac.dispose()가 '최초 접근'이 되어 dispose 도중에 컨트롤러를 만든다.
+  //    그 시점엔 element가 비활성이라 TickerMode 조회가 터진다
+  //    ("Looking up a deactivated widget's ancestor is unsafe").
+  late final AnimationController _ac;
+
+  @override
+  void initState() {
+    super.initState();
+    _ac = AnimationController(vsync: this, duration: const Duration(milliseconds: 1400))
+      ..repeat(reverse: true);
+  }
 
   @override
   void dispose() {

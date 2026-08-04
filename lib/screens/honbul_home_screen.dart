@@ -69,8 +69,16 @@ class _HonbulHomeScreenState extends State<HonbulHomeScreen> with SingleTickerPr
 
   // 연속 애니메이션용 마스터 클록 (초 단위 시간 = value*period)
   static const _period = 60.0;
-  late final AnimationController _clock =
-      AnimationController(vsync: this, duration: const Duration(seconds: 60))..repeat();
+  // ⚠️ initState에서 생성 — `late final = AnimationController(...)`는 지연 생성이라
+  //    build가 이 컨트롤러를 안 쓰는 분기로 지나가면 dispose()가 최초 접근이 되어
+  //    비활성 element에서 TickerMode를 조회하다 터진다.
+  late final AnimationController _clock;
+
+  @override
+  void initState() {
+    super.initState();
+    _clock = AnimationController(vsync: this, duration: const Duration(seconds: 60))..repeat();
+  }
   double get _time => _clock.value * _period;
 
   List<Memory> _seedMemories() {
@@ -670,7 +678,13 @@ class _HonbulHomeScreenState extends State<HonbulHomeScreen> with SingleTickerPr
       DecoratedBox(decoration: BoxDecoration(gradient: RadialGradient(center: const Alignment(0, -0.2), radius: 0.9, colors: [_red.withOpacity(0.22), const Color(0x001B1B1E)], stops: const [0, 0.68]))),
       SafeArea(child: Padding(
         padding: const EdgeInsets.fromLTRB(36, 30, 36, 150),
-        child: Column(mainAxisAlignment: MainAxisAlignment.center, children: [
+        // 결과 연출은 조각(150) + 제목 + 태그 + 본문으로 세로가 길다. 320x568 기기에선
+        // 남는 높이(388)를 109px 넘겨 오버플로가 났다 → 넘칠 때만 스크롤되게 한다.
+        // ConstrainedBox(minHeight)가 있어 여유가 있는 기기에선 기존처럼 중앙 정렬 유지.
+        child: LayoutBuilder(builder: (context, box) => SingleChildScrollView(
+          child: ConstrainedBox(
+            constraints: BoxConstraints(minHeight: box.maxHeight),
+            child: Column(mainAxisAlignment: MainAxisAlignment.center, children: [
           rvItem(0.05, Text('기억을 되찾았습니다', style: _mono(10, _teal2, spacing: 3.5))),
           const SizedBox(height: 22),
           // 조각
@@ -694,7 +708,9 @@ class _HonbulHomeScreenState extends State<HonbulHomeScreen> with SingleTickerPr
           ])),
           const SizedBox(height: 20),
           rvItem(0.5, ConstrainedBox(constraints: const BoxConstraints(maxWidth: 300), child: Text(m.story, textAlign: TextAlign.center, style: _serif(15, _cream2, height: 1.9)))),
-        ]),
+            ]),
+          ),
+        )),
       )),
       Positioned(left: 30, right: 30, bottom: 44, child: Column(children: [
         rvItem(0.65, GestureDetector(onTap: _keepMemory, child: Container(
