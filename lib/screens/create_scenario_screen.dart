@@ -296,6 +296,8 @@ class _CreateScenarioScreenState extends State<CreateScenarioScreen> {
               padding: EdgeInsets.only(top: 8),
               child: Text('검색 결과 없음', style: TextStyle(color: Colors.grey)),
             ),
+          // GlowCard는 CardTheme/CardThemeData를 쓰지 않는 Container 기반 위젯이라
+          // SDK 버전(3.24/3.44) 분기 문제(theme.dart 주석 참고)와 무관하다.
           ..._results.map((c) {
             final WishWarning warning = _wishWarning(c);
             return Padding(
