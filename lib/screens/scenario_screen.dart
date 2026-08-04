@@ -13,6 +13,7 @@ import 'package:flutter/material.dart';
 
 import '../game/player_state.dart';
 import '../models/scenario.dart';
+import '../game/run_session.dart';
 import '../store.dart';
 import '../theme.dart';
 import '../widgets/honbul_style.dart';
@@ -214,6 +215,47 @@ class ScenarioScreen extends StatefulWidget {
 }
 
 class _ScenarioScreenState extends State<ScenarioScreen> {
+  @override
+  void initState() {
+    super.initState();
+    _openRun();
+  }
+
+  /// 이 코스의 서버 플레이(run)를 연다 — 진행도·GPS 판정의 주인이 서버가 되는 시점.
+  ///
+  /// 실패해도 화면을 막지 않는다: 서버 없이도 코스를 훑어볼 수는 있어야 한다.
+  /// 대신 그 상태에서는 조각이 서버에 기록되지 않으므로 상단 배너로 알린다.
+  Future<void> _openRun() async {
+    await RunSession.I.start(widget.scenario.scenarioId);
+    if (mounted) setState(() {});
+  }
+
+  /// 서버 세션 없이 도는 중임을 알리는 배너 — 조용히 로컬만 쌓이면 나중에 어긋난다.
+  Widget? _offlineBanner() {
+    if (RunSession.I.isActive) return null;
+    return Container(
+      width: double.infinity,
+      margin: const EdgeInsets.fromLTRB(16, 8, 16, 0),
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+      decoration: BoxDecoration(
+        color: Colors.orange.withOpacity(0.12),
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: Colors.orange.withOpacity(0.5)),
+      ),
+      child: Row(children: [
+        const Icon(Icons.cloud_off, size: 16, color: Colors.orangeAccent),
+        const SizedBox(width: 8),
+        Expanded(
+          child: Text(
+            RunSession.I.error ?? '서버에 연결되지 않아 진행이 저장되지 않습니다.',
+            style: const TextStyle(color: Colors.orangeAccent, fontSize: 12, height: 1.4),
+          ),
+        ),
+        TextButton(onPressed: _openRun, child: const Text('재시도')),
+      ]),
+    );
+  }
+
   /// 노드 진입 — 게이팅(3절)을 먼저 통과시킨다. **미충족은 차단이 아니라 안내.**
   Future<void> _play(QuestNode n, List<String> inventory) async {
     final scn = widget.scenario;
@@ -401,9 +443,13 @@ class _ScenarioScreenState extends State<ScenarioScreen> {
           }
           // 대사 연계에 넘길 것 — 조각·단서 이름만(플래그·쿠폰은 제외)
           final carried = state.carriedNames;
+          final offline = _offlineBanner();
           return ListView(
             padding: const EdgeInsets.fromLTRB(16, 4, 16, 24),
             children: [
+              // 서버 세션이 없으면 먼저 알린다 — 조각이 저장되지 않는 상태다.
+              if (offline != null) ...[offline, const SizedBox(height: 10)],
+
               // ── B. 복원 히어로 ──────────────────────────
               _RestoreHero(region: scn.region, stones: stones, done: done,
                   total: stoneTotal, doneCount: stoneDone),

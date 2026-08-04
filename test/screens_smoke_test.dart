@@ -18,6 +18,7 @@ import 'package:dokkaebi_app/screens/create_scenario_screen.dart';
 import 'package:dokkaebi_app/screens/dex_screen.dart';
 import 'package:dokkaebi_app/screens/home_screen.dart';
 import 'package:dokkaebi_app/screens/honbul_home_screen.dart';
+import 'package:dokkaebi_app/game/location_service.dart';
 import 'package:dokkaebi_app/screens/location_verify_screen.dart';
 import 'package:dokkaebi_app/screens/login_screen.dart';
 import 'package:dokkaebi_app/screens/map_screen.dart';
@@ -53,6 +54,15 @@ const _pendingRework = <String, String>{
   // 실제로 잘리는 결함이라 먼저 고쳤다. #14와 충돌 시 #14 쪽 레이아웃을 채택하고
   // 이 테스트를 다시 돌려 남은 오버플로를 확인할 것.
 };
+
+/// 스모크용 위치 스텁 — 실기기 없이 실패 화면(버튼이 가장 많은 상태)을 그린다.
+class _StubLocation extends LocationService {
+  final LocationResult result;
+  const _StubLocation(this.result);
+  @override
+  Future<LocationResult> current({Duration timeout = const Duration(seconds: 15)}) async =>
+      result;
+}
 
 /// 자체 Scaffold가 없는 '탭 바디' 화면 — MainShell과 동일하게 감싸 줘야 한다.
 /// (main.dart의 MainShell: Scaffold(body: SafeArea(child: tab)))
@@ -147,7 +157,11 @@ void main() {
     'ProfileScreen': () => const ProfileScreen(),
     'PlaceDetailScreen': () => const PlaceDetailScreen(),
     'CreateScenarioScreen': () => const CreateScenarioScreen(),
-    'LocationVerifyScreen': () => const LocationVerifyScreen(),
+    // 실 GPS를 타므로 스텁을 주입한다 — 안 하면 테스트가 플랫폼 채널을 기다린다.
+    'LocationVerifyScreen': () => const LocationVerifyScreen(
+          locationService: _StubLocation(
+              LocationResult.fail(LocationFailure.deniedForever)),
+        ),
     'ArSearchScreen': () => const ArSearchScreen(
           placeName: '경복궁',
           order: '근정전 처마를 찾아 담거라',

@@ -111,19 +111,30 @@ flutter install
 
 `uses-feature required="false"`는 중요합니다 — `true`면 Play 스토어가 **카메라·GPS 없는 기기를 아예 설치 대상에서 제외**합니다.
 
-## 아직 안 한 것 — 패키지 추가
+## GPS는 배선 완료 — 버전에 제약이 있습니다
 
-일부러 넣지 않았습니다. 쓰지 않는 네이티브 패키지는 빌드만 무겁게 하고 iOS pod 문제를 미리 끌어옵니다. 실제 배선하는 PR에서 함께 넣으세요.
+`geolocator`를 **10.x에 고정**했습니다. 13+는 `Color.toARGB32()`(Flutter 3.27+)를 쓰고, 팀 SDK는 3.24.3이라 빌드가 깨집니다. C7 원칙대로 SDK 업그레이드를 강요하지 않습니다.
+
+추가로 `android/build.gradle`에 **geolocator 심**이 들어가 있습니다. `geolocator_android`가 자기 build.gradle에서 `flutter.compileSdkVersion`을 참조하는데, 그 확장은 Flutter 3.27+ Gradle 플러그인이 등록해 줍니다. 없는 상태라 플러그인 서브프로젝트에만 같은 이름의 프로퍼티를 미리 넣어 우회했습니다.
+
+> ⚠️ **Flutter를 3.27+로 올리면** `geolocator`를 최신으로 되돌리고 이 심을 **제거**해야 합니다. 진짜 확장과 충돌합니다.
+
+`permission_handler`는 넣었다가 **뺐습니다** — geolocator가 위치 권한을 자체 처리해서 쓸 데가 없었고, 13.x가 빌드를 깨뜨렸습니다.
+
+## 아직 안 한 것 — 나머지 패키지
+
+쓰지 않는 네이티브 패키지는 빌드만 무겁게 하고 iOS pod 문제를 미리 끌어옵니다. 실제 배선하는 PR에서 함께 넣으세요.
 
 ```yaml
 dependencies:
-  geolocator: ^13.0.0          # GPS 좌표 + 정확도(accuracy_m) → 서버 verify-location
-  permission_handler: ^11.3.0  # 런타임 권한 요청 (선언만으로는 부족)
   flutter_map: ^7.0.0          # 지도 타일 (구글맵보다 키 발급이 간단)
   latlong2: ^0.9.0             # flutter_map 좌표 타입
   camera: ^0.11.0              # AR 카메라 프리뷰
   flutter_compass: ^0.8.0      # AR 방위 오버레이
 ```
+
+> 새 플러그인을 넣을 때 `flutter.compileSdkVersion` 참조가 있으면 위 심의 도움을 받습니다.
+> `Color.toARGB32` 같은 3.27+ API를 쓰면 빌드가 깨지니 버전을 낮춰 고정하세요.
 
 추가 후 필요한 작업:
 
