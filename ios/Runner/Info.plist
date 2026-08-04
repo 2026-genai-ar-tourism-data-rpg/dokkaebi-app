@@ -2,6 +2,19 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
+	<!-- 개발용 평문 HTTP 허용 — 로컬 서버(http://<PC_IP>:8000) 호출.
+	     iOS는 ATS로 HTTP를 기본 차단하므로 이게 없으면 실기기에서 연결이 전부 실패한다.
+	     ⚠️ 배포 시에는 서버를 HTTPS로 올리고 이 블록을 제거할 것. -->
+	<key>NSAppTransportSecurity</key>
+	<dict>
+		<key>NSAllowsLocalNetworking</key>
+		<true/>
+		<key>NSAllowsArbitraryLoads</key>
+		<true/>
+	</dict>
+	<!-- 같은 Wi-Fi의 PC 서버에 접속하려면 로컬 네트워크 권한이 필요(iOS 14+) -->
+	<key>NSLocalNetworkUsageDescription</key>
+	<string>같은 Wi-Fi의 게임 서버에 연결하기 위해 로컬 네트워크 접근이 필요합니다.</string>
 	<key>CFBundleDevelopmentRegion</key>
 	<string>$(DEVELOPMENT_LANGUAGE)</string>
 	<key>CFBundleDisplayName</key>
