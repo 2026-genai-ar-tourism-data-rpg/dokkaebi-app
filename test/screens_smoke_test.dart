@@ -5,6 +5,11 @@
 //            (1) 빌드 중 예외가 안 나는지, (2) RenderFlex 오버플로가 없는지 검사.
 //            기존 테스트는 scenario/quest_journey 2개만 커버해서 나머지 화면은
 //            실기기에서 처음 열 때야 빨간 화면을 만나게 된다 — 그 전에 잡는다.
+//
+//            ⚠️ 탭 바디 화면(home/map/quest_tab/dex/profile)은 자체 Scaffold가 없다.
+//            MainShell의 Scaffold 안에 들어가는 구조라, 테스트에서도 똑같이 감싸야 한다.
+//            안 감싸면 Material 조상이 없어 DefaultTextStyle이 48px로 튀고,
+//            없는 오버플로가 잔뜩 보고된다(실측: Home 226px = 전부 허위).
 // 구현일: 2026-08-04 | 작성: kys (local-sweep/kys/v1)
 // ============================================================
 import 'package:dokkaebi_app/models/scenario.dart';
@@ -43,9 +48,16 @@ const _sizes = <String, Size>{
 /// 지금 레이아웃을 손대면 충돌만 나고, 어차피 교체될 코드를 고치는 셈이 된다.
 /// **app#14 머지 직후 이 맵을 비우고 남은 오버플로를 확인할 것.**
 const _pendingRework = <String, String>{
-  'HomeScreen': 'app#14가 재구성 중 — 머지 후 skip 해제 (오버플로 226px right @320, 156px right @390)',
-  'MapScreen': 'app#14가 재구성 중 — 머지 후 skip 해제 (오버플로 24px right @320)',
-  'OnboardingScreen': 'app#14가 재구성 중 — 머지 후 skip 해제 (오버플로 2px bottom @320)',
+  // 비어 있음 = 보류 중인 화면 없음.
+  // app#14가 Home·Map·Onboarding을 재구성 중이지만, 오버플로는 좁은 기기에서
+  // 실제로 잘리는 결함이라 먼저 고쳤다. #14와 충돌 시 #14 쪽 레이아웃을 채택하고
+  // 이 테스트를 다시 돌려 남은 오버플로를 확인할 것.
+};
+
+/// 자체 Scaffold가 없는 '탭 바디' 화면 — MainShell과 동일하게 감싸 줘야 한다.
+/// (main.dart의 MainShell: Scaffold(body: SafeArea(child: tab)))
+const _tabBodies = {
+  'HomeScreen', 'MapScreen', 'QuestTabScreen', 'DexScreen', 'ProfileScreen',
 };
 
 /// 퀘스트 플레이 화면에 넣을 최소 노드(AI 계약 형태).
@@ -84,7 +96,12 @@ QuestNode _node() => QuestNode.fromJson({
     });
 
 /// 화면 하나를 주어진 크기로 그려 보고 예외·오버플로를 잡는다.
-Future<List<String>> _render(WidgetTester tester, Widget screen, Size size) async {
+Future<List<String>> _render(
+  WidgetTester tester,
+  Widget screen,
+  Size size, {
+  required bool needsShell,
+}) async {
   final problems = <String>[];
 
   tester.view.physicalSize = size;
@@ -93,7 +110,8 @@ Future<List<String>> _render(WidgetTester tester, Widget screen, Size size) asyn
 
   await tester.pumpWidget(MaterialApp(
     theme: buildDokkaebiTheme(),
-    home: screen,
+    // 앱에서 보이는 그대로 — 탭 바디는 MainShell의 Scaffold 안에서 그려진다.
+    home: needsShell ? Scaffold(body: SafeArea(child: screen)) : screen,
     debugShowCheckedModeBanner: false,
   ));
   // 애니메이션·비동기 초기화가 도는 화면이 있어 settle 대신 고정 프레임을 돌린다
@@ -150,7 +168,8 @@ void main() {
               ? '${size.key} 에서 예외·오버플로 없이 그려진다'
               : '${size.key} 에서 예외·오버플로 없이 그려진다  [보류: $pending]',
           (tester) async {
-            final problems = await _render(tester, entry.value(), size.value);
+            final problems = await _render(tester, entry.value(), size.value,
+                needsShell: _tabBodies.contains(entry.key));
             expect(problems, isEmpty, reason: '${entry.key} @ ${size.key}\n${problems.join('\n')}');
           },
           skip: pending != null,

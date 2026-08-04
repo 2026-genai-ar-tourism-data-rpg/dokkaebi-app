@@ -79,8 +79,16 @@ class _MapScreenState extends State<MapScreen> {
             Row(children: const [
               Text('서울', style: TextStyle(color: AppColors.textPrimary, fontSize: 18, fontWeight: FontWeight.bold)),
               SizedBox(width: 8),
-              Text('Seoul · 퀘스트 12개', style: TextStyle(color: AppColors.textSecondary, fontSize: 12)),
-              Spacer(),
+              // Expanded 필수 — 부제가 길어지면(지역명·퀘스트 수) 320px 기기에서
+              // 오른쪽 진행률(68%)을 밀어내 넘친다. Spacer는 남는 공간만 먹으므로
+              // 정작 넘칠 때는 도움이 안 된다.
+              Expanded(
+                child: Text('Seoul · 퀘스트 12개',
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(color: AppColors.textSecondary, fontSize: 12)),
+              ),
+              SizedBox(width: 8),
               Text('68%', style: TextStyle(color: AppColors.gold, fontSize: 18, fontWeight: FontWeight.bold)),
             ]),
             const SizedBox(height: 10),
