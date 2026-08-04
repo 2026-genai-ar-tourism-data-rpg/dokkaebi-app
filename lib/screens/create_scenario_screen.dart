@@ -12,8 +12,10 @@ import 'package:flutter/material.dart';
 
 import '../api/api_client.dart';
 import '../models/scenario.dart';
+import '../session.dart';
 import '../store.dart';
 import '../theme.dart';
+import 'prologue_screen.dart';
 import 'scenario_screen.dart';
 
 class CreateScenarioScreen extends StatefulWidget {
@@ -112,8 +114,13 @@ class _CreateScenarioScreenState extends State<CreateScenarioScreen> {
       );
       ScenarioStore.I.add(scn); // 퀘스트 일지에 남김
       if (!mounted) return;
-      Navigator.push(context,
-          MaterialPageRoute(builder: (_) => ScenarioScreen(scenario: scn)));
+      // 첫 코스 생성 직후에만 프롤로그(도깨비눈이 열린 날)를 보여준다.
+      Navigator.push(
+          context,
+          MaterialPageRoute(
+              builder: (_) => Session.prologueSeen
+                  ? ScenarioScreen(scenario: scn)
+                  : PrologueScreen(scenario: scn)));
     } catch (e) {
       setState(() => _error = '생성 실패 — 서버가 켜져 있나요? ($e)');
     } finally {

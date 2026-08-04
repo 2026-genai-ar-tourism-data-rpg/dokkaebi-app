@@ -8,9 +8,9 @@
 import 'package:flutter/material.dart';
 
 import '../api/api_client.dart';
+import '../main.dart' show MainShell;
 import '../store.dart';
 import '../theme.dart';
-import 'honbul_home_screen.dart';
 
 class LoginScreen extends StatefulWidget {
   const LoginScreen({super.key});
@@ -34,7 +34,7 @@ class _LoginScreenState extends State<LoginScreen> {
       await ScenarioStore.I.load(); // 이 유저의 저장된 탐험 복원
       if (!mounted) return;
       Navigator.pushReplacement(
-          context, MaterialPageRoute(builder: (_) => const HonbulHomeScreen()));
+          context, MaterialPageRoute(builder: (_) => const MainShell()));
     } catch (e) {
       setState(() => _error = '$e');
     } finally {
