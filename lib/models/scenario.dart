@@ -411,6 +411,10 @@ class Scenario {
   final bool isBranching;
   final RouteTree? routeTree;
 
+  /// 코스 생성 시 지정한 1인 예산(원). 앱이 보내는 값인데 응답에서 안 읽어
+  /// 저장된 코스의 예산을 표시할 수 없었다 → 파싱·왕복 대상에 포함.
+  final int? budget;
+
   Scenario({
     required this.scenarioId,
     required this.title,
@@ -420,6 +424,7 @@ class Scenario {
     int? stoneTotal,
     this.isBranching = false,
     this.routeTree,
+    this.budget,
   }) : _stoneTotal = stoneTotal;
 
   /// 기억석 조각 노드만(식음 제외). 진행률·조각수 표시는 전부 이걸 기준으로.
@@ -452,6 +457,7 @@ class Scenario {
         region: j['region'] ?? '',
         anchorNodeId: j['anchor_node_id'],
         stoneTotal: (j['stone_total'] as num?)?.toInt(),
+        budget: (j['budget'] as num?)?.toInt(),
         isBranching: j['is_branching'] ?? false,
         routeTree: j['route_tree'] != null
             ? RouteTree.fromJson((j['route_tree'] as Map).cast<String, dynamic>())
@@ -467,6 +473,7 @@ class Scenario {
         'region': region,
         'anchor_node_id': anchorNodeId,
         'stone_total': stoneTotal,
+        if (budget != null) 'budget': budget,
         if (isBranching) 'is_branching': isBranching,
         if (routeTree != null) 'route_tree': routeTree!.toJson(),
         'node_sequence': nodeSequence.map((n) => n.toJson()).toList(),
