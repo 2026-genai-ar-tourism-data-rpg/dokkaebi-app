@@ -31,8 +31,16 @@ class _RouteMap extends StatefulWidget {
 }
 
 class _RouteMapState extends State<_RouteMap> with SingleTickerProviderStateMixin {
-  late final AnimationController _pulse =
-      AnimationController(vsync: this, duration: const Duration(milliseconds: 2200))..repeat();
+  // ⚠️ initState에서 생성 — `late final = AnimationController(...)`는 지연 생성이라
+  //    build가 이 컨트롤러를 안 쓰는 분기로 지나가면 dispose()가 최초 접근이 되어
+  //    비활성 element에서 TickerMode를 조회하다 터진다.
+  late final AnimationController _pulse;
+
+  @override
+  void initState() {
+    super.initState();
+    _pulse = AnimationController(vsync: this, duration: const Duration(milliseconds: 2200))..repeat();
+  }
   @override
   void dispose() {
     _pulse.dispose();

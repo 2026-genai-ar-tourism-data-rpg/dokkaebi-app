@@ -2,6 +2,20 @@
     <!-- 서버(dokkaebi-server) REST 호출 -->
     <uses-permission android:name="android.permission.INTERNET"/>
 
+    <!-- ── 게임 플레이 권한 ──
+         GPS: 노드 반경 도착 판정(서버 verify-location). FINE이 없으면 반경 100m 판정이
+              사실상 불가능하고, COARSE는 FINE 거부 시 폴백으로 쓴다.
+         카메라: AR 조각 탐색.
+         런타임 요청은 permission_handler로 별도 처리해야 한다(선언만으로는 부족). -->
+    <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION"/>
+    <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION"/>
+    <uses-permission android:name="android.permission.CAMERA"/>
+
+    <!-- 카메라·GPS 없는 기기(태블릿 등)에서도 설치는 되게 한다 — required=false.
+         true면 Play 스토어가 해당 하드웨어 없는 기기를 아예 필터링한다. -->
+    <uses-feature android:name="android.hardware.camera" android:required="false"/>
+    <uses-feature android:name="android.hardware.location.gps" android:required="false"/>
+
     <application
         android:label="dokkaebi_app"
         android:name="${applicationName}"

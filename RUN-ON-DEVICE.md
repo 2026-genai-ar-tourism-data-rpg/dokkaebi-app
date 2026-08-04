@@ -89,3 +89,66 @@ flutter install
 
 **아직 안 됩니다** — 실제 GPS(좌표 직접 입력), 실제 지도 타일, AR 카메라, 멀티(파티).
 `pubspec.yaml`에 `geolocator`·`flutter_map`·`camera`가 아직 없습니다. 서버 게임 루프(GPS 판정·조각 획득·보상)는 완성돼 있으나 앱이 아직 호출하지 않습니다.
+
+---
+
+# 다음 단계 사전 설정 (GPS · AR)
+
+플랫폼 권한은 **미리 선언해 뒀습니다.** iOS는 사유 문구가 없으면 권한 요청 순간 앱이 **강제 종료**되고, 이건 실기기에서만 드러나서 나중에 원인 찾기가 어렵습니다.
+
+## 이미 되어 있는 것
+
+| 항목 | Android | iOS |
+|---|---|---|
+| 인터넷 | `INTERNET` | — |
+| 평문 HTTP(로컬 서버) | `usesCleartextTraffic` | `NSAppTransportSecurity` |
+| 위치(GPS) | `ACCESS_FINE_LOCATION`·`ACCESS_COARSE_LOCATION` | `NSLocationWhenInUseUsageDescription` |
+| 카메라(AR) | `CAMERA` | `NSCameraUsageDescription` |
+| 방향 센서(AR 나침반) | — | `NSMotionUsageDescription` |
+| 사진 저장 | — | `NSPhotoLibraryAddUsageDescription` |
+| 하드웨어 필터 회피 | `uses-feature required="false"` | — |
+| NDK 버전 고정 | `27.0.12077973` | — |
+
+`uses-feature required="false"`는 중요합니다 — `true`면 Play 스토어가 **카메라·GPS 없는 기기를 아예 설치 대상에서 제외**합니다.
+
+## 아직 안 한 것 — 패키지 추가
+
+일부러 넣지 않았습니다. 쓰지 않는 네이티브 패키지는 빌드만 무겁게 하고 iOS pod 문제를 미리 끌어옵니다. 실제 배선하는 PR에서 함께 넣으세요.
+
+```yaml
+dependencies:
+  geolocator: ^13.0.0          # GPS 좌표 + 정확도(accuracy_m) → 서버 verify-location
+  permission_handler: ^11.3.0  # 런타임 권한 요청 (선언만으로는 부족)
+  flutter_map: ^7.0.0          # 지도 타일 (구글맵보다 키 발급이 간단)
+  latlong2: ^0.9.0             # flutter_map 좌표 타입
+  camera: ^0.11.0              # AR 카메라 프리뷰
+  flutter_compass: ^0.8.0      # AR 방위 오버레이
+```
+
+추가 후 필요한 작업:
+
+1. `cd ios && pod install` (Xcode 설치 후)
+2. Android `minSdk` 확인 — `geolocator`·`camera`는 21+, `flutter_map`은 이슈 없음. 현재 `flutter.minSdkVersion` 사용 중이라 대부분 충족
+3. 런타임 권한 흐름: 권한 거부/영구 거부 분기를 반드시 처리 (거부 시 `openAppSettings()` 안내)
+
+## 서버는 이미 준비됨
+
+앱이 GPS를 얻으면 바로 붙일 수 있게 게임 루프가 완성돼 있습니다 (server#9).
+
+```
+POST /v1/runs {scenario_id}                         → run_id
+POST /v1/runs/:runId/nodes/:nodeId/verify-location  {lat, lng, accuracy_m}
+POST /v1/runs/:runId/nodes/:nodeId/collect
+POST /v1/runs/:runId/nodes/:nodeId/complete
+```
+
+`accuracy_m`을 꼭 같이 보내세요 — 서버가 GPS 오차만큼 반경 판정을 관대하게 해주고, 오차가 너무 크면 `LOW_ACCURACY`로 보류합니다.
+
+## 로컬 에러 확인 방법
+
+```bash
+flutter test                 # 전 화면 스모크 포함 (117 통과 / 9 보류)
+flutter analyze              # 정적 분석
+```
+
+`test/screens_smoke_test.dart`가 모든 화면을 **320·390·768 폭**으로 렌더링해 예외와 오버플로를 잡습니다. 새 화면을 만들면 이 파일의 `screens` 맵에 한 줄 추가하세요.
