@@ -152,3 +152,56 @@ flutter analyze              # 정적 분석
 ```
 
 `test/screens_smoke_test.dart`가 모든 화면을 **320·390·768 폭**으로 렌더링해 예외와 오버플로를 잡습니다. 새 화면을 만들면 이 파일의 `screens` 맵에 한 줄 추가하세요.
+
+---
+
+# 배포 전 검증 (스모크로는 부족합니다)
+
+## 두 층의 테스트 — 목적이 다릅니다
+
+| | `flutter test` | `flutter test test_e2e` |
+|---|---|---|
+| 무엇을 보나 | 화면이 안 깨지는지, 모델 파싱 | **실제로 플레이가 되는지** |
+| 의존 | 없음 (오프라인·결정론) | 서버·DB·AI·LLM 전부 기동 |
+| 언제 | 매 커밋 | **배포 전 필수** |
+| 서버 없으면 | 상관없음 | **실패한다** (건너뛰지 않음) |
+
+위젯 스모크는 "빨간 화면이 안 뜬다"만 보장합니다. **서버 계약이 어긋나거나 GPS 판정이 죽어도 초록입니다.** 배포 전에는 실스택 E2E가 게이트여야 합니다.
+
+## 실스택 E2E 실행
+
+```bash
+# 1) 전체 스택 기동 (README-DEV.md 참고)
+cd dokkaebi-infra && docker compose up -d postgres redis
+cd dokkaebi-ai    && .venv/bin/python -m uvicorn app.main:app --host 0.0.0.0 --port 8001
+cd dokkaebi-server && npm run build && npm start
+
+# 2) E2E
+cd dokkaebi-app
+flutter test test_e2e --dart-define=SERVER_BASE_URL=http://localhost:8000
+```
+
+검증 내용:
+
+1. **실스택 완주** — 로그인 → 시나리오 생성(실 TourAPI + 실 LLM) → run 시작 → 노드마다 GPS 인증·조각 획득·완료 → 지역 복원까지
+2. **mock 응답 차단** — NPC 대사에 `[mock 도깨비]`가 있으면 실패 (mock이 배포에 나가면 안 됨)
+3. **반경 밖 거절** — 8km 밖에서 인증되면 실패
+4. **미인증 획득 차단** — GPS 없이 조각을 얻으면 실패
+5. **동시 중복 획득** — 5회 동시 요청에 조각이 1번만 지급되는지
+6. **에러 형태** — 도메인 실패가 500이 아닌지, JSON 원문이 사용자에게 노출되지 않는지
+7. **미인증 접근** — 토큰 없이 게임 루프에 접근하면 401
+
+> `redis-cli`가 있으면 노드 이동마다 스푸핑 이력을 지웁니다. 테스트는 좌표를 순간이동하듯 옮기므로 실제 사람의 이동과 다릅니다.
+
+## 배포 전 반드시 되돌릴 것
+
+개발 편의로 열어 둔 것들입니다. **이대로 스토어에 올리면 안 됩니다.**
+
+| 항목 | 위치 | 조치 |
+|---|---|---|
+| 평문 HTTP 허용 | `AndroidManifest.xml` `usesCleartextTraffic="true"` | 서버 HTTPS 전환 후 **제거** |
+| ATS 전체 예외 | `Info.plist` `NSAllowsArbitraryLoads` | 서버 HTTPS 전환 후 **제거** (App Store 심사에서 사유 요구) |
+| 릴리스 서명 | `android/app/build.gradle` — 현재 **debug 키로 서명** | 릴리스 키스토어 생성 후 `signingConfigs.release` 연결 |
+| 서버 주소 | `--dart-define=SERVER_BASE_URL` | 운영 도메인(HTTPS)으로 |
+
+서버 쪽 배포 가드(`AUTH_SECRET`·`DB_SYNC`·CORS·Swagger)는 dokkaebi-server#12에서 기동 시 자동 검사합니다.
