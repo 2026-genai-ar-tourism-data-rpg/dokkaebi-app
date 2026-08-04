@@ -10,7 +10,7 @@ import 'package:flutter/material.dart';
 import '../models/scenario.dart';
 import '../theme.dart';
 import '../widgets/ui.dart';
-import 'create_scenario_screen.dart';
+import 'explore_place_screen.dart';
 import 'place_detail_screen.dart';
 import 'quest_play_screen.dart';
 
@@ -124,7 +124,7 @@ class HomeScreen extends StatelessWidget {
         FilledButton.icon(
           onPressed: () => Navigator.push(
             context,
-            MaterialPageRoute(builder: (_) => const CreateScenarioScreen()),
+            MaterialPageRoute(builder: (_) => const ExplorePlaceScreen()),
           ),
           icon: const Icon(Icons.explore),
           label: const Text('새 탐험 시작'),

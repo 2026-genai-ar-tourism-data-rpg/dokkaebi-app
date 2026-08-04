@@ -31,7 +31,7 @@ class DokkaebiApp extends StatelessWidget {
       title: '도깨비: 팔도의 비밀',
       theme: buildDokkaebiTheme(),
       // 로그인돼 있으면 메인 셸(홈=지역 선택 지도), 아니면 온보딩 → 로그인.
-      // 프롤로그는 로그인 직후가 아니라 첫 코스 생성 직후에 뜬다(create_scenario_screen.dart).
+      // 프롤로그는 로그인 직후가 아니라 첫 코스 생성 직후에 뜬다(explore_confirm_screen.dart).
       home: Session.isLoggedIn ? const MainShell() : const OnboardingScreen(),
       debugShowCheckedModeBanner: false,
     );

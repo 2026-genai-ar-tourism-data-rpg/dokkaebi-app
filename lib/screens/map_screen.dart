@@ -9,7 +9,7 @@ import 'package:flutter/material.dart';
 
 import '../theme.dart';
 import '../widgets/ui.dart';
-import 'create_scenario_screen.dart';
+import 'explore_place_screen.dart';
 
 class MapScreen extends StatefulWidget {
   const MapScreen({super.key});
@@ -89,7 +89,7 @@ class _MapScreenState extends State<MapScreen> {
             const SizedBox(height: 12),
             FilledButton(
               onPressed: () => Navigator.push(
-                  context, MaterialPageRoute(builder: (_) => const CreateScenarioScreen())),
+                  context, MaterialPageRoute(builder: (_) => const ExplorePlaceScreen())),
               child: const Text('이 지역 탐험하기  →'),
             ),
           ]),
