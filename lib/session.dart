@@ -11,6 +11,7 @@ class Session {
   static String? token;
   static String? userId;
   static String? nickname;
+  static bool prologueSeen = false;
 
   static bool get isLoggedIn => token != null && token!.isNotEmpty;
 
@@ -20,6 +21,13 @@ class Session {
     token = p.getString('token');
     userId = p.getString('user_id');
     nickname = p.getString('nickname');
+    prologueSeen = p.getBool('prologue_seen') ?? false;
+  }
+
+  /// 프롤로그(종로 MVP) 시청 완료 표시 — 이후 재실행 시 다시 뜨지 않는다.
+  static Future<void> markPrologueSeen() async {
+    prologueSeen = true;
+    await (await SharedPreferences.getInstance()).setBool('prologue_seen', true);
   }
 
   /// 로그인 성공 시 저장.
@@ -38,6 +46,7 @@ class Session {
     token = null;
     userId = null;
     nickname = null;
+    prologueSeen = false;
     await (await SharedPreferences.getInstance()).clear();
   }
 }

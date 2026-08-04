@@ -225,8 +225,12 @@ class _CreateScenarioScreenState extends State<CreateScenarioScreen> {
           Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
-              const Text('꼭 가고싶은 관광지 (이름 검색)',
-                  style: TextStyle(fontWeight: FontWeight.bold)),
+              // Expanded 필수 — 320px 기기에서 라벨이 카운터를 밀어내 11px 넘쳤다.
+              const Expanded(
+                child: Text('꼭 가고싶은 관광지 (이름 검색)',
+                    style: TextStyle(fontWeight: FontWeight.bold)),
+              ),
+              const SizedBox(width: 8),
               Text(
                 '${_selected.length}/$kMaxWishlistCount',
                 style: TextStyle(

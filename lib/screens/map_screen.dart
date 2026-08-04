@@ -9,7 +9,7 @@ import 'package:flutter/material.dart';
 
 import '../theme.dart';
 import '../widgets/ui.dart';
-import 'create_scenario_screen.dart';
+import 'explore_place_screen.dart';
 
 class MapScreen extends StatefulWidget {
   const MapScreen({super.key});
@@ -22,11 +22,12 @@ class _MapScreenState extends State<MapScreen> {
   static const _filters = ['전체', '전설', '영웅', '희귀'];
 
   // (지역명, 등급, x비율, y비율, 잠금)
+  // MVP 시나리오가 서울 종로구뿐이라 서울 외 지역은 전부 잠금(추후 지역 확장 시 false로).
   static const _pins = [
     ('서울', '전설', 0.42, 0.22, false),
-    ('안동', '영웅', 0.62, 0.34, false),
-    ('전주', '희귀', 0.34, 0.55, false),
-    ('경주', '영웅', 0.68, 0.55, false),
+    ('안동', '영웅', 0.62, 0.34, true),
+    ('전주', '희귀', 0.34, 0.55, true),
+    ('경주', '영웅', 0.68, 0.55, true),
     ('부산', '일반', 0.62, 0.74, true),
     ('제주', '일반', 0.30, 0.90, true),
   ];
@@ -96,7 +97,7 @@ class _MapScreenState extends State<MapScreen> {
             const SizedBox(height: 12),
             FilledButton(
               onPressed: () => Navigator.push(
-                  context, MaterialPageRoute(builder: (_) => const CreateScenarioScreen())),
+                  context, MaterialPageRoute(builder: (_) => const ExplorePlaceScreen())),
               child: const Text('이 지역 탐험하기  →'),
             ),
           ]),
