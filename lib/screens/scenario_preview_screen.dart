@@ -106,13 +106,13 @@ class ScenarioPreviewScreen extends StatelessWidget {
                     style: OutlinedButton.styleFrom(
                       minimumSize: const Size.fromHeight(52),
                       side: const BorderSide(color: AppColors.border),
+                      textStyle: const TextStyle(fontSize: 13),
                     ),
-                    child: const Text('내 취향으로 수정'),
+                    child: const Text('내 취향으로 수정', maxLines: 1, overflow: TextOverflow.ellipsis),
                   ),
                 ),
                 const SizedBox(width: 10),
                 Expanded(
-                  flex: 2,
                   child: FilledButton(
                     onPressed: () => _startExploring(context),
                     child: const Text('탐험 시작'),
