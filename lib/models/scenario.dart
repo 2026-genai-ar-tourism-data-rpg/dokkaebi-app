@@ -451,6 +451,19 @@ class Scenario {
           .whereType<QuestNode>()
           .toList();
 
+  /// 코스 이름을 사용자가 직접 지었을 때(입력 확인 화면) 덮어쓰기용.
+  Scenario copyWith({String? title}) => Scenario(
+        scenarioId: scenarioId,
+        title: title ?? this.title,
+        region: region,
+        nodeSequence: nodeSequence,
+        anchorNodeId: anchorNodeId,
+        stoneTotal: _stoneTotal,
+        isBranching: isBranching,
+        routeTree: routeTree,
+        budget: budget,
+      );
+
   factory Scenario.fromJson(Map<String, dynamic> j) => Scenario(
         scenarioId: j['scenario_id'] ?? '',
         title: j['title'] ?? '',
