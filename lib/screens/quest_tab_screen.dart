@@ -70,8 +70,6 @@ class _QuestTabScreenState extends State<QuestTabScreen> {
                     onTap: () => setState(() => _sort = _Sort.completion)),
               ]),
               const SizedBox(height: 12),
-              const _LibraryCard.official(),
-              const SizedBox(height: 10),
               if (mine.isEmpty)
                 GlowCard(
                   child: const Text('아직 만든 코스가 없어요. "새 코스 만들기"로 시작하세요.',
@@ -215,33 +213,14 @@ class _StartJourneyButton extends StatelessWidget {
 
 enum _Status { inProgress, notStarted, completed }
 
-/// 라이브러리 카드 — 대표이미지 자리 + 배지(공식추천/내가 만든 코스) + 실제 완주율.
+/// 라이브러리 카드 — 대표이미지 자리 + 배지(내가 만든 코스) + 실제 완주율.
 /// 평점(★)은 데이터가 없어 표시하지 않는다.
 class _LibraryCard extends StatelessWidget {
-  final bool official;
-  final Scenario? scenario;
-  const _LibraryCard.official() : official = true, scenario = null;
-  const _LibraryCard.mine(Scenario s) : official = false, scenario = s;
+  final Scenario scenario;
+  const _LibraryCard.mine(this.scenario);
 
   @override
-  Widget build(BuildContext context) {
-    if (official) return _build(context, _officialData());
-    return _build(context, _mineData(context, scenario!));
-  }
-
-  ({String badge, Color badgeColor, String title, String subtitle1, String subtitle2,
-      double completion, String statusText, Color statusColor, VoidCallback? onTap})
-      _officialData() => (
-        badge: '공식 추천',
-        badgeColor: AppColors.gold,
-        title: '잠든 종로의 기억',
-        subtitle1: '서울 종로 · 랜드마크 5곳',
-        subtitle2: '청룡 수호 도깨비',
-        completion: 0.4,
-        statusText: '진행 중',
-        statusColor: AppColors.gold,
-        onTap: null,
-      );
+  Widget build(BuildContext context) => _build(context, _mineData(context, scenario));
 
   ({String badge, Color badgeColor, String title, String subtitle1, String subtitle2,
       double completion, String statusText, Color statusColor, VoidCallback? onTap})

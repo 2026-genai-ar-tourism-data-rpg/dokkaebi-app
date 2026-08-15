@@ -78,12 +78,9 @@ class QuestJourneyScreen extends StatefulWidget {
 
 class _QuestJourneyScreenState extends State<QuestJourneyScreen> with TickerProviderStateMixin {
   // ── 시안 initState 그대로 ──
-  String screen = 'setup';
+  // '새 여정 꾸리기(setup)' 화면 제거 — "도깨비에게 길 묻기" 진입점인 'map'에서 바로 시작.
+  String screen = 'map';
   int budget = 20000, hours = 2;
-  final Map<String, bool> tags = {
-    'history': true, 'hanok': true, 'cafe': true,
-    'food': false, 'photo': false, 'market': false,
-  };
   String? flag;
   int dlgStep = 0;
   String quizState = 'idle';
@@ -410,10 +407,9 @@ class _QuestJourneyScreenState extends State<QuestJourneyScreen> with TickerProv
     _scanTimer?.cancel();
     _summonTimer?.cancel();
     setState(() {
-      screen = 'setup';
+      screen = 'map';
       budget = 20000;
       hours = 2;
-      tags.updateAll((k, v) => {'history': true, 'hanok': true, 'cafe': true, 'food': false, 'photo': false, 'market': false}[k]!);
       flag = null;
       dlgStep = 0;
       quizState = 'idle';
@@ -637,8 +633,6 @@ class _QuestJourneyScreenState extends State<QuestJourneyScreen> with TickerProv
 
   Widget _currentScreen() {
     switch (screen) {
-      case 'setup':
-        return _setupScreen();
       case 'map':
         return _mapScreen();
       case 'gps':
@@ -666,7 +660,7 @@ class _QuestJourneyScreenState extends State<QuestJourneyScreen> with TickerProv
       case 'ending':
         return _endingScreen();
     }
-    return _setupScreen();
+    return _mapScreen();
   }
 
   // ════════════════════════════════════════════════════
@@ -728,158 +722,6 @@ class _QuestJourneyScreenState extends State<QuestJourneyScreen> with TickerProv
           ),
         ),
       );
-
-  // ════════════════════════════════════════════════════
-  // 1. SETUP — 새 여정 꾸리기
-  // ════════════════════════════════════════════════════
-  Widget _setupScreen() {
-    return Container(
-      decoration: const BoxDecoration(
-        gradient: LinearGradient(begin: Alignment.topCenter, end: Alignment.bottomCenter, colors: [_ink, Color(0xFF211A14)]),
-      ),
-      child: SafeArea(
-        child: SingleChildScrollView(
-          padding: const EdgeInsets.fromLTRB(18, 24, 18, 40),
-          child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-            Text('새 여정 꾸리기', style: dokkaebiTitle(size: 24, color: _cream)),
-            const SizedBox(height: 4),
-            const Text('조건을 적으면, 도깨비가 길을 놓는다', style: TextStyle(fontSize: 12.5, color: _muted)),
-            const SizedBox(height: 16),
-            // 출발/도착 카드
-            Container(
-              padding: const EdgeInsets.all(16),
-              decoration: BoxDecoration(
-                color: _cream.withOpacity(0.05),
-                borderRadius: BorderRadius.circular(16),
-                border: Border.all(color: _goldDim.withOpacity(0.3)),
-              ),
-              child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                Padding(
-                  padding: const EdgeInsets.only(top: 6),
-                  child: Column(children: [
-                    Container(width: 11, height: 11, decoration: BoxDecoration(shape: BoxShape.circle, color: _tealDeep, boxShadow: [BoxShadow(color: _tealDeep.withOpacity(0.7), blurRadius: 8)])),
-                    Container(width: 2, height: 40, color: Colors.white.withOpacity(0.14), margin: const EdgeInsets.symmetric(vertical: 4)),
-                    Container(width: 11, height: 11, decoration: BoxDecoration(borderRadius: BorderRadius.circular(3), color: _goldDim, boxShadow: [BoxShadow(color: _goldDim.withOpacity(0.7), blurRadius: 8)])),
-                  ]),
-                ),
-                const SizedBox(width: 12),
-                Expanded(
-                  child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                    _routeField('출발', _teal, '안국역 3호선', hint: ' · 현재 위치'),
-                    const SizedBox(height: 12),
-                    _routeField('도착', _gold, targets.last.name),
-                  ]),
-                ),
-              ]),
-            ),
-            const SizedBox(height: 12),
-            // 시간 / 여비
-            Row(children: [
-              Expanded(child: _stepper('시간', _soft, '$hours시간', () => setState(() => hours = math.max(1, hours - 1)), () => setState(() => hours = math.min(4, hours + 1)))),
-              const SizedBox(width: 10),
-              Expanded(child: _stepper('여비 (예산)', _goldDim, _won(budget), () => setState(() => budget = math.max(10000, budget - 5000)), () => setState(() => budget = math.min(50000, budget + 5000)), valueColor: _gold, border: _goldDim.withOpacity(0.35))),
-            ]),
-            const SizedBox(height: 12),
-            // 취향 태그
-            Container(
-              padding: const EdgeInsets.fromLTRB(14, 13, 14, 14),
-              decoration: BoxDecoration(
-                color: _cream.withOpacity(0.05),
-                borderRadius: BorderRadius.circular(14),
-                border: Border.all(color: Colors.white.withOpacity(0.1)),
-              ),
-              child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                RichText(
-                  text: const TextSpan(children: [
-                    TextSpan(text: '가고 싶은 곳 · 취향 ', style: TextStyle(color: _soft, fontSize: 10.5, fontWeight: FontWeight.w900, letterSpacing: 0.8)),
-                    TextSpan(text: '(탭해서 켜고 끄기)', style: TextStyle(color: _muted, fontSize: 10.5, fontWeight: FontWeight.w500)),
-                  ]),
-                ),
-                const SizedBox(height: 10),
-                Wrap(spacing: 7, runSpacing: 7, children: [
-                  for (final e in const [['history', '역사 이야기'], ['hanok', '한옥·골목'], ['cafe', '카페'], ['food', '미식'], ['photo', '사진 명소'], ['market', '시장 구경']])
-                    _tagChip(e[0], e[1]),
-                ]),
-              ]),
-            ),
-            const SizedBox(height: 28),
-            _cta('도깨비에게 길 묻기', () => go('map'), bg: const Color(0xFFC89A3A), fg: const Color(0xFF3A2A08), gradient: _goldGrad, fontSize: 16),
-          ]),
-        ),
-      ),
-    );
-  }
-
-  Widget _routeField(String label, Color labelColor, String value, {String? hint}) => Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text(label, style: TextStyle(color: labelColor, fontSize: 10.5, fontWeight: FontWeight.w900, letterSpacing: 0.8)),
-          const SizedBox(height: 4),
-          Container(
-            width: double.infinity,
-            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
-            decoration: BoxDecoration(
-              color: _inkDeep.withOpacity(0.6),
-              borderRadius: BorderRadius.circular(11),
-              border: Border.all(color: Colors.white.withOpacity(0.1)),
-            ),
-            child: RichText(
-              text: TextSpan(children: [
-                TextSpan(text: value, style: const TextStyle(color: _cream, fontSize: 15, fontWeight: FontWeight.w700)),
-                if (hint != null) TextSpan(text: hint, style: const TextStyle(color: _muted, fontSize: 11, fontWeight: FontWeight.w500)),
-              ]),
-            ),
-          ),
-        ],
-      );
-
-  Widget _stepper(String label, Color labelColor, String value, VoidCallback down, VoidCallback up, {Color valueColor = _cream, Color? border}) => Container(
-        padding: const EdgeInsets.symmetric(horizontal: 13, vertical: 12),
-        decoration: BoxDecoration(
-          color: _cream.withOpacity(0.05),
-          borderRadius: BorderRadius.circular(14),
-          border: Border.all(color: border ?? Colors.white.withOpacity(0.1)),
-        ),
-        child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-          Text(label, style: TextStyle(color: labelColor, fontSize: 10.5, fontWeight: FontWeight.w900, letterSpacing: 0.8)),
-          const SizedBox(height: 6),
-          Row(children: [
-            _stepBtn('−', down),
-            Expanded(child: Center(child: Text(value, style: dokkaebiTitle(size: 19, color: valueColor)))),
-            _stepBtn('+', up),
-          ]),
-        ]),
-      );
-
-  Widget _stepBtn(String s, VoidCallback onTap) => GestureDetector(
-        onTap: onTap,
-        child: Container(
-          width: 32, height: 32, alignment: Alignment.center,
-          decoration: BoxDecoration(
-            color: _inkDeep.withOpacity(0.6),
-            borderRadius: BorderRadius.circular(9),
-            border: Border.all(color: Colors.white.withOpacity(0.12)),
-          ),
-          child: Text(s, style: const TextStyle(color: _soft, fontSize: 16)),
-        ),
-      );
-
-  Widget _tagChip(String key, String label) {
-    final on = tags[key] ?? false;
-    return GestureDetector(
-      onTap: () => setState(() => tags[key] = !on),
-      child: AnimatedContainer(
-        duration: const Duration(milliseconds: 180),
-        padding: const EdgeInsets.symmetric(horizontal: 13, vertical: 9),
-        decoration: BoxDecoration(
-          color: on ? _verm : _inkDeep.withOpacity(0.5),
-          borderRadius: BorderRadius.circular(999),
-          border: Border.all(color: on ? _verm : Colors.white.withOpacity(0.14)),
-        ),
-        child: Text(label, style: TextStyle(color: on ? const Color(0xFFFDF6E6) : _muted, fontSize: 12.5, fontWeight: FontWeight.w700)),
-      ),
-    );
-  }
 
   // ════════════════════════════════════════════════════
   // 2. MAP — 챕터 지도

@@ -18,6 +18,7 @@ import '../store.dart';
 import '../theme.dart';
 import '../widgets/honbul_style.dart';
 import '../widgets/ui.dart';
+import 'quest_journey_screen.dart';
 import 'quest_play_screen.dart';
 
 /// 시나리오 루트 지도 — 혼불 밤 지도(안개길 + 동선). 노드 좌표를 박스에 정규화.
@@ -457,7 +458,15 @@ class _ScenarioScreenState extends State<ScenarioScreen> {
 
               // ── C. 다음 목표 CTA ────────────────────────
               if (!allDone && next != null)
-                _NextTarget(node: next, onGo: () => _play(next!, carried))
+                _NextTarget(
+                  node: next,
+                  // '탐험 시작'(첫 조각 진입, 식음·피날레 아님)은 "새 퀘스트 시작하기"와
+                  // 같은 화면(QuestJourneyScreen)으로 보낸다 — 두 진입점을 하나로 동기화.
+                  onGo: (!next.isFood && !next.isFinale)
+                      ? () => Navigator.push(context,
+                          MaterialPageRoute(builder: (_) => QuestJourneyScreen(scenario: scn)))
+                      : () => _play(next!, carried),
+                )
               else if (allDone)
                 _RestoredBanner(),
               const SizedBox(height: 14),
