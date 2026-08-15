@@ -223,7 +223,8 @@ class _LibraryCard extends StatelessWidget {
   Widget build(BuildContext context) => _build(context, _mineData(context, scenario));
 
   ({String badge, Color badgeColor, String title, String subtitle1, String subtitle2,
-      double completion, String statusText, Color statusColor, VoidCallback? onTap})
+      double completion, String statusText, Color statusColor, VoidCallback? onTap,
+      VoidCallback onDelete})
       _mineData(BuildContext context, Scenario s) {
     final p = ScenarioStore.I.stoneProgressOf(s);
     final total = s.stoneTotal;
@@ -246,7 +247,24 @@ class _LibraryCard extends StatelessWidget {
       statusColor: statusColor,
       onTap: () => Navigator.push(
           context, MaterialPageRoute(builder: (_) => ScenarioScreen(scenario: s))),
+      onDelete: () => _confirmDelete(context, s),
     );
+  }
+
+  static Future<void> _confirmDelete(BuildContext context, Scenario s) async {
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: AppColors.surface,
+        title: const Text('코스를 삭제할까요?'),
+        content: Text('"${s.title}" 코스와 진행 상황이 함께 삭제됩니다.'),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('취소')),
+          FilledButton(onPressed: () => Navigator.pop(ctx, true), child: const Text('삭제')),
+        ],
+      ),
+    );
+    if (ok == true) await ScenarioStore.I.remove(s.scenarioId);
   }
 
   static String _composition(Scenario s) {
@@ -274,7 +292,8 @@ class _LibraryCard extends StatelessWidget {
   Widget _build(
     BuildContext context,
     ({String badge, Color badgeColor, String title, String subtitle1, String subtitle2,
-        double completion, String statusText, Color statusColor, VoidCallback? onTap}) d,
+        double completion, String statusText, Color statusColor, VoidCallback? onTap,
+        VoidCallback onDelete}) d,
   ) {
     return GlowCard(
       padding: EdgeInsets.zero,
@@ -306,6 +325,13 @@ class _LibraryCard extends StatelessWidget {
                   ),
                   const Spacer(),
                   Text(d.statusText, style: TextStyle(color: d.statusColor, fontSize: 11, fontWeight: FontWeight.w600)),
+                  IconButton(
+                    onPressed: d.onDelete,
+                    icon: const Icon(Icons.delete_outline, color: AppColors.textMuted, size: 18),
+                    visualDensity: VisualDensity.compact,
+                    padding: const EdgeInsets.all(4),
+                    constraints: const BoxConstraints(minWidth: 36, minHeight: 36),
+                  ),
                 ]),
                 const SizedBox(height: 6),
                 Text(d.title,
