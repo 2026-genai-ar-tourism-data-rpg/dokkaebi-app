@@ -88,6 +88,17 @@ class ScenarioStore extends ChangeNotifier {
     await _persist();
   }
 
+  /// 코스 삭제 — 시나리오 자체와 진행 상황(완료 노드·인벤토리·갈림길·엔딩)을 함께 지운다.
+  Future<void> remove(String scenarioId) async {
+    scenarios.removeWhere((s) => s.scenarioId == scenarioId);
+    _doneNodes.remove(scenarioId);
+    _inventory.remove(scenarioId);
+    _choices.remove(scenarioId);
+    _endings.remove(scenarioId);
+    notifyListeners();
+    await _persist();
+  }
+
   /// 노드 완료 기록(연계 인벤토리 누적). 코스 진행 상황 영속.
   ///
   /// grants는 StateRef 표기(`clue:申時`)든 구 조각 문자열이든 그대로 받는다 —

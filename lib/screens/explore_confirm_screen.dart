@@ -22,8 +22,15 @@ class ExploreConfirmScreen extends StatefulWidget {
 
 class _ExploreConfirmScreenState extends State<ExploreConfirmScreen> {
   final _api = ApiClient();
+  final _nameController = TextEditingController();
   bool _loading = false;
   String? _error;
+
+  @override
+  void dispose() {
+    _nameController.dispose();
+    super.dispose();
+  }
 
   // 종로 MVP 기본 출발/도착 좌표 — GPS·카카오 지도 연동 전까지 고정값(구 create_scenario_screen과 동일).
   static const _startLat = 37.5703, _startLng = 126.9856;
@@ -46,11 +53,13 @@ class _ExploreConfirmScreenState extends State<ExploreConfirmScreen> {
         budget: d.budget,
         noMeals: !d.includeMeals,
       );
-      ScenarioStore.I.add(scn);
+      final name = _nameController.text.trim();
+      final named = name.isEmpty ? scn : scn.copyWith(title: name);
+      ScenarioStore.I.add(named);
       if (!mounted) return;
       Navigator.push(
         context,
-        MaterialPageRoute(builder: (_) => ScenarioPreviewScreen(scenario: scn, draft: d)),
+        MaterialPageRoute(builder: (_) => ScenarioPreviewScreen(scenario: named, draft: d)),
       );
     } catch (e) {
       setState(() => _error = '생성 실패 — 서버가 켜져 있나요? ($e)');
@@ -74,6 +83,19 @@ class _ExploreConfirmScreenState extends State<ExploreConfirmScreen> {
                   const Text('나만의 탐험 조건',
                       style: TextStyle(
                           color: AppColors.textPrimary, fontSize: 22, fontWeight: FontWeight.bold)),
+                  const SizedBox(height: 16),
+                  const Text('코스 이름',
+                      style: TextStyle(
+                          color: AppColors.textPrimary, fontSize: 13, fontWeight: FontWeight.w600)),
+                  const SizedBox(height: 8),
+                  TextField(
+                    controller: _nameController,
+                    maxLength: 30,
+                    decoration: const InputDecoration(
+                      hintText: '비워두면 도깨비가 지어드려요',
+                      counterText: '',
+                    ),
+                  ),
                   const SizedBox(height: 16),
                   Container(
                     decoration: BoxDecoration(
