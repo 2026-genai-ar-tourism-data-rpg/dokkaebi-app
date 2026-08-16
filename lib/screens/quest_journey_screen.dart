@@ -472,6 +472,23 @@ class _QuestJourneyScreenState extends State<QuestJourneyScreen> with TickerProv
           ),
           child: KeyedSubtree(key: ValueKey(screen), child: _currentScreen()),
         ),
+        Positioned(
+          top: MediaQuery.of(context).padding.top + 8,
+          left: 12,
+          child: GestureDetector(
+            onTap: () => Navigator.of(context).maybePop(),
+            child: Container(
+              width: 40,
+              height: 40,
+              alignment: Alignment.center,
+              decoration: BoxDecoration(
+                color: Colors.black.withOpacity(0.4),
+                shape: BoxShape.circle,
+              ),
+              child: const Icon(Icons.arrow_back, color: Colors.white, size: 20),
+            ),
+          ),
+        ),
         if (showReward) _rewardModal(),
         if (hintOpen) _hintSheet(),
         if (collOpen) _collSheet(),
