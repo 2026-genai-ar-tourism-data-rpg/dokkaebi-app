@@ -12,6 +12,7 @@ import 'package:flutter/material.dart';
 
 import '../models/scenario.dart';
 import '../session.dart';
+import '../store.dart';
 import '../theme.dart';
 import 'scenario_screen.dart';
 
@@ -86,7 +87,7 @@ class _PrologueScreenState extends State<PrologueScreen> {
   }
 
   Future<void> _finish() async {
-    await Session.markPrologueSeen();
+    await ScenarioStore.I.markPrologueSeen(widget.scenario.scenarioId);
     if (!mounted) return;
     Navigator.pushReplacement(context,
         MaterialPageRoute(builder: (_) => ScenarioScreen(scenario: widget.scenario)));
