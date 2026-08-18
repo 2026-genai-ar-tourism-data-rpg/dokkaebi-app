@@ -472,6 +472,26 @@ class _QuestJourneyScreenState extends State<QuestJourneyScreen> with TickerProv
           ),
           child: KeyedSubtree(key: ValueKey(screen), child: _currentScreen()),
         ),
+        // 각 화면 HUD와 같은 top(54~58) 라인에 맞춘다 — 그보다 위(상태바 영역)에 두면
+        // 시계·배터리와 겹친다. 대신 이 자리를 쓰는 HUD(map/dialogue/order/insa/cafe)는
+        // 버튼 폭만큼 안쪽으로 밀어 자리를 냈다(각 화면 주석 참고).
+        Positioned(
+          top: 58,
+          left: 14,
+          child: GestureDetector(
+            onTap: () => Navigator.of(context).maybePop(),
+            child: Container(
+              width: 36,
+              height: 36,
+              alignment: Alignment.center,
+              decoration: BoxDecoration(
+                color: Colors.white.withOpacity(0.08),
+                shape: BoxShape.circle,
+              ),
+              child: const Icon(Icons.arrow_back, color: _soft, size: 18),
+            ),
+          ),
+        ),
         if (showReward) _rewardModal(),
         if (hintOpen) _hintSheet(),
         if (collOpen) _collSheet(),
@@ -737,7 +757,8 @@ class _QuestJourneyScreenState extends State<QuestJourneyScreen> with TickerProv
           // 길
           Positioned(left: -box.maxWidth * .1, top: box.maxHeight * .47, child: Transform.rotate(angle: 6 * math.pi / 180, child: Container(width: box.maxWidth * 1.2, height: 16, decoration: BoxDecoration(color: _cream.withOpacity(0.07), borderRadius: BorderRadius.circular(999))))),
           // 상단 HUD
-          Positioned(top: 54, left: 14, right: 14, child: _mapHud(chapterNum)),
+          // left: 58 — 좌상단 뒤로가기 버튼(top:58,left:14,36폭) 자리를 비켜준다.
+          Positioned(top: 54, left: 58, right: 14, child: _mapHud(chapterNum)),
           // 조각 패널
           Positioned(top: 118, left: 14, right: 14, child: _fragPanel()),
           // POI
@@ -1153,7 +1174,8 @@ class _QuestJourneyScreenState extends State<QuestJourneyScreen> with TickerProv
       child: LayoutBuilder(builder: (ctx, box) {
         return Stack(children: [
           Align(alignment: const Alignment(0, 0.35), child: ClipPath(clipper: _RoofClipper(), child: Container(height: 110, color: const Color(0xFF0C0A08)))),
-          Positioned(top: 58, left: 14, right: 14, child: Row(children: [
+          // left: 58 — 좌상단 뒤로가기 버튼 자리를 비켜준다.
+          Positioned(top: 58, left: 58, right: 14, child: Row(children: [
             _pill('운현궁 · 첫 번째 기억'),
             const Spacer(),
             _pill('조각 $fragments/4', border: _tealDeep, textColor: _teal),
@@ -1331,7 +1353,8 @@ class _QuestJourneyScreenState extends State<QuestJourneyScreen> with TickerProv
       child: LayoutBuilder(builder: (ctx, box) {
         return Stack(children: [
           Align(alignment: const Alignment(0, 0.48), child: ClipPath(clipper: _RoofClipper(), child: Container(height: 120, color: const Color(0xFF0C0A08)))),
-          Positioned(top: 58, left: 14, right: 14, child: Row(children: [_pill('운현궁 · 첫 번째 기억'), const Spacer(), _pill('조각 $fragments/4', border: _tealDeep, textColor: _teal)])),
+          // left: 58 — 좌상단 뒤로가기 버튼 자리를 비켜준다.
+          Positioned(top: 58, left: 58, right: 14, child: Row(children: [_pill('운현궁 · 첫 번째 기억'), const Spacer(), _pill('조각 $fragments/4', border: _tealDeep, textColor: _teal)])),
           Positioned(left: 0, right: 0, top: box.maxHeight * .20, child: Center(child: _Floaty(anim: _float, child: const _Dokkaebi(size: 120)))),
           Positioned(left: 14, right: 14, bottom: 34, child: _parchment(
             padding: const EdgeInsets.fromLTRB(18, 18, 18, 16),
@@ -1597,7 +1620,8 @@ class _QuestJourneyScreenState extends State<QuestJourneyScreen> with TickerProv
       decoration: const BoxDecoration(gradient: LinearGradient(begin: Alignment.topCenter, end: Alignment.bottomCenter, colors: [_ink, Color(0xFF211A14)])),
       child: SafeArea(
         child: SingleChildScrollView(
-          padding: const EdgeInsets.fromLTRB(18, 20, 18, 40),
+          // top: 44 — 좌상단 뒤로가기 버튼(그 위 전역 Stack) 아래로 내용을 밀어 겹치지 않게 한다.
+          padding: const EdgeInsets.fromLTRB(18, 44, 18, 40),
           child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
             Row(children: [
               Column(crossAxisAlignment: CrossAxisAlignment.start, mainAxisSize: MainAxisSize.min, children: [
@@ -1770,7 +1794,8 @@ class _QuestJourneyScreenState extends State<QuestJourneyScreen> with TickerProv
       decoration: const BoxDecoration(gradient: LinearGradient(begin: Alignment.topCenter, end: Alignment.bottomCenter, colors: [Color(0xFFA3BDD1), Color(0xFFCFC6A9), Color(0xFF9A8668), Color(0xFF5F5140), Color(0xFF3A322A)], stops: [0, .34, .55, .76, 1])),
       child: LayoutBuilder(builder: (ctx, box) {
         return Stack(children: [
-          Positioned(top: 58, left: 14, right: 14, child: Row(children: [_pill('인사동 · 세 번째 기억'), const Spacer(), _pill('조각 $fragments/4', border: _tealDeep, textColor: _teal)])),
+          // left: 58 — 좌상단 뒤로가기 버튼 자리를 비켜준다.
+          Positioned(top: 58, left: 58, right: 14, child: Row(children: [_pill('인사동 · 세 번째 기억'), const Spacer(), _pill('조각 $fragments/4', border: _tealDeep, textColor: _teal)])),
           // 간판
           Positioned(
             left: 0, right: 0, top: box.maxHeight * .27,

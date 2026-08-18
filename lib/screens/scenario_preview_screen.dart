@@ -10,7 +10,7 @@ import 'package:flutter/material.dart';
 
 import '../models/explore_draft.dart';
 import '../models/scenario.dart';
-import '../session.dart';
+import '../store.dart';
 import '../theme.dart';
 import '../widgets/ui.dart';
 import 'prologue_screen.dart';
@@ -26,7 +26,7 @@ class ScenarioPreviewScreen extends StatelessWidget {
       .fold(0.0, (a, b) => a + b);
 
   void _startExploring(BuildContext context) {
-    final target = Session.prologueSeen
+    final target = ScenarioStore.I.prologueSeenOf(scenario.scenarioId)
         ? ScenarioScreen(scenario: scenario)
         : PrologueScreen(scenario: scenario);
     Navigator.of(context).pushAndRemoveUntil(

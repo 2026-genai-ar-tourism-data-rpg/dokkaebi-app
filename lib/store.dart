@@ -28,6 +28,7 @@ class ScenarioStore extends ChangeNotifier {
   final Map<String, List<String>> _inventory = {}; // scenarioId -> 획득 상태(StateRef 표기)
   final Map<String, Map<String, String>> _choices = {}; // scenarioId -> {분기노드id: choiceId}
   final Map<String, String> _endings = {}; // scenarioId -> 엔딩 코드
+  final Set<String> _prologueSeen = {}; // 프롤로그를 본 scenarioId — 코스별로 최초 1회만.
 
   String get _key => 'store_${Session.userId ?? 'guest'}';
 
@@ -35,6 +36,17 @@ class ScenarioStore extends ChangeNotifier {
   List<String> doneOf(String scenarioId) => _doneNodes[scenarioId] ?? const [];
   List<String> inventoryOf(String scenarioId) => _inventory[scenarioId] ?? const [];
   int progressOf(Scenario s) => doneOf(s.scenarioId).length;
+
+  /// 이 코스의 프롤로그를 이미 봤는가 — 봤으면 재진입 시 프롤로그를 건너뛴다.
+  bool prologueSeenOf(String scenarioId) => _prologueSeen.contains(scenarioId);
+
+  /// 프롤로그 시청 완료 표시(코스별). 같은 코스를 나중에 다시 만들어도(같은 scenarioId)
+  /// 다시 뜨지 않지만, 아직 안 본 다른 코스는 각자 첫 진입 때 뜬다.
+  Future<void> markPrologueSeen(String scenarioId) async {
+    _prologueSeen.add(scenarioId);
+    notifyListeners();
+    await _persist();
+  }
 
   /// 갈림길 선택 — `Scenario.playedPath()`에 그대로 넘긴다.
   Map<String, String> choicesOf(String scenarioId) => _choices[scenarioId] ?? const {};
@@ -63,6 +75,7 @@ class ScenarioStore extends ChangeNotifier {
     _inventory.clear();
     _choices.clear();
     _endings.clear();
+    _prologueSeen.clear();
     final raw = p.getString(_key);
     if (raw != null && raw.isNotEmpty) {
       final d = jsonDecode(raw) as Map<String, dynamic>;
@@ -76,6 +89,8 @@ class ScenarioStore extends ChangeNotifier {
       (d['choices'] as Map<String, dynamic>? ?? {}).forEach((k, v) =>
           _choices[k] = (v as Map).map((ck, cv) => MapEntry(ck.toString(), cv.toString())));
       (d['endings'] as Map<String, dynamic>? ?? {}).forEach((k, v) => _endings[k] = v.toString());
+      _prologueSeen.addAll(
+          ((d['prologueSeen'] ?? []) as List).map((e) => e.toString()));
     }
     notifyListeners();
   }
@@ -173,6 +188,7 @@ class ScenarioStore extends ChangeNotifier {
       'inventory': _inventory,
       'choices': _choices,
       'endings': _endings,
+      'prologueSeen': _prologueSeen.toList(),
     }));
   }
 }

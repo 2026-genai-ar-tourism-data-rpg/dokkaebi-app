@@ -52,9 +52,12 @@ class _QuestTabScreenState extends State<QuestTabScreen> {
             const SectionHeader('QUEST LOG', '퀘스트 일지'),
             const SizedBox(height: 16),
 
-            // 새 퀘스트 시작하기 — 종로의 기억석 플레이 여정(setup→…→엔딩)
-            _StartJourneyButton(scenario: mine.isNotEmpty ? mine.first : null),
-            const SizedBox(height: 20),
+            // 새 퀘스트 시작하기 — 종로의 기억석 플레이 여정(setup→…→엔딩).
+            // 내가 만든 코스가 하나도 없으면 "새로 시작할 것"이 없으므로 숨긴다.
+            if (mine.isNotEmpty) ...[
+              _StartJourneyButton(scenario: mine.first),
+              const SizedBox(height: 20),
+            ],
 
             _SectionToggle(section: _section, onChanged: (i) => setState(() => _section = i)),
             const SizedBox(height: 16),
@@ -163,8 +166,8 @@ class _NearbyPlaceholder extends StatelessWidget {
 
 /// 새 퀘스트 시작하기 — 종로의 기억석 플레이 여정 진입 히어로 버튼.
 class _StartJourneyButton extends StatelessWidget {
-  final Scenario? scenario;
-  const _StartJourneyButton({this.scenario});
+  final Scenario scenario;
+  const _StartJourneyButton({required this.scenario});
 
   @override
   Widget build(BuildContext context) {
@@ -199,7 +202,7 @@ class _StartJourneyButton extends StatelessWidget {
               Text('새 퀘스트 시작하기',
                   style: dokkaebiTitle(size: 18, color: const Color(0xFF3A2A08))),
               const SizedBox(height: 2),
-              Text(scenario != null ? '${scenario!.region} · ${scenario!.title}' : '종로, 잊혀진 글씨의 비밀',
+              Text('${scenario.region} · ${scenario.title}',
                   maxLines: 1, overflow: TextOverflow.ellipsis,
                   style: const TextStyle(color: Color(0xFF5A430E), fontSize: 12, fontWeight: FontWeight.w600)),
             ]),
