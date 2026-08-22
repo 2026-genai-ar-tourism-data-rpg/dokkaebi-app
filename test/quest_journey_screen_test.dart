@@ -6,6 +6,18 @@
 //            안내 모드가, 분기점에서 갈림길 시트가 뜨는지 확인.
 //            google_fonts 런타임 폰트 fetch는 끔(테스트 네트워크 차단).
 // 구현일: 2026-07-30 | 작성: kys (app-v3-back/kys/v1)
+// ------------------------------------------------------------
+// [v2] 코스 길이를 따라가는지 — 챕터 수가 4로 고정돼 있던 회귀 방지.
+// 구현(요약): 탐험 시간 입력이 코스 길이를 4·6·8조각으로 바꾸는데, 화면은 정확히 4챕터만
+//            만들고 모자라면 종로 기본 노드로 채웠다(가지도 않을 운현궁이 챕터로 등장).
+//            길이가 다른 코스로 pump해서 조각 수 표시와 챕터 구성이 데이터를 따르는지 본다.
+// 구현일: 2026-08-18 | 작성: kys (explore-input-wiring/kys/v1)
+// ------------------------------------------------------------
+// [v3] 종로 연출이 다른 지역 코스에 그대로 나오던 회귀를 잠근다.
+// 구현(요약): 이 화면이 메인 진입점인데 스테이지·퀴즈·NPC가 종로 시안 고정이었다.
+//            (경주 코스에서도 '운현궁은 누구의 집?' 정답=흥선대원군이 나왔다.)
+//            미션 타입 → 스테이지 매핑과 노드 퀴즈·NPC 사용을 검증한다.
+// 구현일: 2026-08-22 | 작성: kys (play-path-unify/kys/v1)
 // ============================================================
 import 'package:dokkaebi_app/models/scenario.dart';
 import 'package:dokkaebi_app/screens/quest_journey_screen.dart';
@@ -41,6 +53,28 @@ Map<String, dynamic> _stone(
       if (branch != null) 'branch': branch,
     };
 
+/// 임의 길이 코스 — 탐험 시간(2h·반나절·하루)에 따라 조각 수가 달라진다.
+Scenario _course(int stones) => Scenario.fromJson({
+      'scenario_id': 'course_$stones',
+      'title': '서초구의 기억석 — $stones조각 코스',
+      'region': '서초구',
+      'stone_total': stones,
+      'node_sequence': [
+        for (var i = 1; i <= stones; i++)
+          _stone('c$i', '장소$i', finale: i == stones),
+      ],
+    });
+
+/// 미션·퀴즈·NPC까지 실린 노드 — 데이터 연동 검증용.
+Map<String, dynamic> _rich(String id, String name, String missionType,
+        {Map<String, dynamic>? quiz, String npc = ''}) =>
+    {
+      ..._stone(id, name),
+      'mission': {'type': missionType, 'order': '$name에서 조각을 찾아라', 'hints': const []},
+      if (quiz != null) 'quiz': quiz,
+      if (npc.isNotEmpty) 'npc': {'name': npc},
+    };
+
 /// 종로 정답지 4노드 — 단서 체인(申時→ㄱ→ㅏ) + 피날레 하드 requires.
 Scenario _jongno() => Scenario.fromJson({
       'scenario_id': sid,
@@ -62,11 +96,11 @@ Future<void> _pump(WidgetTester tester, Scenario? sc) async {
   await tester.pump(const Duration(milliseconds: 400));
 }
 
-/// setup → map 으로 넘겨 챕터 목록이 그려지는 화면까지 진행.
-/// (장소명은 setup 화면엔 없고 챕터 지도에서 처음 노출된다.)
+/// 챕터 목록이 그려지는 화면(map)까지 진행.
+/// app#26에서 '새 여정 꾸리기(setup)' 화면이 사라지고 map이 첫 화면이 됐다 —
+/// 예전에는 여기서 '도깨비에게 길 묻기'를 눌러 넘어갔다(그 버튼은 이제 없다).
 Future<void> _toMap(WidgetTester tester, Scenario? sc) async {
   await _pump(tester, sc);
-  await tester.tap(find.text('도깨비에게 길 묻기'));
   await tester.pump(const Duration(milliseconds: 500));
 }
 
@@ -101,6 +135,24 @@ void main() {
       expect(tester.takeException(), isNull);
       // 조각 1개를 들고 시작 → 두 번째 챕터(익선동)가 현재 목표
       expect(find.textContaining('익선동', findRichText: true), findsWidgets);
+    });
+  });
+
+  group('코스 길이', () {
+    testWidgets('6조각 코스는 6조각으로 표시된다', (tester) async {
+      await _toMap(tester, _course(6));
+      expect(tester.takeException(), isNull);
+      expect(find.textContaining('/ 6', findRichText: true), findsWidgets,
+          reason: '조각 총수가 코스가 아니라 시안(4)에 묶여 있다');
+      expect(find.textContaining('운현궁', findRichText: true), findsNothing,
+          reason: '코스에 없는 종로 기본 노드가 챕터로 새어 들어왔다');
+    });
+
+    testWidgets('3조각 코스도 터지지 않고 3조각으로 표시된다', (tester) async {
+      // 고정 POI 좌표가 4개뿐이라 짧은 코스에서 targets[i]가 범위를 벗어나 터졌다.
+      await _toMap(tester, _course(3));
+      expect(tester.takeException(), isNull);
+      expect(find.textContaining('/ 3', findRichText: true), findsWidgets);
     });
   });
 
@@ -179,6 +231,56 @@ void main() {
       final st = ScenarioStore.I.stateOf(sid);
       expect(st.flags, {'호기심'});
       expect(st.couponTotal, 500);
+    });
+  });
+
+
+
+  group('데이터 연동 (v3)', () {
+    testWidgets('퀴즈는 노드 데이터에서 온다 — 종로 문제가 다른 코스에 나오지 않는다', (tester) async {
+      final sc = Scenario.fromJson({
+        'scenario_id': 'gyeongju_q',
+        'title': '경주시의 기억석',
+        'region': '경주시',
+        'node_sequence': [
+          _rich('g1', '첨성대', 'QUIZ_FIND',
+              npc: '별빛 도깨비',
+              quiz: {
+                'q': '첨성대는 무엇을 살피던 곳이더냐?',
+                'options': ['별', '물', '바람'],
+                'answer': 0,
+                'wrong_hint': '하늘을 보거라',
+              }),
+          _rich('g2', '월성', 'RESTORE_AR'),
+        ],
+      });
+      await ScenarioStore.I.add(sc);
+      await _toMap(tester, sc);
+
+      // 종로 시안 문제·정답이 화면 어디에도 없어야 한다
+      expect(find.textContaining('운현궁은 누구의 집'), findsNothing);
+      expect(find.text('흥선대원군'), findsNothing);
+    });
+
+    testWidgets('미션 타입이 스테이지를 정한다 — 종로 순서(카페·인사동)를 따르지 않는다', (tester) async {
+      final sc = Scenario.fromJson({
+        'scenario_id': 'busan_s',
+        'title': '해운대구의 기억석',
+        'region': '해운대구',
+        'node_sequence': [
+          _rich('b1', '동백섬', 'PHOTO_FIND'),
+          _rich('b2', '해운대해수욕장', 'PATH_TRACE'),
+          _rich('b3', '달맞이길', 'HUNT'),
+          _rich('b4', '누리마루', 'RESTORE_AR'),
+        ],
+      });
+      await ScenarioStore.I.add(sc);
+      await _toMap(tester, sc);
+
+      // 종로 고유 장소가 챕터로 끼어들면 안 된다
+      expect(find.textContaining('익선동'), findsNothing);
+      expect(find.textContaining('인사동 붓방'), findsNothing);
+      expect(find.textContaining('운현궁'), findsNothing);
     });
   });
 }

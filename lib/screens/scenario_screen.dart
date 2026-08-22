@@ -262,11 +262,9 @@ class _ScenarioScreenState extends State<ScenarioScreen> {
     final scn = widget.scenario;
     final state = ScenarioStore.I.stateOf(scn.scenarioId);
 
-    // 갈림길이면 어느 길로 갈지 먼저 받는다
-    if (n.branch != null && !ScenarioStore.I.choicesOf(scn.scenarioId).containsKey(n.nodeId)) {
-      await _askBranch(n);
-      return;
-    }
+    // 갈림길은 대화 안에서 고른다(도깨비가 두 길을 권하고, 고른 갈래가 곧 경로).
+    // 여기서 미리 물으면 대화가 그 사실을 모른 채 무관한 선택지를 지어낸다 — ai#24 개편.
+    // 대화가 실패해 선택을 못 받은 경우에만 아래에서 시트로 폴백한다.
 
     if (n.requires.isNotEmpty) {
       final check = scn.checkEntry(n, state);
@@ -283,7 +281,16 @@ class _ScenarioScreenState extends State<ScenarioScreen> {
     final granted = await Navigator.push<List<String>>(
       context,
       MaterialPageRoute(
-        builder: (_) => QuestPlayScreen(node: n, inventory: inventory),
+        builder: (_) => QuestPlayScreen(
+          node: n,
+          inventory: inventory,
+          scenarioId: scn.scenarioId,
+          regionId: scn.region,
+          playerState: {
+            'progress': ScenarioStore.I.stoneProgressOf(scn),
+            'required': scn.stoneNodes.length,
+          },
+        ),
       ),
     );
     if (granted == null) return;
@@ -293,6 +300,14 @@ class _ScenarioScreenState extends State<ScenarioScreen> {
       n.nodeId,
       [...granted, ...n.effectiveGrants.map((r) => r.toStorageString())],
     );
+
+    // 폴백: 갈림길인데 대화에서 길을 못 골랐다면(서버 오류 등) 시트로 받는다.
+    // 선택이 없으면 다음 노드가 정해지지 않아 코스가 본선으로만 흐른다.
+    if (n.branch != null &&
+        !ScenarioStore.I.choicesOf(scn.scenarioId).containsKey(n.nodeId) &&
+        mounted) {
+      await _askBranch(n);
+    }
   }
 
   /// 갈림길 선택 — 고른 갈래를 저장하면 이후 동선(playedPath)이 그 길로 바뀐다.

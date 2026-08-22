@@ -4,10 +4,22 @@
 // 구현(요약): draft 요약 표시 → "나만의 코스 만들기"로 /v1/scenarios/custom 호출.
 //            좌표는 GPS·카카오 연동 전이라 종로 MVP 기본값 고정(화면엔 노출 안 함).
 // 구현일: 2026-08-05 | 작성: Claude · 시안: dokkaebi-ai/docs/images/08-confirm-loading.png
+// ------------------------------------------------------------
+// [v2] 실제 GPS 좌표 + 마법사 입력 전달 — 하드코딩 종로 좌표 제거.
+// 구현(요약): 출발 좌표가 종로 고정값이었고 region도 '종로' 기본값이라, 어디서 만들든
+//            같은 종로 코스가 나왔다(위치를 바꿔도 결과가 안 변함). LocationService로
+//            현재 위치를 읽어 start로 보내고, 취향·시간·동행·난이도도 함께 보낸다.
+//            위치를 못 얻으면 종로 기본값으로 폴백하되 그 사실을 화면에 알린다 —
+//            조용히 다른 동네 코스를 만들어 주면 사용자가 원인을 알 수 없다.
+//            end(집)는 보내지 않는다 — 왕복(시작=끝)이 서버 기본값이고, 종로 고정
+//            도착점을 그대로 두면 다른 지역에서 피날레가 엉뚱한 곳으로 잡힌다.
+// 구현일: 2026-08-18 | 작성: kys (explore-input-wiring/kys/v1)
 // ============================================================
 import 'package:flutter/material.dart';
+import 'package:http/http.dart' as http;
 
 import '../api/api_client.dart';
+import '../game/location_service.dart';
 import '../models/explore_draft.dart';
 import '../store.dart';
 import '../theme.dart';
@@ -15,13 +27,25 @@ import 'scenario_preview_screen.dart';
 
 class ExploreConfirmScreen extends StatefulWidget {
   final ExploreDraft draft;
-  const ExploreConfirmScreen({super.key, required this.draft});
+
+  /// 위치 서비스 주입 지점 — 테스트가 실기기 GPS 없이 좌표를 밀어 넣는다.
+  final LocationService locationService;
+
+  /// HTTP 실행기 주입 지점 — 테스트가 실제 서버 없이 요청 본문을 확인한다.
+  final http.Client? httpClient;
+
+  const ExploreConfirmScreen({
+    super.key,
+    required this.draft,
+    this.locationService = const LocationService(),
+    this.httpClient,
+  });
   @override
   State<ExploreConfirmScreen> createState() => _ExploreConfirmScreenState();
 }
 
 class _ExploreConfirmScreenState extends State<ExploreConfirmScreen> {
-  final _api = ApiClient();
+  late final ApiClient _api = ApiClient(client: widget.httpClient);
   final _nameController = TextEditingController();
   bool _loading = false;
   String? _error;
@@ -32,9 +56,8 @@ class _ExploreConfirmScreenState extends State<ExploreConfirmScreen> {
     super.dispose();
   }
 
-  // 종로 MVP 기본 출발/도착 좌표 — GPS·카카오 지도 연동 전까지 고정값(구 create_scenario_screen과 동일).
-  static const _startLat = 37.5703, _startLng = 126.9856;
-  static const _endLat = 37.5547, _endLng = 126.9707;
+  // 위치를 못 얻었을 때만 쓰는 폴백 좌표(종로 MVP 기준점). 성공 경로에서는 안 쓴다.
+  static const _fallbackLat = 37.5703, _fallbackLng = 126.9856;
 
   Future<void> _generate() async {
     setState(() {
@@ -43,20 +66,34 @@ class _ExploreConfirmScreenState extends State<ExploreConfirmScreen> {
     });
     final d = widget.draft;
     try {
+      // 출발점 = 지금 서 있는 자리. 실패하면 폴백 좌표 + 안내(조용히 넘어가지 않는다).
+      final loc = await widget.locationService.current();
+      final startLat = loc.isOk ? loc.lat! : _fallbackLat;
+      final startLng = loc.isOk ? loc.lng! : _fallbackLng;
+      final notice = loc.isOk ? null : '${loc.message} 종로 기준으로 코스를 만들었느니라.';
+
       final scn = await _api.generateScenario(
-        startLat: _startLat,
-        startLng: _startLng,
-        endLat: _endLat,
-        endLng: _endLng,
+        startLat: startLat,
+        startLng: startLng,
         transport: d.transport,
         wishlist: d.places,
         budget: d.budget,
         noMeals: !d.includeMeals,
+        region: d.region,
+        duration: d.durationCode,
+        companion: d.companionCode,
+        difficulty: d.difficultyCode,
+        tags: d.tagList,
+        headcount: d.headcount,
       );
       final name = _nameController.text.trim();
       final named = name.isEmpty ? scn : scn.copyWith(title: name);
       ScenarioStore.I.add(named);
       if (!mounted) return;
+      if (notice != null) {
+        // 폴백으로 만들었다는 사실은 결과 화면에서도 보여야 한다(왜 딴 동네인지 알 수 있게).
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(notice)));
+      }
       Navigator.push(
         context,
         MaterialPageRoute(builder: (_) => ScenarioPreviewScreen(scenario: named, draft: d)),

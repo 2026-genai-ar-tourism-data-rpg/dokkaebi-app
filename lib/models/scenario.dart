@@ -170,6 +170,10 @@ class QuestNode {
   final String fragmentId; // 기억석 조각 id. 식음 노드는 빈 문자열(조각 아님)
   final int? stoneNo; // 기억석 조각 번호(1-base). 식음 노드는 null
   final String npcDialogue;
+
+  /// 이 장소를 지키는 도깨비 이름(AI가 노드마다 합성). 서버 도감(DexEntry)도 이 값을 쓴다.
+  /// 없으면 빈 문자열 — 화면이 기본 이름으로 폴백한다.
+  final String npcName;
   final bool isFinale;
   final int? priceBand; // 식음: 가격대 밴드 1~4(미상 null)
   final String? priceBandLabel; // 식음: ₩~₩₩₩₩ 표시용
@@ -209,6 +213,7 @@ class QuestNode {
     required this.fragmentId,
     this.stoneNo,
     required this.npcDialogue,
+    this.npcName = '',
     required this.isFinale,
     this.priceBand,
     this.priceBandLabel,
@@ -282,6 +287,7 @@ class QuestNode {
         fragmentId: j['fragment_id'] ?? '', // 식음 노드는 null → ''
         stoneNo: (j['stone_no'] as num?)?.toInt(),
         npcDialogue: j['npc_dialogue'] ?? '',
+        npcName: ((j['npc'] as Map?)?['name'] ?? '').toString(),
         isFinale: j['is_finale'] ?? false,
         priceBand: (j['price_band'] as num?)?.toInt(),
         priceBandLabel: j['price_band_label'],
@@ -324,6 +330,7 @@ class QuestNode {
         'fragment_id': fragmentId,
         if (stoneNo != null) 'stone_no': stoneNo,
         'npc_dialogue': npcDialogue,
+        if (npcName.isNotEmpty) 'npc': {'name': npcName},
         'is_finale': isFinale,
         if (priceBand != null) 'price_band': priceBand,
         if (priceBandLabel != null) 'price_band_label': priceBandLabel,
