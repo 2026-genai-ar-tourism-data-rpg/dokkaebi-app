@@ -209,17 +209,27 @@ void main() {
       expect(find.text('갈림길'), findsWidgets); // 헤더 배지
     });
 
-    testWidgets('갈림길 노드를 누르면 선택 시트가 뜨고, 고르면 그 갈래로 바뀐다', (tester) async {
+    // [v2] 갈림길은 대화 안에서 고른다(ai#24 개편) — 노드를 눌렀을 때 시트가 먼저 뜨면
+    //      도깨비가 갈림길을 모른 채 말하게 되고, 선택 축이 둘로 갈린다.
+    testWidgets('갈림길 노드를 눌러도 시트가 먼저 뜨지 않는다 — 대화가 길을 묻는다', (tester) async {
       final sc = branching();
       await ScenarioStore.I.add(sc);
       await _pump(tester, sc);
 
       await tester.tap(_rowText('운현궁'));
       await _settle(tester);
-      expect(find.textContaining('어느 길로 가려느냐'), findsOneWidget);
 
-      await tester.tap(find.text('샛길 — 탑골공원').last);
-      await _settle(tester);
+      // 시트 대신 플레이(대화) 화면으로 들어간다.
+      expect(find.textContaining('어느 길로 가려느냐'), findsNothing);
+      expect(ScenarioStore.I.choicesOf(sid), isEmpty);
+    });
+
+    testWidgets('갈래가 정해지면 동선이 그 길로 바뀐다', (tester) async {
+      final sc = branching();
+      await ScenarioStore.I.add(sc);
+      // 대화에서 'b1'을 고르면 플레이 화면이 이 값을 저장한다(그 뒤 동작을 검증).
+      await ScenarioStore.I.chooseBranch(sid, 'n1', 'b1');
+      await _pump(tester, sc);
 
       expect(ScenarioStore.I.choicesOf(sid), {'n1': 'b1'});
       expect(find.text('탑골공원'), findsWidgets);

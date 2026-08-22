@@ -6,6 +6,24 @@
 // 구현일: 2026-07-08 | 작성: kys (quest-play/kys/v2) · 시안: 종로의 기억석 UI
 // ------------------------------------------------------------
 // [v1] 분기 대화 + 미션 브리핑 카드 리스트 — 2026-06-18 kys (rpg-dialogue/kys/v1)
+// ------------------------------------------------------------
+// [v3] 조각 없는 노드에서 완주가 막히던 것 수정.
+// 구현(요약): run이 살아 있으면 노드 종류를 안 가리고 collect를 불렀는데, 조각을 안 주는
+//            노드(피날레=조각 합치기 / 사이드 퀘스트=유물)에서 서버가 400을 돌려주고
+//            거기서 early return 하는 바람에 complete가 아예 호출되지 않았다
+//            → 피날레 보상·칭호·지역 복원을 못 받고 코스가 끝나지 않는다.
+//            조각이 있는 노드에서만 collect하고, 없으면 바로 complete로 간다.
+//            (서버 계약: fragment_id 없는 노드의 collect는 400이 정상 동작)
+// 구현일: 2026-08-18 | 작성: kys (explore-input-wiring/kys/v1)
+// ------------------------------------------------------------
+// [v4] 갈림길을 대화 안에서 고른다 + 고른 갈래를 서버로 보낸다.
+// 구현(요약): ① node.branch를 대화 요청에 실어 보내 도깨비가 갈림길을 알고 말하게 한다.
+//              전에는 지도에서 먼저 고르고 대화는 그 사실을 몰라, 선택 축이 둘로 갈렸다.
+//            ② 대화의 종료 선택지 id가 곧 갈래 id(main|b1) → 그 값을 complete로 넘긴다.
+//              전에는 complete(nodeId)만 불러 서버 quest_runs.choices가 계속 비어 있었고,
+//              서버가 계산하는 next_node_id는 언제나 본선이었다(실측).
+//            ③ 고른 갈래를 로컬 저장소에도 반영해 동선(playedPath)이 즉시 그 길로 바뀐다.
+// 구현일: 2026-08-19 | 작성: kys (dialogue-rework/kys/v1)
 // ============================================================
 import 'package:flutter/material.dart';
 
@@ -13,6 +31,7 @@ import '../api/api_client.dart';
 import '../game/run_session.dart';
 import '../models/run.dart';
 import '../models/scenario.dart';
+import '../store.dart';
 import '../theme.dart';
 import '../widgets/ar_frame.dart';
 import 'ar_search_screen.dart';
@@ -21,7 +40,24 @@ import 'location_verify_screen.dart';
 class QuestPlayScreen extends StatefulWidget {
   final QuestNode node;
   final List<String> inventory;
-  const QuestPlayScreen({super.key, required this.node, this.inventory = const []});
+
+  /// 갈림길 선택을 로컬 동선에 반영하려면 필요(없으면 서버에만 기록된다).
+  final String? scenarioId;
+
+  /// grounding 원문 재조회 시 지역 워킹셋 편입에 쓰인다.
+  final String? regionId;
+
+  /// 진행도 {progress, required} — 도깨비가 "몇 조각째인지" 알고 말하게 한다.
+  final Map<String, dynamic>? playerState;
+
+  const QuestPlayScreen({
+    super.key,
+    required this.node,
+    this.inventory = const [],
+    this.scenarioId,
+    this.regionId,
+    this.playerState,
+  });
   @override
   State<QuestPlayScreen> createState() => _QuestPlayScreenState();
 }
@@ -42,6 +78,29 @@ class _QuestPlayScreenState extends State<QuestPlayScreen> {
   final List<Map<String, String>> _history = [];
   int _turn = 0;
   List<String> _granted = [];
+
+  /// 대화에서 고른 갈래(main|b1). complete로 넘겨 서버가 다음 노드를 정하게 한다.
+  String? _routeChoiceId;
+
+  /// 대화 호출이 실패했나 — 실패하면 선택지가 없어 그 노드에서 진행이 막힌다.
+  /// 재시도 버튼과 '대화 없이 진행' 탈출구를 띄우는 근거.
+  bool _dialogueFailed = false;
+
+  /// 이 노드가 '아직 고르지 않은' 갈림길이면 그 갈래 목록. 이미 골랐으면 null —
+  /// 다시 물으면 플레이어가 같은 갈림길을 두 번 만난다.
+  Map<String, dynamic>? get _pendingBranch {
+    final b = widget.node.branch;
+    if (b == null) return null;
+    final sid = widget.scenarioId;
+    if (sid != null && ScenarioStore.I.choicesOf(sid).containsKey(widget.node.nodeId)) {
+      return null;
+    }
+    return b.toJson();
+  }
+
+  /// 갈림길 갈래 id 집합 — 대화 선택지가 '길 고르기'인지 판별하는 기준.
+  Set<String> get _routeIds =>
+      (widget.node.branch?.options ?? const []).map((o) => o.choiceId).toSet();
 
   bool get _needsQuiz => widget.node.quiz != null && !_quizPassed;
   bool get _needsMissionBrief {
@@ -77,17 +136,29 @@ class _QuestPlayScreenState extends State<QuestPlayScreen> {
     // AR에서 찾았다고 곧바로 획득 처리하지 않는다 — 조각의 주인은 서버다.
     // 서버가 GPS 인증·requires·중복을 검사하고, 실패하면 사유를 돌려준다.
     if (RunSession.I.isActive) {
-      final collected = await RunSession.I.collect(widget.node.nodeId);
+      // 조각을 주지 않는 노드(피날레=조각 합치기, 사이드=유물)는 collect를 건너뛴다.
+      // 부르면 서버가 400을 주고, 그 400 때문에 complete까지 막혀 완주가 안 된다.
+      final hasFragment = widget.node.fragmentId.isNotEmpty;
+      CollectResult? collected;
+      if (hasFragment) {
+        collected = await RunSession.I.collect(widget.node.nodeId);
+        if (!mounted) return;
+        if (collected == null) {
+          setState(() => _serverError = RunSession.I.error ?? '조각을 기록하지 못했느니라.');
+          return;
+        }
+      }
+      // 갈림길에서 고른 갈래를 함께 보낸다 — 없으면 서버는 늘 본선으로 판정한다.
+      final reward =
+          await RunSession.I.complete(widget.node.nodeId, choiceId: _routeChoiceId);
       if (!mounted) return;
-      if (collected == null) {
-        setState(() => _serverError = RunSession.I.error ?? '조각을 기록하지 못했느니라.');
+      if (reward == null) {
+        setState(() => _serverError = RunSession.I.error ?? '기록을 남기지 못했느니라.');
         return;
       }
-      final reward = await RunSession.I.complete(widget.node.nodeId);
-      if (!mounted) return;
       setState(() {
         _collected = true;
-        _granted = [collected.fragmentId];
+        _granted = collected != null ? [collected.fragmentId] : const [];
         _reward = reward;
         _serverError = null;
       });
@@ -107,16 +178,23 @@ class _QuestPlayScreenState extends State<QuestPlayScreen> {
   }
 
   Future<void> _turnCall(String? choiceId) async {
-    setState(() => _loading = true);
+    setState(() {
+      _loading = true;
+      _dialogueFailed = false;
+    });
     try {
       final t = await _api.dialogueTurn(
         nodeId: widget.node.nodeId,
         nodeName: widget.node.name,
         fragmentId: widget.node.fragmentId,
+        regionId: widget.regionId,
         history: _history,
         inventory: widget.inventory,
         lastChoice: choiceId,
         turn: _turn,
+        branch: _pendingBranch,   // 갈림길이면 도깨비가 두 길을 알고 말한다
+        playerState: widget.playerState,
+        kind: widget.node.kind,   // 식음 노드면 조각 의뢰 대신 요기 권유
       );
       setState(() {
         _line = t.response;
@@ -126,7 +204,11 @@ class _QuestPlayScreenState extends State<QuestPlayScreen> {
         if (t.done) _done = true;
       });
     } catch (e) {
-      setState(() => _line = '대화 실패 — 서버가 켜져 있나요? ($e)');
+      // 여기서 멈추면 선택지가 없어 노드가 막힌다 → 재시도/건너뛰기 UI를 띄운다.
+      setState(() {
+        _line = '도깨비가 답이 없구나. 잠시 뒤 다시 청해 보거라.\n($e)';
+        _dialogueFailed = true;
+      });
     } finally {
       if (mounted) setState(() => _loading = false);
     }
@@ -134,6 +216,16 @@ class _QuestPlayScreenState extends State<QuestPlayScreen> {
 
   void _pick(DialogueChoice c) {
     _history.add({'role': 'me', 'text': c.text});
+    // 갈림길 갈래를 고른 것이면 그 id가 곧 경로 선택이다 — 기록해 두었다가
+    // complete로 넘겨야 서버가 다음 노드를 그 길로 잡는다.
+    if (_routeIds.contains(c.id)) {
+      _routeChoiceId = c.id;
+      final sid = widget.scenarioId;
+      if (sid != null) {
+        // 로컬 동선(playedPath)도 즉시 그 길로 — 서버 응답을 기다리지 않는다.
+        ScenarioStore.I.chooseBranch(sid, widget.node.nodeId, c.id);
+      }
+    }
     _turnCall(c.id);
   }
 
@@ -254,6 +346,27 @@ class _QuestPlayScreenState extends State<QuestPlayScreen> {
             padding: const EdgeInsets.only(bottom: 8),
             child: _choiceRow(letters[i % 3], badges[i % 3], _choices[i]),
           ),
+      ],
+      // 대화가 실패하면 선택지가 없다 — 여기서 빠져나갈 길을 주지 않으면 노드가 막힌다.
+      if (_dialogueFailed && !_done) ...[
+        const SizedBox(height: 10),
+        Row(children: [
+          Expanded(
+            child: OutlinedButton.icon(
+              onPressed: _loading ? null : () => _turnCall(null),
+              icon: const Icon(Icons.refresh, size: 18),
+              label: const Text('다시 청하기'),
+            ),
+          ),
+          const SizedBox(width: 8),
+          Expanded(
+            child: FilledButton.icon(
+              onPressed: _loading ? null : () => setState(() => _done = true),
+              icon: const Icon(Icons.explore, size: 18),
+              label: const Text('대화 없이 진행'),
+            ),
+          ),
+        ]),
       ],
     ]);
   }

@@ -10,6 +10,13 @@
 //            실행: flutter test test_e2e --dart-define=SERVER_BASE_URL=http://<서버>:8000
 //            전제: dokkaebi-server(:8000) + dokkaebi-ai(:8001) + Postgres/Redis 기동
 // 구현일: 2026-08-04 | 작성: kys (game-loop-wiring/kys/v1)
+// ------------------------------------------------------------
+// [v2] 조각 없는 노드를 건너뛰고 완주 — 노드가 전부 조각을 준다는 전제를 뺐다.
+// 구현(요약): 고정 스크립트 코스(종로 정답지)는 피날레가 '조각 합치기'라 fragment_id가
+//            없고, 사이드 퀘스트는 유물을 준다. 모든 stone 노드에서 collect를 부르던
+//            루프가 거기서 400을 맞고 멈췄다 — 앱 본체와 같은 규칙으로 고친다
+//            (조각이 있는 노드만 collect, 완료는 모든 노드에서).
+// 구현일: 2026-08-18 | 작성: kys (explore-input-wiring/kys/v1)
 // ============================================================
 import 'dart:convert';
 import 'dart:io';
@@ -137,14 +144,20 @@ void main() {
           reason: '${node.name}: 정확한 좌표인데 인증 실패 (${verdict.reason})');
       expect(verdict.state, 'GPS_VERIFIED');
 
-      final collected = await api.collectFragment(runId: run.runId, nodeId: node.nodeId);
-      expect(collected.fragmentId, node.fragmentId,
-          reason: '${node.name}: 서버가 다른 조각 id를 돌려줬다');
-      expect(collected.alreadyCollected, isFalse);
+      // 조각을 주는 노드만 collect — 조각 없는 노드(피날레 합치기·사이드)는 서버가 400.
+      final hasFragment = node.fragmentId.isNotEmpty;
+      if (hasFragment) {
+        final collected = await api.collectFragment(runId: run.runId, nodeId: node.nodeId);
+        expect(collected.fragmentId, node.fragmentId,
+            reason: '${node.name}: 서버가 다른 조각 id를 돌려줬다');
+        expect(collected.alreadyCollected, isFalse);
+      }
 
       lastReward = await api.completeNode(runId: run.runId, nodeId: node.nodeId);
-      expect(lastReward.memoryStoneFragmentId, node.fragmentId);
-      expect(lastReward.expGained, greaterThan(0), reason: '${node.name}: 보상이 0');
+      if (hasFragment) {
+        expect(lastReward.memoryStoneFragmentId, node.fragmentId);
+        expect(lastReward.expGained, greaterThan(0), reason: '${node.name}: 보상이 0');
+      }
     }
 
     // ── 7. 피날레에서 지역이 복원된다 ──

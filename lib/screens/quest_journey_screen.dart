@@ -5,6 +5,31 @@
 //            인사동→세종→엔딩 + 보상/힌트/컬렉션 모달을 한 화면 상태머신으로 재현.
 //            콘텐츠(코스명·장소·조각)는 Scenario 데이터 연동, 없으면 종로 기본값 폴백.
 // 구현일: 2026-07-08 | 작성: kys (quest-journey/kys/v1) · 시안: 종로의 기억석 플레이 v2 standalone
+// ------------------------------------------------------------
+// [v2] 조각 수 하드코딩(4) 제거 — 코스 길이를 따라간다.
+// 구현(요약): 시안이 종로 4조각이라 '/ 4'·`i < 4`·`math.min(3, …)`가 화면 전체에 박혀 있었다.
+//            앱 마법사의 「시간」 입력이 코스 길이(4·6·8조각)를 바꾸게 되면서 그대로 두면
+//            표시가 전부 어긋나고, 조각이 4개 미만인 코스는 POI 그리기에서 RangeError가 난다
+//            (targets[i], i<4 고정 루프). 실제 챕터 수(targets.length)를 단일 기준으로 쓴다.
+//            좁은 화면 HUD·조각 패널 오버플로도 같이 정리(320px 스모크 게이트).
+// 구현일: 2026-08-18 | 작성: kys (explore-input-wiring/kys/v1)
+// ------------------------------------------------------------
+// [v3] 종로 시안 재생 → **코스 데이터 재생**. 이 화면이 메인 진입점(코스 CTA·퀘스트 탭)인데
+//      어느 지역 코스를 만들어도 종로 정답지 연출이 그대로 돌고 있었다.
+// 구현(요약): ① 퀴즈 하드코딩('운현궁은 누구의 집?' 정답=흥선대원군) → 노드의 quiz 사용.
+//              퀴즈가 없는 노드는 시험 단계를 건너뛴다(있지도 않은 문제를 내지 않는다).
+//            ② 스테이지 종류를 종로 순서 순환(summon→cafe→insa→sejong)이 아니라
+//              **노드 미션 타입**에서 정한다 — QUIZ_FIND→시험, PHOTO_FIND→사진,
+//              PATH_TRACE→발자국, HUNT→사냥, 그 외→지령. 마지막은 복원.
+//            ③ 도깨비 이름을 노드 npc에서 가져온다(전 지역 '먹 도깨비'였다).
+//            ④ 챕터 완료가 로컬에만 남던 것을 서버(run)에도 기록한다 — 이 경로로 플레이하면
+//              조각·경험치·도감이 서버에 하나도 안 쌓이고 있었다.
+//              ⚠️ 서버 인증은 **실제 기기 위치**로만 보낸다. 처음엔 노드 좌표를 GPS인 척
+//              보냈는데, 이 화면은 걸음이 연출(gpsDist 애니메이션)이라 챕터를 4초 만에
+//              넘기면 600m를 순간이동한 꼴이 되어 서버 스푸핑 방어(IMPOSSIBLE_SPEED)에
+//              전부 막혔다(실측: 정상 속도 플레이가 1/4에서 정지). 실제로 그 자리에
+//              가 있지 않으면 서버 기록은 건너뛰고 연출만 진행한다 — 조각의 주인은 서버다.
+// 구현일: 2026-08-22 | 작성: kys (play-path-unify/kys/v1)
 // ============================================================
 import 'dart:async';
 import 'dart:math' as math;
@@ -13,6 +38,8 @@ import 'package:flutter/material.dart';
 
 import '../game/hint_ladder_controller.dart';
 import '../game/player_state.dart';
+import '../game/location_service.dart';
+import '../game/run_session.dart';
 import '../models/scenario.dart';
 import '../store.dart';
 import '../theme.dart';
@@ -70,8 +97,11 @@ const _defaultTargets = <_Target>[
 const _defaultClues = ['申時', 'ㄱ', 'ㅏ', ''];
 
 class QuestJourneyScreen extends StatefulWidget {
+  /// 도착 인증에 쓸 위치 서비스. 테스트·데모에서 갈아끼운다.
+  final LocationService locationService;
+
   final Scenario? scenario;
-  const QuestJourneyScreen({super.key, this.scenario});
+  const QuestJourneyScreen({super.key, this.scenario, this.locationService = const LocationService()});
   @override
   State<QuestJourneyScreen> createState() => _QuestJourneyScreenState();
 }
@@ -151,6 +181,19 @@ class _QuestJourneyScreenState extends State<QuestJourneyScreen> with TickerProv
       ..repeat(reverse: true);
     _restoreProgress();
     targets = _resolveTargets(widget.scenario);
+    fragments = math.min(_stoneTotal, fragments);   // 코스보다 많은 조각은 표시상 의미 없음
+    _ensureRun();
+  }
+
+  /// 서버 run을 연다(이미 열려 있으면 그대로 쓴다).
+  ///
+  /// 퀘스트 탭의 '탐험 시작'은 코스 화면을 거치지 않고 바로 이 화면으로 들어와서,
+  /// run이 없는 채로 플레이가 끝나면 조각·경험치가 서버에 하나도 안 남는다.
+  /// 실패해도 연출은 그대로 진행한다(서버 없이도 데모가 돌아야 한다).
+  Future<void> _ensureRun() async {
+    final s = widget.scenario;
+    if (s == null) return;
+    await RunSession.I.start(s.scenarioId);
   }
 
   /// 저장된 진행 복원 — 갈림길 선택·인벤토리를 먼저 읽어야 경로가 확정된다.
@@ -160,7 +203,7 @@ class _QuestJourneyScreenState extends State<QuestJourneyScreen> with TickerProv
     branchChoices.addAll(ScenarioStore.I.choicesOf(s.scenarioId));
     pstate.applyAll(
         ScenarioStore.I.inventoryOf(s.scenarioId).map(StateRef.parse));
-    fragments = math.min(4, pstate.fragments.length);
+    fragments = pstate.fragments.length;      // 캡은 targets 확정 후(initState)에서
     coupon = pstate.couponTotal;
   }
 
@@ -171,24 +214,60 @@ class _QuestJourneyScreenState extends State<QuestJourneyScreen> with TickerProv
     final stones = s.playedPath(branchChoices).where((n) => n.isStone).toList();
     if (stones.isEmpty) return _defaultTargets;
     return [
-      for (var i = 0; i < 4; i++)
-        if (i < stones.length)
-          _Target(
-            stones[i].name ?? _defaultTargets[i].name,
-            _defaultTargets[i].hanja,
-            stones[i].distM?.round() ?? _defaultTargets[i].dist0,
-            _defaultTargets[i].title,
-            stones[i].objective?.order.isNotEmpty == true
-                ? stones[i].objective!.order
-                : (stones[i].mission?.order.isNotEmpty == true
-                    ? stones[i].mission!.order
-                    : _defaultTargets[i].obj),
-            _defaultTargets[i].after,
-            node: stones[i],
-          )
-        else
-          _defaultTargets[i],
+      for (var i = 0; i < stones.length; i++) _targetOf(stones[i], i, stones.length),
     ];
+  }
+
+  /// 조각 노드 1개 → 챕터. 시안 상수(한자·스테이지)는 순환해 쓰고, 문구는 데이터 우선.
+  ///
+  /// 예전에는 정확히 4개만 만들었다(`for i < 4`) — 코스가 짧으면 종로 기본 노드로 채우고
+  /// 길면 잘라냈다. 탐험 시간 입력이 코스 길이(4·6·8조각)를 바꾸면서 그대로 두면
+  /// 6조각 코스가 화면에서 4챕터로 보이고, 있지도 않은 운현궁이 챕터로 끼어든다.
+  /// 미션 타입 → 이 챕터에서 밟을 스테이지. 종로 순서 순환을 대체한다.
+  /// (전에는 2번째 노드가 무조건 '카페', 3번째가 '인사동 붓방'이었다 — 경주에서도.)
+  static String _stageFor(QuestNode n, bool isFinale) {
+    if (isFinale) return 'summon-sejong';          // 마지막은 복원 스테이지
+    switch (n.mission?.type) {
+      case 'QUIZ_FIND':
+      case 'DIALOGUE_FIND':
+        return 'summon-meok';                      // 등장 → 대화 → (퀴즈가 있으면) 시험
+      case 'PHOTO_FIND':
+        return 'photo';
+      case 'PATH_TRACE':
+        return 'trail';
+      case 'HUNT':
+        return 'hunt';
+      default:
+        return 'summon-meok';                      // 등장 → 대화 → 지령
+    }
+  }
+
+  _Target _targetOf(QuestNode n, int i, int total) {
+    final isFinale = i == total - 1;
+    // 마지막은 항상 '기억석 복원' 스테이지 — 피날레의 의미가 거기 붙어 있다.
+    final base = isFinale
+        ? _defaultTargets.last
+        : _defaultTargets[i % (_defaultTargets.length - 1)];
+    final name = n.name ?? base.name;
+    // 시안 제목은 종로 정답지 노드에서만 맞는다 — 다른 장소엔 장소명으로 지은 제목을 쓴다.
+    final title = name == base.name
+        ? base.title
+        : (isFinale ? '마지막 조각, $name' : '$name에 잠든 글씨');
+    return _Target(
+      name,
+      base.hanja,
+      n.distM?.round() ?? base.dist0,
+      title,
+      n.objective?.order.isNotEmpty == true
+          ? n.objective!.order
+          : (n.mission?.order.isNotEmpty == true
+              ? n.mission!.order
+              // 지령이 없는 노드에 시안 문구를 그대로 쓰면 딴 장소 지령이 뜬다
+              // ('운현궁 대문 앞에서…'가 강남 노드에). 장소명으로 만든 기본 지령을 쓴다.
+              : (name == base.name ? base.obj : '$name 주변을 살펴 기억석 조각을 찾아라.')),
+      _stageFor(n, isFinale),
+      node: n,
+    );
   }
 
   /// 현재 챕터의 힌트 사다리 컨트롤러(문구=노드 hint_ladder, 없으면 시안 문구).
@@ -230,8 +309,23 @@ class _QuestJourneyScreenState extends State<QuestJourneyScreen> with TickerProv
 
   void go(String s) => setState(() => screen = s);
 
-  int get _tIdx => math.min(3, fragments);
+  /// 이 코스의 조각 총수 — 실제 밟는 챕터 수. 데모(시나리오 없음)는 기본 4.
+  int get _stoneTotal => targets.isEmpty ? _defaultTargets.length : targets.length;
+
+  int get _tIdx => math.min(_stoneTotal - 1, fragments);
   _Target get _target => targets[_tIdx];
+
+  /// 지금 챕터의 노드(데모 모드면 null). 퀴즈·NPC 이름·대사의 출처.
+  QuestNode? get _curNode => targets.isEmpty ? null : targets[_tIdx].node;
+
+  /// 이 챕터에 낼 시험이 있나 — 없으면 시험 단계를 통째로 건너뛴다.
+  Quiz? get _curQuiz => _curNode?.quiz;
+
+  /// 이 장소를 지키는 도깨비 이름(없으면 시안 기본값).
+  String get _npcName {
+    final n = _curNode?.npcName ?? '';
+    return n.isEmpty ? '먹 도깨비' : n;
+  }
 
   // ── 스캔 진행(사진·인사동) ──
   void _startScan(String key) {
@@ -359,10 +453,41 @@ class _QuestJourneyScreenState extends State<QuestJourneyScreen> with TickerProv
     if (s == null) return;
     if (n != null) {
       await ScenarioStore.I.completeNodeWithGrants(s.scenarioId, n, extra: extra);
+      await _recordOnServer(n);          // [v3] 로컬만 쌓고 끝나던 것을 서버에도 남긴다
     } else {
       await ScenarioStore.I
           .completeNode(s.scenarioId, 'chapter_$chapterIdx', refs.map((r) => r.toStorageString()).toList());
     }
+  }
+
+  /// 챕터 완료를 서버 run에 기록한다 — 조각·경험치·도감·칭호가 여기서 나온다.
+  ///
+  /// 이 화면은 지금까지 서버를 한 번도 부르지 않아, 메인 CTA로 플레이한 사용자는
+  /// 진행도가 로컬에만 남고 서버에는 아무것도 쌓이지 않았다(다른 기기·재설치 시 소멸).
+  /// 실패해도 연출은 막지 않는다 — 서버가 없으면 데모 모드처럼 계속 진행한다.
+  Future<void> _recordOnServer(QuestNode n) async {
+    if (!RunSession.I.isActive) return;
+
+    // 실제 위치로만 인증한다. 노드 좌표를 대신 보내면 순간이동으로 판정된다(위 헤더 참조).
+    final loc = await widget.locationService.current();
+    if (!loc.isOk) {
+      if (mounted) _snack('${loc.message} 진행은 되지만 조각은 서버에 기록되지 않느니라.');
+      return;
+    }
+    final verdict = await RunSession.I.verify(
+      nodeId: n.nodeId, lat: loc.lat!, lng: loc.lng!, accuracyM: loc.accuracyM,
+    );
+    if (verdict == null || !verdict.verified) {
+      // 아직 그 자리에 없다 — 연출은 계속하되 서버 보상은 주지 않는다.
+      // 거절 사유별 안내는 LocationVerdict.message가 이미 갖고 있다(문구 중복 금지).
+      if (mounted) _snack('${verdict?.message ?? '위치를 확인하지 못했느니라.'} 연출은 계속되나 조각은 기록되지 않느니.');
+      return;
+    }
+    if (n.fragmentId.isNotEmpty) await RunSession.I.collect(n.nodeId);
+    await RunSession.I.complete(
+      n.nodeId,
+      choiceId: branchChoices[n.nodeId],   // 갈림길을 골랐으면 그 갈래를 함께 보낸다
+    );
   }
 
   /// 선택지 효과(플래그·친밀도·쿠폰) 즉시 적용 + 영속. 규칙 2조: grants 종류는 안 바뀐다.
@@ -384,7 +509,7 @@ class _QuestJourneyScreenState extends State<QuestJourneyScreen> with TickerProv
     setState(() {
       ending = resolved;
       screen = 'ending';
-      fragments = 4;
+      fragments = _stoneTotal;
       exp += 200;
     });
     await _grantChapter(3);
@@ -776,11 +901,19 @@ class _QuestJourneyScreenState extends State<QuestJourneyScreen> with TickerProv
           ]),
         ),
         const SizedBox(width: 10),
-        Column(crossAxisAlignment: CrossAxisAlignment.start, mainAxisSize: MainAxisSize.min, children: [
-          Text('글지기 견습', style: dokkaebiTitle(size: 17, color: _cream)),
-          Text('제 $chapterNum 장 진행 중', style: const TextStyle(fontSize: 11, color: _muted)),
-        ]),
-        const Spacer(),
+        // Expanded — 좁은 화면(320px)에서 칭호·챕터 텍스트가 우측 스탯을 밀어내 오버플로났다.
+        // 남는 폭을 텍스트가 갖고, 모자라면 말줄임으로 접는다(스탯은 항상 보여야 함).
+        Expanded(
+          child: Column(crossAxisAlignment: CrossAxisAlignment.start, mainAxisSize: MainAxisSize.min, children: [
+            Text('글지기 견습',
+                maxLines: 1, overflow: TextOverflow.ellipsis,
+                style: dokkaebiTitle(size: 17, color: _cream)),
+            Text('제 $chapterNum 장 진행 중',
+                maxLines: 1, overflow: TextOverflow.ellipsis,
+                style: const TextStyle(fontSize: 11, color: _muted)),
+          ]),
+        ),
+        const SizedBox(width: 8),
         _hudStat(_remain.toString(), _gold, ring: true),
         const SizedBox(width: 7),
         _hudStat('붓털 $brush', _soft),
@@ -817,29 +950,39 @@ class _QuestJourneyScreenState extends State<QuestJourneyScreen> with TickerProv
               const Text('글씨조각', style: TextStyle(fontSize: 10, color: _muted, fontWeight: FontWeight.w700, letterSpacing: 0.8)),
               RichText(text: TextSpan(children: [
                 TextSpan(text: '$fragments ', style: dokkaebiTitle(size: 19, color: _blue)),
-                const TextSpan(text: '/ 4', style: TextStyle(fontSize: 13, color: _muted)),
+                TextSpan(text: '/ $_stoneTotal', style: const TextStyle(fontSize: 13, color: _muted)),
               ])),
             ]),
-            const Spacer(),
-            for (var i = 0; i < 4; i++)
-              Padding(
-                padding: const EdgeInsets.only(left: 13),
-                child: Transform.rotate(
-                  angle: math.pi / 4,
-                  child: Container(
-                    width: 17, height: 17,
-                    decoration: BoxDecoration(
-                      borderRadius: BorderRadius.circular(4),
-                      gradient: i < fragments ? const LinearGradient(colors: [Color(0xFFF4D98A), _goldDim]) : null,
-                      color: i < fragments ? null : _cream.withOpacity(0.06),
-                      border: Border.all(color: i < fragments ? _verm : _muted.withOpacity(0.4), width: 1.5),
-                      boxShadow: i < fragments ? [BoxShadow(color: _gold.withOpacity(0.55), blurRadius: 12)] : null,
+            const SizedBox(width: 8),
+            // 조각 표시는 남는 폭 안에서 축소한다 — 조각이 8개인 코스나 320px 화면에서
+            // 자연 폭 그대로 두면 우측으로 넘친다(스모크 게이트가 잡는 오버플로).
+            Expanded(
+              child: FittedBox(
+                fit: BoxFit.scaleDown,
+                alignment: Alignment.centerRight,
+                child: Row(mainAxisSize: MainAxisSize.min, children: [
+                  for (var i = 0; i < _stoneTotal; i++)
+                    Padding(
+                      padding: const EdgeInsets.only(left: 13),
+                      child: Transform.rotate(
+                        angle: math.pi / 4,
+                        child: Container(
+                          width: 17, height: 17,
+                          decoration: BoxDecoration(
+                            borderRadius: BorderRadius.circular(4),
+                            gradient: i < fragments ? const LinearGradient(colors: [Color(0xFFF4D98A), _goldDim]) : null,
+                            color: i < fragments ? null : _cream.withOpacity(0.06),
+                            border: Border.all(color: i < fragments ? _verm : _muted.withOpacity(0.4), width: 1.5),
+                            boxShadow: i < fragments ? [BoxShadow(color: _gold.withOpacity(0.55), blurRadius: 12)] : null,
+                          ),
+                        ),
+                      ),
                     ),
-                  ),
-                ),
+                  const SizedBox(width: 12),
+                  const Text('컬렉션 ›', style: TextStyle(fontSize: 11, color: _muted)),
+                ]),
               ),
-            const SizedBox(width: 12),
-            const Text('컬렉션 ›', style: TextStyle(fontSize: 11, color: _muted)),
+            ),
           ]),
         ),
       );
@@ -847,7 +990,10 @@ class _QuestJourneyScreenState extends State<QuestJourneyScreen> with TickerProv
   List<Widget> _buildPois(BoxConstraints box) {
     final poiPos = [const Offset(.30, .29), const Offset(.59, .35), const Offset(.39, .46), const Offset(.12, .56)];
     final out = <Widget>[];
-    for (var i = 0; i < 4; i++) {
+    // 시안 좌표가 4개뿐이라 그 이상은 지도에 안 찍는다. 그 이하 코스에서 targets[i]가
+    // 범위를 벗어나 터지던 것도 여기서 막는다(조각 3개짜리 코스 = RangeError).
+    final shown = math.min(targets.length, poiPos.length);
+    for (var i = 0; i < shown; i++) {
       final done = i < fragments;
       final active = i == _tIdx && !done;
       final size = active ? 58.0 : 48.0;
@@ -882,7 +1028,7 @@ class _QuestJourneyScreenState extends State<QuestJourneyScreen> with TickerProv
                     boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.45), blurRadius: 18, offset: const Offset(0, 6))],
                   ),
                   child: Text(
-                    done ? '✓' : (active || i == 3 ? targets[i].hanja : '?'),
+                    done ? '✓' : (active || i == shown - 1 ? targets[i].hanja : '?'),
                     style: dokkaebiTitle(size: active ? 23 : 18, color: done ? _teal : (active ? _parchInk : _muted)),
                   ),
                 ),
@@ -922,7 +1068,7 @@ class _QuestJourneyScreenState extends State<QuestJourneyScreen> with TickerProv
   }
 
   Widget _chapterCard(_Target t, int chapterNum) {
-    final collectPct = fragments / 4;
+    final collectPct = _stoneTotal == 0 ? 0.0 : fragments / _stoneTotal;
     final distLabel = t.dist0 >= 1000 ? '${t.dist0 / 1000}km' : '${t.dist0}m';
     return Container(
       padding: const EdgeInsets.fromLTRB(18, 16, 18, 16),
@@ -961,7 +1107,7 @@ class _QuestJourneyScreenState extends State<QuestJourneyScreen> with TickerProv
           RichText(text: TextSpan(children: [
             const TextSpan(text: '조각 ', style: TextStyle(fontSize: 12.5, color: _parchInkSoft, fontWeight: FontWeight.w700)),
             TextSpan(text: '$fragments', style: const TextStyle(fontSize: 12.5, color: _verm, fontWeight: FontWeight.w700)),
-            const TextSpan(text: ' / 4', style: TextStyle(fontSize: 12.5, color: _parchInkSoft, fontWeight: FontWeight.w700)),
+            TextSpan(text: ' / $_stoneTotal', style: const TextStyle(fontSize: 12.5, color: _parchInkSoft, fontWeight: FontWeight.w700)),
           ])),
           const Spacer(),
           Text('📍 ${t.name}까지 $distLabel', style: const TextStyle(fontSize: 12.5, color: _verm, fontWeight: FontWeight.w900)),
@@ -1175,7 +1321,7 @@ class _QuestJourneyScreenState extends State<QuestJourneyScreen> with TickerProv
               Positioned(top: -14, left: 16, child: Container(
                 padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 5),
                 decoration: BoxDecoration(color: _verm, borderRadius: BorderRadius.circular(8)),
-                child: const Text('먹 도깨비', style: TextStyle(color: Color(0xFFFDF6E6), fontSize: 13, fontWeight: FontWeight.w900)),
+                child: Text(_npcName, style: const TextStyle(color: Color(0xFFFDF6E6), fontSize: 13, fontWeight: FontWeight.w900)),
               )),
             ]),
             if (dlgStep == 0) ...[
@@ -1187,7 +1333,10 @@ class _QuestJourneyScreenState extends State<QuestJourneyScreen> with TickerProv
               _choiceRow('C', const Color(0xFF3A352E), _soft, '"그냥 빨리 찾겠소."', '바로 진행', _muted, () { setState(() { flag = 'C'; dlgStep = 1; }); _applyChoice([const StateRef(kind: StateKind.flag, value: '실속')]); }),
             ] else ...[
               const SizedBox(height: 10),
-              _cta('계속 — 도깨비의 시험', () => go('quiz')),
+              // 퀴즈가 없는 노드(대부분의 미션 타입)는 시험을 건너뛰고 지령으로.
+              _curQuiz == null
+                  ? _cta('계속 — 지령 받기', () => go('order'))
+                  : _cta('계속 — 도깨비의 시험', () => go('quiz')),
             ],
           ])),
         ]);
@@ -1222,7 +1371,15 @@ class _QuestJourneyScreenState extends State<QuestJourneyScreen> with TickerProv
   // 6. QUIZ — 도깨비의 시험
   // ════════════════════════════════════════════════════
   Widget _quizScreen() {
-    final answers = [('1', '세종대왕', false), ('2', '흥선대원군', true), ('3', '정조', false)];
+    // [v3] 시안 문제('운현궁은 누구의 집?')를 노드 퀴즈로 교체.
+    //      AI가 QUIZ_FIND 미션에서 만들어 준 문제를 그대로 쓴다.
+    final quiz = _curQuiz;
+    final answers = quiz == null
+        ? const [('1', '세종대왕', false), ('2', '흥선대원군', true), ('3', '정조', false)]
+        : [
+            for (var i = 0; i < quiz.options.length; i++)
+              ('${i + 1}', quiz.options[i], i == quiz.answer)
+          ];
     return Container(
       decoration: BoxDecoration(gradient: _dialBg),
       child: Stack(children: [
@@ -1235,7 +1392,11 @@ class _QuestJourneyScreenState extends State<QuestJourneyScreen> with TickerProv
                 _parchment(
                   padding: const EdgeInsets.fromLTRB(20, 26, 20, 18),
                   child: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.start, children: [
-                    Text('"글씨를 찾으려면 이 집의 주인을 알아야 하느니. 운현궁은 누구의 집이었더냐?"', style: dokkaebiTitle(size: 17, color: _parchInk, height: 1.55)),
+                    Text(
+                        quiz?.q.isNotEmpty == true
+                            ? '"${quiz!.q}"'
+                            : '"글씨를 찾으려면 이 집의 주인을 알아야 하느니. 운현궁은 누구의 집이었더냐?"',
+                        style: dokkaebiTitle(size: 17, color: _parchInk, height: 1.55)),
                     const SizedBox(height: 16),
                     for (final a in answers) Padding(padding: const EdgeInsets.only(bottom: 9), child: _quizOption(a.$1, a.$2, a.$3)),
                     if (quizState == 'wrong') ...[
@@ -1243,10 +1404,12 @@ class _QuestJourneyScreenState extends State<QuestJourneyScreen> with TickerProv
                       Container(
                         padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 11),
                         decoration: BoxDecoration(color: _verm.withOpacity(0.1), borderRadius: BorderRadius.circular(11), border: Border.all(color: _verm.withOpacity(0.4))),
-                        child: RichText(text: TextSpan(style: _gowun(13.5, const Color(0xFF8A3320)), children: const [
-                          TextSpan(text: '"허허, 다시 보거라. '),
-                          TextSpan(text: '고종의 아버지', style: TextStyle(fontWeight: FontWeight.w900)),
-                          TextSpan(text: '니라." — 다시 골라도 페널티는 없다'),
+                        child: RichText(text: TextSpan(style: _gowun(13.5, const Color(0xFF8A3320)), children: [
+                          const TextSpan(text: '"허허, '),
+                          TextSpan(
+                              text: quiz?.wrongHint.isNotEmpty == true ? quiz!.wrongHint : '다시 보거라. 고종의 아버지니라.',
+                              style: const TextStyle(fontWeight: FontWeight.w900)),
+                          const TextSpan(text: '" — 다시 골라도 페널티는 없다'),
                         ])),
                       ),
                     ],
@@ -2223,9 +2386,9 @@ class _QuestJourneyScreenState extends State<QuestJourneyScreen> with TickerProv
               Column(crossAxisAlignment: CrossAxisAlignment.start, mainAxisSize: MainAxisSize.min, children: [
                 Text('기억석 컬렉션', style: dokkaebiTitle(size: 23, color: _parchInk)),
                 RichText(text: TextSpan(style: const TextStyle(fontSize: 12.5, color: _bronze), children: [
-                  const TextSpan(text: '잊혀진 글씨의 네 조각 — '),
+                  TextSpan(text: '잊혀진 글씨의 $_stoneTotal조각 — '),
                   TextSpan(text: '$fragments', style: const TextStyle(color: _verm, fontWeight: FontWeight.w900)),
-                  const TextSpan(text: ' / 4 회수'),
+                  TextSpan(text: ' / $_stoneTotal 회수'),
                 ])),
               ]),
               const Spacer(),

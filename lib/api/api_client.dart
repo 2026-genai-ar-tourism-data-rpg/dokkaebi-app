@@ -5,6 +5,16 @@
 //            앱은 AI를 직접 호출하지 않는다 ❌ — 전부 게임 서버 경유.
 //            서버 오류는 ApiException으로 감싸 code/message로 분기 가능하게 한다.
 // 구현일: 2026-06-18 (게임 루프 배선: 2026-08-04) | 작성: kys (app-scaffold/kys/v1)
+// ------------------------------------------------------------
+// [v2] 마법사 입력 전달 — duration·companion·difficulty·tags·headcount·region.
+// 구현(요약): 앱이 보내던 건 transport·wishlist·budget·no_meals 4개뿐이었고 region은
+//            '종로' 하드코딩 기본값이었다 → 사용자가 무엇을 골라도, 어디에 있어도 같은
+//            종로 코스가 나왔다. region 기본값을 'auto'(서버가 좌표로 판정)로 바꾸고
+//            나머지 입력을 계약대로 실어 보낸다. 서버 DTO·AI 스키마와 이름이 1:1이어야
+//            한다 — 서버 ValidationPipe가 whitelist라 이름이 다르면 조용히 잘린다.
+//            + http.Client 주입 지점 — 지금까지 top-level http.post를 직접 불러서
+//              화면 단위 네트워크 목킹이 불가능했다(create_scenario_screen_test 주석 참조).
+// 구현일: 2026-08-18 | 작성: kys (explore-input-wiring/kys/v1)
 // ============================================================
 import 'dart:convert';
 
@@ -17,7 +27,13 @@ import '../session.dart';
 
 class ApiClient {
   final String baseUrl;
-  ApiClient({String? baseUrl}) : baseUrl = baseUrl ?? AppConfig.serverBaseUrl;
+
+  /// HTTP 실행기 — 테스트가 MockClient로 갈아끼운다. 기본은 실제 네트워크.
+  final http.Client _http;
+
+  ApiClient({String? baseUrl, http.Client? client})
+      : baseUrl = baseUrl ?? AppConfig.serverBaseUrl,
+        _http = client ?? http.Client();
 
   /// 공통 헤더(로그인 토큰 포함).
   Map<String, String> get _headers => {
@@ -27,7 +43,7 @@ class ApiClient {
 
   /// 게스트 로그인 — 닉네임만으로 토큰 발급받아 세션 저장.
   Future<void> guestLogin(String nickname) async {
-    final res = await http.post(
+    final res = await _http.post(
       Uri.parse('$baseUrl/v1/auth/guest'),
       headers: {'Content-Type': 'application/json'},
       body: jsonEncode({'nickname': nickname}),
@@ -40,25 +56,37 @@ class ApiClient {
   }
 
   /// 분기 대화 한 턴 — 선택마다 호출. inventory로 연계(이전 단서 인지).
+  ///
+  /// [branch]는 갈림길 노드의 `node.branch` 그대로. AI는 시나리오를 들고 있지 않아
+  /// 이 값을 받아야 갈림길을 인지하고, 종료 선택지를 갈래 id(main|b1)로 낸다.
+  /// [regionId]는 grounding 원문 재조회 시 지역 워킹셋 편입에 쓰인다.
   Future<DialogueTurn> dialogueTurn({
     required String nodeId,
     String? nodeName,
     String? fragmentId,
+    String? regionId,
     List<Map<String, String>> history = const [],
     List<String> inventory = const [],
     String? lastChoice,
     int turn = 0,
+    Map<String, dynamic>? branch,
+    Map<String, dynamic>? playerState,
+    String? kind,
   }) async {
     final body = {
       'node_id': nodeId,
       if (nodeName != null) 'node_name': nodeName,
       if (fragmentId != null) 'fragment_id': fragmentId,
+      if (regionId != null) 'region_id': regionId,
       'history': history,
       'inventory': {'items': inventory},
       if (lastChoice != null) 'last_choice': lastChoice,
       'turn': turn,
+      if (branch != null) 'branch': branch,
+      if (playerState != null) 'player_state': playerState,
+      if (kind != null) 'kind': kind,
     };
-    final res = await http.post(
+    final res = await _http.post(
       Uri.parse('$baseUrl/v1/dialogue/turn'),
       headers: _headers,
       body: jsonEncode(body),
@@ -73,7 +101,7 @@ class ApiClient {
   Future<List<SearchCandidate>> searchAttractions(String keyword) async {
     final uri = Uri.parse('$baseUrl/v1/scenarios/search')
         .replace(queryParameters: {'keyword': keyword});
-    final res = await http.get(uri, headers: _headers);
+    final res = await _http.get(uri, headers: _headers);
     if (res.statusCode >= 400) {
       throw ApiException.from('검색', res);
     }
@@ -96,7 +124,13 @@ class ApiClient {
     List<SearchCandidate> wishlist = const [],
     int? budget,
     bool noMeals = false,
-    String region = '종로',
+    String region = 'auto',
+    String duration = '2h',
+    String companion = 'solo',
+    String difficulty = 'normal',
+    List<String> tags = const [],
+    int headcount = 1,
+    bool useFixedScript = false,
     bool withDialogue = true,
   }) async {
     final body = <String, dynamic>{
@@ -113,11 +147,17 @@ class ApiClient {
               })
           .toList(),
       if (budget != null) 'budget': budget,
+      'headcount': headcount,
       'no_meals': noMeals,
       'region': region,
+      'duration': duration,
+      'companion': companion,
+      'difficulty': difficulty,
+      'tags': tags,
+      'use_fixed_script': useFixedScript,
       'with_dialogue': withDialogue,
     };
-    final res = await http.post(
+    final res = await _http.post(
       Uri.parse('$baseUrl/v1/scenarios/custom'),
       headers: _headers,
       body: jsonEncode(body),
@@ -134,7 +174,7 @@ class ApiClient {
 
   /// 플레이 시작 — 시나리오 1회 플레이(run) 생성.
   Future<QuestRun> startRun(String scenarioId) async {
-    final res = await http.post(
+    final res = await _http.post(
       Uri.parse('$baseUrl/v1/runs'),
       headers: _headers,
       body: jsonEncode({'scenario_id': scenarioId}),
@@ -145,7 +185,7 @@ class ApiClient {
 
   /// 진행 상태 조회 — 앱 재시작·복귀 시 진행도 복원.
   Future<QuestRun> getRun(String runId) async {
-    final res = await http.get(Uri.parse('$baseUrl/v1/runs/$runId'), headers: _headers);
+    final res = await _http.get(Uri.parse('$baseUrl/v1/runs/$runId'), headers: _headers);
     if (res.statusCode >= 400) throw ApiException.from('플레이 조회', res);
     return QuestRun.fromJson(jsonDecode(utf8.decode(res.bodyBytes)));
   }
@@ -164,7 +204,7 @@ class ApiClient {
     required double lng,
     double? accuracyM,
   }) async {
-    final res = await http.post(
+    final res = await _http.post(
       Uri.parse('$baseUrl/v1/runs/$runId/nodes/$nodeId/verify-location'),
       headers: _headers,
       body: jsonEncode({
@@ -182,7 +222,7 @@ class ApiClient {
     required String runId,
     required String nodeId,
   }) async {
-    final res = await http.post(
+    final res = await _http.post(
       Uri.parse('$baseUrl/v1/runs/$runId/nodes/$nodeId/collect'),
       headers: _headers,
       body: jsonEncode({}),
@@ -197,7 +237,7 @@ class ApiClient {
     required String nodeId,
     String? choiceId,
   }) async {
-    final res = await http.post(
+    final res = await _http.post(
       Uri.parse('$baseUrl/v1/runs/$runId/nodes/$nodeId/complete'),
       headers: _headers,
       body: jsonEncode({if (choiceId != null) 'choice_id': choiceId}),
