@@ -15,6 +15,10 @@ build/
 .env.*
 !.env.example
 
+# 카카오맵 네이티브 앱 키 등 --dart-define-from-file용 로컬 시크릿.
+dart_defines.local.json
+!dart_defines.local.json.example
+
 # --- Android ---
 **/android/.gradle/
 **/android/local.properties

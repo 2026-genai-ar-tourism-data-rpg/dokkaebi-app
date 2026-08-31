@@ -1,16 +1,22 @@
 // ============================================================
+// [v5] v4에서 미확인으로 남겼던 것 패키지 소스 직접 확인 후 정리.
+// 구현(요약): kakao_maps_flutter 0.2.2 소스(pub-cache) 기준 —
+//   - 팬·줌 범위 제한: 하드 제약 API 없음. onCameraMoveEndStream으로 범위
+//     이탈 감지 후 moveCamera로 되돌리는 방식으로 흉내(_snapBackToKorea).
+//     제스처 중엔 못 막고 "놓으면 튕겨 돌아오는" 느낌 — flutter_map의
+//     CameraConstraint보다는 덜 매끄럽다.
+//   - 다크 테마 지도 스타일: 패키지 전체에 MapType/테마 관련 API가 없어서
+//     확실히 불가 — 기본(밝은) 스타일 유지가 최종 결론.
+//   - 내 위치 커스텀 마커 이미지: registerMarkerStyles()+MarkerStyle로 적용
+//     완료(assets/images/my_location.png — 정확도 헤일로 + 흰 테두리 파란 점,
+//     기존 flutter_map 버전 디자인 그대로 PNG로 재현).
+// 구현일: 2026-08-26 | 작성: ljs (world-map-live/ljs/v2)
+// ------------------------------------------------------------
 // [v4] 지도 엔진을 카카오맵으로 교체.
 // 구현(요약): flutter_map(CARTO 타일) → kakao_maps_flutter. CARTO 무료 타일이
 //            상업 배포 약관이 불명확하고(엔터프라이즈 전용이라는 상반된 안내도 있음)
 //            래스터 타일 자체가 단계적 폐기 중이라 교체. 카카오는 개발자 계정당
 //            첫 앱 기준 지도 SDK 일 30만 건 무료(초과 시 건당 0.1원)로 조건이 명확함.
-//            ⚠️ 미확인 상태로 남긴 것 — 패키지 예제 코드만으로 확인 가능한 범위 밖:
-//              - 팬·줌을 한반도 범위로 제한하는 API(flutter_map의 CameraConstraint
-//                같은 게 있는지 못 찾음) — 이번 버전은 제한 없이 자유 팬·줌.
-//              - 다크 테마 지도 스타일 지원 여부 — 기본 스타일로 둠.
-//              - 내 위치 마커를 커스텀 이미지(파란 점+헤일로)로 꾸미는 방법 — 기본
-//                마커로 대체, styleId로 커스텀 이미지 등록하는 방법은 실제 키로
-//                붙여보면서 카카오맵 SDK 문서 확인 필요.
 //            실행하려면 Kakao Developers에서 발급받은 네이티브 앱 키가 필요
 //            (config.dart의 AppConfig.kakaoNativeAppKey, --dart-define으로 주입).
 // 구현일: 2026-08-26 | 작성: ljs (world-map-live/ljs/v2)
@@ -20,7 +26,10 @@
 // [v1] 화면: 팔도 지도 (시안 7) — 스타일 지도(그리드 배경) + 필터 + 지역 진행 카드.
 // 구현일: 2026-06-19~08-26 | 작성: kys, ljs
 // ============================================================
+import 'dart:async';
+
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart' show rootBundle;
 import 'package:kakao_maps_flutter/kakao_maps_flutter.dart';
 
 import '../game/location_service.dart';
@@ -40,8 +49,17 @@ class _MapScreenState extends State<MapScreen> {
 
   final LocationService _locationService = const LocationService();
   KakaoMapController? _mapController;
+  StreamSubscription<CameraMoveEndEvent>? _cameraSub;
   bool _locating = false;
+  bool _hasLocationMarker = false;
   static const _myLocationMarkerId = 'my_location';
+  static const _myLocationStyleId = 'my_location_style';
+
+  // 한반도 팬·줌 제한 범위 — 패키지에 flutter_map의 CameraConstraint 같은
+  // 하드 제약 API가 없어서, onCameraMoveEndStream으로 감지해 벗어나면
+  // moveCamera로 되돌리는 방식으로 흉내낸다("놓으면 튕겨 돌아오는" 느낌).
+  static const _swLat = 32.8, _swLng = 124.5; // 남서 — 제주 아래
+  static const _neLat = 38.7, _neLng = 130.0; // 북동 — 휴전선 위
 
   // (지역명, 등급, 위도, 경도, 잠금) — 도시 중심 좌표.
   // MVP 시나리오가 서울 종로구뿐이라 서울 외 지역은 전부 잠금(추후 지역 확장 시 false로).
@@ -56,9 +74,41 @@ class _MapScreenState extends State<MapScreen> {
 
   Future<void> _onMapCreated(KakaoMapController controller) async {
     _mapController = controller;
+    _cameraSub = controller.onCameraMoveEndStream.listen(_snapBackToKorea);
+    // 이 SDK는 기본 마커 레이어를 자동으로 만들어주지 않는다 — 먼저 명시적으로
+    // 만들어야 addMarker(s)가 "LabelLayer not found"로 죽지 않는다.
+    await controller.addMarkerLayer(
+        layerId: KakaoMapController.defaultLabelLayerId);
     await controller.addMarkers(
       markerOptions: [for (final p in _pins) _regionMarker(p)],
     );
+    final iconData = await rootBundle.load('assets/images/my_location.png');
+    final iconBytes = iconData.buffer
+        .asUint8List(iconData.offsetInBytes, iconData.lengthInBytes);
+    await controller.registerMarkerStyles(styles: [
+      MarkerStyle(
+        styleId: _myLocationStyleId,
+        perLevels: [MarkerPerLevelStyle.fromBytes(bytes: iconBytes)],
+      ),
+    ]);
+  }
+
+  void _snapBackToKorea(CameraMoveEndEvent e) {
+    final lat = e.latitude.clamp(_swLat, _neLat).toDouble();
+    final lng = e.longitude.clamp(_swLng, _neLng).toDouble();
+    if (lat == e.latitude && lng == e.longitude) return; // 범위 안 — 그대로 둠
+    _mapController?.moveCamera(
+      cameraUpdate:
+          CameraUpdate(position: LatLng(latitude: lat, longitude: lng)),
+      animation: const CameraAnimation(
+          duration: 250, autoElevation: false, isConsecutive: false),
+    );
+  }
+
+  @override
+  void dispose() {
+    _cameraSub?.cancel();
+    super.dispose();
   }
 
   Future<void> _goToCurrentLocation() async {
@@ -84,12 +134,17 @@ class _MapScreenState extends State<MapScreen> {
     if (controller == null) return;
 
     // 마커는 선언형이 아니라 명령형 API라, 이전 "내 위치" 마커를 지우고 새로 찍는다.
-    await controller.removeMarker(id: _myLocationMarkerId);
+    // 처음 누른 거면 지울 마커가 아직 없어서 removeMarker가
+    // "LabelLayer not found" 예외를 던진다 — 그럴 때만 건너뛴다.
+    if (_hasLocationMarker) {
+      await controller.removeMarker(id: _myLocationMarkerId);
+    }
+    _hasLocationMarker = true;
     await controller.addMarker(
       markerOption: MarkerOption(
         id: _myLocationMarkerId,
         latLng: here,
-        text: '내 위치',
+        styleId: _myLocationStyleId,
       ),
     );
     await controller.moveCamera(
