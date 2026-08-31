@@ -40,9 +40,11 @@ import 'package:flutter/services.dart' show rootBundle;
 import 'package:kakao_maps_flutter/kakao_maps_flutter.dart';
 
 import '../game/location_service.dart';
+import '../store.dart';
 import '../theme.dart';
 import '../widgets/ui.dart';
 import 'explore_place_screen.dart';
+import 'quest_journey_screen.dart';
 
 class MapScreen extends StatefulWidget {
   const MapScreen({super.key});
@@ -197,53 +199,79 @@ class _MapScreenState extends State<MapScreen> {
         Expanded(
           child: SingleChildScrollView(
             padding: const EdgeInsets.all(16),
-            child: Column(children: [
-              // 지역 진행 카드
-              GlowCard(
-                child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Row(children: const [
-                        Text('서울',
-                            style: TextStyle(
-                                color: AppColors.textPrimary,
-                                fontSize: 18,
-                                fontWeight: FontWeight.bold)),
-                        SizedBox(width: 8),
-                        // Expanded 필수 — 부제가 길어지면(지역명·퀘스트 수) 320px 기기에서
-                        // 오른쪽 진행률(68%)을 밀어내 넘친다. Spacer는 남는 공간만 먹으므로
-                        // 정작 넘칠 때는 도움이 안 된다.
-                        Expanded(
-                          child: Text('Seoul · 퀘스트 12개',
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                              style: TextStyle(
-                                  color: AppColors.textSecondary,
-                                  fontSize: 12)),
-                        ),
-                        SizedBox(width: 8),
-                        Text('68%',
-                            style: TextStyle(
-                                color: AppColors.gold,
-                                fontSize: 18,
-                                fontWeight: FontWeight.bold)),
-                      ]),
-                      const SizedBox(height: 10),
-                      const ProgressBar(0.68, color: AppColors.teal),
-                      const SizedBox(height: 12),
-                      FilledButton(
-                        onPressed: () => Navigator.push(
-                            context,
-                            MaterialPageRoute(
-                                builder: (_) => const ExplorePlaceScreen())),
-                        child: const Text('이 지역 탐험하기  →'),
-                      ),
-                    ]),
-              ),
-            ]),
+            // 퀘스트 탭(quest_tab_screen.dart)과 같은 기준 — ScenarioStore의
+            // 최근 코스를 "진행 중인 퀘스트"로 본다. 스토어가 바뀌면(코스 생성·
+            // 삭제·조각 획득) 다시 그려지도록 ListenableBuilder로 구독.
+            child: ListenableBuilder(
+              listenable: ScenarioStore.I,
+              builder: (context, _) => _progressCard(context),
+            ),
           ),
         ),
       ],
+    );
+  }
+
+  Widget _progressCard(BuildContext context) {
+    final scenarios = ScenarioStore.I.scenarios;
+    if (scenarios.isEmpty) {
+      return GlowCard(
+        child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          const Text('아직 진행 중인 퀘스트가 없어요.',
+              style: TextStyle(color: AppColors.textSecondary, fontSize: 13)),
+          const SizedBox(height: 12),
+          FilledButton(
+            onPressed: () => Navigator.push(context,
+                MaterialPageRoute(builder: (_) => const ExplorePlaceScreen())),
+            child: const Text('이 지역 탐험하기  →'),
+          ),
+        ]),
+      );
+    }
+
+    // 최근 코스 = 퀘스트 탭 "새 퀘스트 시작하기"와 같은 기준(scenarios.first).
+    final scenario = scenarios.first;
+    final done = ScenarioStore.I.stoneProgressOf(scenario);
+    final total = scenario.stoneTotal;
+    final progress = total == 0 ? 0.0 : done / total;
+
+    return GlowCard(
+      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        Row(children: [
+          Text(scenario.region,
+              style: const TextStyle(
+                  color: AppColors.textPrimary,
+                  fontSize: 18,
+                  fontWeight: FontWeight.bold)),
+          const SizedBox(width: 8),
+          // Expanded 필수 — 부제가 길어지면(코스명·조각 수) 320px 기기에서
+          // 오른쪽 진행률을 밀어내 넘친다. Spacer는 남는 공간만 먹으므로
+          // 정작 넘칠 때는 도움이 안 된다.
+          Expanded(
+            child: Text('${scenario.title} · $done/$total조각',
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(
+                    color: AppColors.textSecondary, fontSize: 12)),
+          ),
+          const SizedBox(width: 8),
+          Text('${(progress * 100).round()}%',
+              style: const TextStyle(
+                  color: AppColors.gold,
+                  fontSize: 18,
+                  fontWeight: FontWeight.bold)),
+        ]),
+        const SizedBox(height: 10),
+        ProgressBar(progress, color: AppColors.teal),
+        const SizedBox(height: 12),
+        FilledButton(
+          onPressed: () => Navigator.push(
+              context,
+              MaterialPageRoute(
+                  builder: (_) => QuestJourneyScreen(scenario: scenario))),
+          child: const Text('퀘스트 이어하기  →'),
+        ),
+      ]),
     );
   }
 }
