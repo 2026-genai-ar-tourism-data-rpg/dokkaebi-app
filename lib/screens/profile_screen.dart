@@ -1,4 +1,11 @@
 // ============================================================
+// [v8] 도감 통계를 도깨비 하나로 뭉뚱그리던 것 → 도깨비/기억석 분리 표시.
+// 구현(요약): 기억석 도감(dex_screen.dart)이 생기면서 도감 StatTile 하나로는
+//            둘 다 못 나타낸다. ScenarioStore.collectedStones() 추가 연결해
+//            방문률·도깨비·기억석 3개 타일로 변경(v3에서 뺀 칭호 자리를
+//            기억석이 대신 채움 — 우연히 3칸이지만 칭호와는 무관).
+// 구현일: 2026-09-01 | 작성: ljs (dex-stones/ljs/v1)
+// ------------------------------------------------------------
 // [v7] 설정 아코디언 → 별도 페이지(SettingsScreen)로 이동.
 // 구현(요약): "설정" 한 줄을 펼쳐서 보여주던 방식을 접고, 탭하면
 //            settings_screen.dart로 push하는 방식으로 변경(사용자 요청 —
@@ -68,7 +75,8 @@ class ProfileScreen extends StatelessWidget {
       listenable: ScenarioStore.I,
       builder: (context, _) {
         // 전체 도깨비 수가 정해지지 않아 "N/전체" 형식 대신 수집한 수만 표시.
-        final metCount = ScenarioStore.I.metDokkaebi().length;
+        final dokkaebiCount = ScenarioStore.I.metDokkaebi().length;
+        final stoneCount = ScenarioStore.I.collectedStones().length;
         // "전체 방문 가능 장소" 분모가 없어, 내가 만든 코스 기준 조각 완료율로 계산.
         final visitPct = (ScenarioStore.I.visitRate * 100).round();
         return ListView(
@@ -95,7 +103,9 @@ class ProfileScreen extends StatelessWidget {
             Row(children: [
               StatTile(Icons.place_outlined, '$visitPct%', '방문률', AppColors.teal),
               const SizedBox(width: 10),
-              StatTile(Icons.menu_book_outlined, '$metCount', '도감', AppColors.purple),
+              StatTile(Icons.local_fire_department, '$dokkaebiCount', '도깨비', AppColors.gold),
+              const SizedBox(width: 10),
+              StatTile(Icons.diamond_outlined, '$stoneCount', '기억석', AppColors.teal),
             ]),
             const SizedBox(height: 12),
             GlowCard(
