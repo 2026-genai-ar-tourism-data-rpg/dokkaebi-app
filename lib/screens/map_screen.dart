@@ -1,4 +1,11 @@
 // ============================================================
+// [v6] 하드코딩된 지역 핀·범례 제거.
+// 구현(요약): _pins(서울·안동 등 6개 고정 지역)와 등급 범례를 제거 — 앞으로는
+//            퀘스트 생성 시 만들어지는 지역으로 핀이 동적으로 채워질 예정
+//            (이번 커밋 범위 아님, 후속 작업). addMarkerLayer()는 "내 위치"
+//            마커가 여전히 그 레이어를 쓰므로 남겨둠.
+// 구현일: 2026-08-26 | 작성: ljs (world-map-live/ljs/v2)
+// ------------------------------------------------------------
 // [v5] v4에서 미확인으로 남겼던 것 패키지 소스 직접 확인 후 정리.
 // 구현(요약): kakao_maps_flutter 0.2.2 소스(pub-cache) 기준 —
 //   - 팬·줌 범위 제한: 하드 제약 API 없음. onCameraMoveEndStream으로 범위
@@ -58,27 +65,14 @@ class _MapScreenState extends State<MapScreen> {
   static const _swLat = 32.8, _swLng = 124.5; // 남서 — 제주 아래
   static const _neLat = 38.7, _neLng = 130.0; // 북동 — 휴전선 위
 
-  // (지역명, 등급, 위도, 경도, 잠금) — 도시 중심 좌표.
-  // MVP 시나리오가 서울 종로구뿐이라 서울 외 지역은 전부 잠금(추후 지역 확장 시 false로).
-  static const _pins = [
-    ('서울', '전설', 37.5665, 126.9780, false),
-    ('안동', '영웅', 36.5684, 128.7294, true),
-    ('전주', '희귀', 35.8242, 127.1480, true),
-    ('경주', '영웅', 35.8562, 129.2247, true),
-    ('부산', '일반', 35.1796, 129.0756, true),
-    ('제주', '일반', 33.4996, 126.5312, true),
-  ];
-
   Future<void> _onMapCreated(KakaoMapController controller) async {
     _mapController = controller;
     _cameraSub = controller.onCameraMoveEndStream.listen(_snapBackToKorea);
     // 이 SDK는 기본 마커 레이어를 자동으로 만들어주지 않는다 — 먼저 명시적으로
     // 만들어야 addMarker(s)가 "LabelLayer not found"로 죽지 않는다.
+    // (지역 핀은 여기서 더 이상 안 찍지만, "내 위치" 마커가 이 레이어를 쓴다.)
     await controller.addMarkerLayer(
         layerId: KakaoMapController.defaultLabelLayerId);
-    await controller.addMarkers(
-      markerOptions: [for (final p in _pins) _regionMarker(p)],
-    );
     final iconData = await rootBundle.load('assets/images/my_location.png');
     final iconBytes = iconData.buffer
         .asUint8List(iconData.offsetInBytes, iconData.lengthInBytes);
@@ -191,26 +185,11 @@ class _MapScreenState extends State<MapScreen> {
                   border: Border.all(color: AppColors.border),
                   borderRadius: BorderRadius.circular(16),
                 ),
-                child: Stack(children: [
-                  KakaoMap(
-                    onMapCreated: _onMapCreated,
-                    initialPosition:
-                        const LatLng(latitude: 36.3, longitude: 127.8),
-                  ),
-                  // 범례
-                  Positioned(
-                    right: 12,
-                    bottom: 12,
-                    child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: const [
-                          _Legend('전설', AppColors.gold),
-                          _Legend('영웅', AppColors.purple),
-                          _Legend('희귀', AppColors.blue),
-                          _Legend('일반', AppColors.textSecondary),
-                        ]),
-                  ),
-                ]),
+                child: KakaoMap(
+                  onMapCreated: _onMapCreated,
+                  initialPosition:
+                      const LatLng(latitude: 36.3, longitude: 127.8),
+                ),
               ),
             ),
           ),
@@ -267,32 +246,4 @@ class _MapScreenState extends State<MapScreen> {
       ],
     );
   }
-
-  MarkerOption _regionMarker((String, String, double, double, bool) p) {
-    return MarkerOption(
-      id: p.$1,
-      latLng: LatLng(latitude: p.$3, longitude: p.$4),
-      text: p.$5 ? '${p.$1} 🔒' : p.$1,
-    );
-  }
-}
-
-class _Legend extends StatelessWidget {
-  final String label;
-  final Color color;
-  const _Legend(this.label, this.color);
-  @override
-  Widget build(BuildContext context) => Padding(
-        padding: const EdgeInsets.only(top: 3),
-        child: Row(mainAxisSize: MainAxisSize.min, children: [
-          Container(
-              width: 8,
-              height: 8,
-              decoration: BoxDecoration(color: color, shape: BoxShape.circle)),
-          const SizedBox(width: 5),
-          Text(label,
-              style: const TextStyle(
-                  color: AppColors.textSecondary, fontSize: 10)),
-        ]),
-      );
 }
