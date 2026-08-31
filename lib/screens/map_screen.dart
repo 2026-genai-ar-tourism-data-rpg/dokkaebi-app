@@ -44,9 +44,6 @@ class MapScreen extends StatefulWidget {
 }
 
 class _MapScreenState extends State<MapScreen> {
-  int _filter = 0;
-  static const _filters = ['전체', '전설', '영웅', '희귀'];
-
   final LocationService _locationService = const LocationService();
   KakaoMapController? _mapController;
   StreamSubscription<CameraMoveEndEvent>? _cameraSub;
@@ -179,13 +176,6 @@ class _MapScreenState extends State<MapScreen> {
                   label: const Text('현재 위치',
                       style: TextStyle(color: AppColors.teal, fontSize: 12)),
                 )),
-            const SizedBox(height: 12),
-            Wrap(spacing: 8, children: [
-              for (var i = 0; i < _filters.length; i++)
-                Pill(_filters[i],
-                    active: _filter == i,
-                    onTap: () => setState(() => _filter = i)),
-            ]),
             const SizedBox(height: 16),
           ]),
         ),
