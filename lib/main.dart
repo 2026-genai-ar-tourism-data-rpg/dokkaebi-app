@@ -6,7 +6,9 @@
 // 구현일: 2026-06-18 | 작성: kys (app-theme/kys/v1)
 // ============================================================
 import 'package:flutter/material.dart';
+import 'package:kakao_maps_flutter/kakao_maps_flutter.dart';
 
+import 'config.dart';
 import 'screens/dex_screen.dart';
 import 'screens/map_screen.dart';
 import 'screens/onboarding_screen.dart';
@@ -18,6 +20,11 @@ import 'theme.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  // 키 없이도 앱은 뜨게 둔다(다른 화면 작업엔 지장 없어야 함) — 지도 탭만
+  // 못 그려진다. 실제 키는 --dart-define=KAKAO_NATIVE_APP_KEY=... 로 주입.
+  if (AppConfig.kakaoNativeAppKey.isNotEmpty) {
+    await KakaoMapsFlutter.init(AppConfig.kakaoNativeAppKey);
+  }
   await Session.load(); // 저장된 로그인 복원
   if (Session.isLoggedIn) await ScenarioStore.I.load(); // 내 탐험 복원
   runApp(const DokkaebiApp());
@@ -72,10 +79,22 @@ class _MainShellState extends State<MainShell> {
           selectedIndex: _idx,
           onDestinationSelected: (i) => setState(() => _idx = i),
           destinations: const [
-            NavigationDestination(icon: Icon(Icons.home_outlined), selectedIcon: Icon(Icons.home), label: '홈'),
-            NavigationDestination(icon: Icon(Icons.military_tech_outlined), selectedIcon: Icon(Icons.military_tech), label: '퀘스트'),
-            NavigationDestination(icon: Icon(Icons.menu_book_outlined), selectedIcon: Icon(Icons.menu_book), label: '도감'),
-            NavigationDestination(icon: Icon(Icons.person_outline), selectedIcon: Icon(Icons.person), label: '프로필'),
+            NavigationDestination(
+                icon: Icon(Icons.home_outlined),
+                selectedIcon: Icon(Icons.home),
+                label: '홈'),
+            NavigationDestination(
+                icon: Icon(Icons.military_tech_outlined),
+                selectedIcon: Icon(Icons.military_tech),
+                label: '퀘스트'),
+            NavigationDestination(
+                icon: Icon(Icons.menu_book_outlined),
+                selectedIcon: Icon(Icons.menu_book),
+                label: '도감'),
+            NavigationDestination(
+                icon: Icon(Icons.person_outline),
+                selectedIcon: Icon(Icons.person),
+                label: '프로필'),
           ],
         ),
       ),

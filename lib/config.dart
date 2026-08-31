@@ -29,5 +29,18 @@ class AppConfig {
   /// 루프백 주소를 쓰고 있는지 — 실기기에서 이러면 서버에 닿지 못한다.
   /// 진단 배너를 띄워 "왜 안 되지"로 시간 날리는 것을 막는다.
   static bool get isLoopback =>
-      serverBaseUrl.contains('localhost') || serverBaseUrl.contains('127.0.0.1');
+      serverBaseUrl.contains('localhost') ||
+      serverBaseUrl.contains('127.0.0.1');
+
+  /// 카카오맵 네이티브 앱 키 — Kakao Developers 콘솔에서 앱 등록 후 발급.
+  /// 코드에 실제 키를 적지 않는다: 빌드/실행 시 주입한다.
+  /// ```
+  /// flutter run --dart-define=KAKAO_NATIVE_APP_KEY=<발급받은 키>
+  /// ```
+  /// 값이 비어 있으면 KakaoMapsFlutter.init()에서 지도가 뜨지 않는다(정상 —
+  /// 키 없이는 카카오 SDK 자체가 지도를 못 그린다).
+  static const String kakaoNativeAppKey = String.fromEnvironment(
+    'KAKAO_NATIVE_APP_KEY',
+    defaultValue: '',
+  );
 }
