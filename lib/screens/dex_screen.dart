@@ -1,4 +1,13 @@
 // ============================================================
+// [v3] 기억석 도감 추가 — 도깨비/기억석 두 탭.
+// 구현(요약): 도깨비 도감만 있던 화면에 "기억석" 탭 추가. ScenarioStore.
+//            collectedStones()(신규)로 완료한 기억석 조각을 모아 이름+지역만
+//            표시 — QuestNode엔 "훈 — 운현궁" 같은 제목·설명 필드 자체가 없어
+//            (그건 quest_journey_screen.dart의 하드코딩 4장, 별도 버그) 도깨비
+//            도감과 동일하게 이름+지역만으로 채운다. 도깨비와 달리 같은 이름도
+//            서로 다른 조각이라 중복 제거하지 않는다.
+// 구현일: 2026-09-01 | 작성: ljs (dex-stones/ljs/v1)
+// ------------------------------------------------------------
 // [v2] 필터 칩 제거 + 실제로 만난 도깨비로 카드 동적 연결.
 // 구현(요약): 지역 필터 칩(전체/서울/경주/전주)은 onTap조차 없는 순수 장식이라
 //            제거. 도깨비 카드 2장(청룡·화룡) 하드코딩도 제거하고,
@@ -20,8 +29,17 @@ import '../store.dart';
 import '../theme.dart';
 import '../widgets/ui.dart';
 
-class DexScreen extends StatelessWidget {
+enum _DexTab { dokkaebi, stone }
+
+class DexScreen extends StatefulWidget {
   const DexScreen({super.key});
+
+  @override
+  State<DexScreen> createState() => _DexScreenState();
+}
+
+class _DexScreenState extends State<DexScreen> {
+  _DexTab _tab = _DexTab.dokkaebi;
 
   @override
   Widget build(BuildContext context) {
@@ -29,20 +47,34 @@ class DexScreen extends StatelessWidget {
       listenable: ScenarioStore.I,
       builder: (context, _) {
         final met = ScenarioStore.I.metDokkaebi();
+        final stones = ScenarioStore.I.collectedStones();
+        final isDokkaebi = _tab == _DexTab.dokkaebi;
+        final items = isDokkaebi ? met : stones;
         return ListView(
           padding: const EdgeInsets.all(16),
           children: [
-            const SectionHeader('ENCYCLOPEDIA', '도깨비 도감'),
-            const SizedBox(height: 8),
-            Text('${met.length}마리 발견',
-                style: const TextStyle(
-                    color: AppColors.textSecondary, fontSize: 12)),
+            const SectionHeader('ENCYCLOPEDIA', '도감'),
+            const SizedBox(height: 12),
+            Row(children: [
+              Pill('도깨비',
+                  active: isDokkaebi, onTap: () => setState(() => _tab = _DexTab.dokkaebi)),
+              const SizedBox(width: 8),
+              Pill('기억석',
+                  active: !isDokkaebi,
+                  color: AppColors.teal,
+                  onTap: () => setState(() => _tab = _DexTab.stone)),
+            ]),
+            const SizedBox(height: 12),
+            Text(isDokkaebi ? '${met.length}마리 발견' : '${stones.length}개 수집',
+                style: const TextStyle(color: AppColors.textSecondary, fontSize: 12)),
             const SizedBox(height: 16),
-            if (met.isEmpty)
+            if (items.isEmpty)
               GlowCard(
-                child: const Text('아직 만난 도깨비가 없어요. 퀘스트를 진행하면 여기에 채워져요.',
-                    style: TextStyle(
-                        color: AppColors.textSecondary, fontSize: 13)),
+                child: Text(
+                    isDokkaebi
+                        ? '아직 만난 도깨비가 없어요. 퀘스트를 진행하면 여기에 채워져요.'
+                        : '아직 모은 기억석이 없어요. 퀘스트를 진행하면 여기에 채워져요.',
+                    style: const TextStyle(color: AppColors.textSecondary, fontSize: 13)),
               )
             else
               GridView.count(
@@ -55,7 +87,12 @@ class DexScreen extends StatelessWidget {
                 // 여유가 필요해 셀을 조금 더 높게 잡는다.
                 childAspectRatio: 0.78,
                 children: [
-                  for (final d in met) _dokkaebi(d.name, d.region),
+                  for (final item in items)
+                    isDokkaebi
+                        ? _card(item.name, item.region,
+                            icon: Icons.local_fire_department, color: AppColors.gold)
+                        : _card(item.name, item.region,
+                            icon: Icons.diamond_outlined, color: AppColors.teal),
                 ],
               ),
           ],
@@ -64,20 +101,18 @@ class DexScreen extends StatelessWidget {
     );
   }
 
-  Widget _dokkaebi(String name, String region) {
-    const c = AppColors.gold; // 등급 데이터가 없어 고정 색.
+  Widget _card(String name, String region, {required IconData icon, required Color color}) {
     return GlowCard(
-      glow: c,
+      glow: color,
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Container(
             height: 56,
             width: 56,
-            decoration: BoxDecoration(
-                color: c.withOpacity(0.15),
-                borderRadius: BorderRadius.circular(14)),
-            child: const Icon(Icons.local_fire_department, color: c),
+            decoration:
+                BoxDecoration(color: color.withOpacity(0.15), borderRadius: BorderRadius.circular(14)),
+            child: Icon(icon, color: color),
           ),
           const Spacer(),
           // 좁은 셀(320px 기기에서 내부 폭 ~104px)에서 지역·이름이 여러 줄로
@@ -85,15 +120,12 @@ class DexScreen extends StatelessWidget {
           Text(region,
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
-              style: const TextStyle(
-                  color: c, fontSize: 11, fontWeight: FontWeight.w600)),
+              style: TextStyle(color: color, fontSize: 11, fontWeight: FontWeight.w600)),
           Text(name,
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
               style: const TextStyle(
-                  color: AppColors.textPrimary,
-                  fontSize: 14,
-                  fontWeight: FontWeight.bold)),
+                  color: AppColors.textPrimary, fontSize: 14, fontWeight: FontWeight.bold)),
         ],
       ),
     );

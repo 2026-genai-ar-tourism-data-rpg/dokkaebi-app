@@ -1,4 +1,12 @@
 // ============================================================
+// [v4] "기억석 컬렉션" 모달(_collSheet/_collCard)도 v2와 같은 하드코딩 버그가
+//      남아있었다 — collDefs가 종로 훈민정음 4장 고정 텍스트였고 루프도
+//      `i < 4` 고정이라, 다른 지역·5조각 이상 코스에서도 늘 같은 4장이 뜨고
+//      개수도 어긋났다. targets(이미 실제 노드 기반으로 채워지는 챕터 목록,
+//      v2가 화면 나머지에 쓰던 것과 동일)를 그대로 재사용해 해결 — collDefs
+//      제거, `for (i < 4)` → `for (i < targets.length)`, def 튜플 → _Target.
+// 구현일: 2026-09-01 | 작성: ljs (dex-stones/ljs/v1)
+// ------------------------------------------------------------
 // [v1] 화면: 퀘스트 여정 — "종로, 잊혀진 글씨의 비밀 플레이 v2" 시안 1:1 재현
 // pipeline: 모바일 클라이언트 / 화면 (새 퀘스트 시작하기 → 전 구간 플레이)
 // 구현(요약): setup→지도→GPS→AR소환→대화→퀴즈→지령→사냥→사진→발자국→카페→
@@ -2391,12 +2399,6 @@ class _QuestJourneyScreenState extends State<QuestJourneyScreen> with TickerProv
       );
 
   Widget _collSheet() {
-    final collDefs = [
-      ('訓', '훈 — 운현궁', '먹그림자 아래 잠들었던 첫 조각'),
-      ('民', '민 — 익선동', '가마솥 온기에 숨어 있던 조각'),
-      ('正', '정 — 인사동', '붓방의 잠긴 함이 지키던 조각'),
-      ('音', '음 — 광화문', '그대 마음에 있던 마지막 조각'),
-    ];
     return Positioned.fill(child: Stack(children: [
       GestureDetector(onTap: () => setState(() => collOpen = false), child: Container(color: Colors.black.withOpacity(0.55))),
       Align(alignment: Alignment.bottomCenter, child: FractionallySizedBox(
@@ -2444,7 +2446,7 @@ class _QuestJourneyScreenState extends State<QuestJourneyScreen> with TickerProv
             ],
             Expanded(child: GridView.count(
               crossAxisCount: 2, mainAxisSpacing: 11, crossAxisSpacing: 11, childAspectRatio: 0.92,
-              children: [for (var i = 0; i < 4; i++) _collCard(i, collDefs[i], i < fragments)],
+              children: [for (var i = 0; i < targets.length; i++) _collCard(i, targets[i], i < fragments)],
             )),
           ]),
         ),
@@ -2452,7 +2454,7 @@ class _QuestJourneyScreenState extends State<QuestJourneyScreen> with TickerProv
     ]));
   }
 
-  Widget _collCard(int i, (String, String, String) def, bool got) => Container(
+  Widget _collCard(int i, _Target t, bool got) => Container(
         padding: const EdgeInsets.fromLTRB(14, 14, 14, 13),
         decoration: BoxDecoration(color: got ? const Color(0xFFFBF6E9) : const Color(0x0A2A2118), borderRadius: BorderRadius.circular(16), border: Border.all(color: got ? const Color(0xFFE2D5B2) : const Color(0xFFDDD0B0))),
         child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
@@ -2468,16 +2470,16 @@ class _QuestJourneyScreenState extends State<QuestJourneyScreen> with TickerProv
                   border: Border.all(color: got ? _verm : const Color(0xFFC9B88F), width: 2),
                   boxShadow: got ? [BoxShadow(color: _gold.withOpacity(0.5), blurRadius: 14)] : null,
                 ),
-                child: Transform.rotate(angle: -math.pi / 4, child: Text(got ? def.$1 : '?', style: dokkaebiTitle(size: 17, color: got ? const Color(0xFF7A2A12) : const Color(0xFFB7A374)))),
+                child: Transform.rotate(angle: -math.pi / 4, child: Text(got ? t.hanja : '?', style: dokkaebiTitle(size: 17, color: got ? const Color(0xFF7A2A12) : const Color(0xFFB7A374)))),
               ),
             ),
             const Spacer(),
             Text('第 ${i + 1}', style: dokkaebiTitle(size: 12, color: const Color(0xFFB7A374))),
           ]),
           const Spacer(),
-          Text(got ? def.$2 : '봉인된 조각', style: dokkaebiTitle(size: 16.5, color: got ? _parchInk : _bronze)),
+          Text(got ? t.title : '봉인된 조각', style: dokkaebiTitle(size: 16.5, color: got ? _parchInk : _bronze)),
           const SizedBox(height: 4),
-          Text(got ? def.$3 : '아직 되찾지 못한 조각', style: const TextStyle(fontSize: 11.5, color: _bronze, height: 1.5)),
+          Text(got ? t.obj : '아직 되찾지 못한 조각', style: const TextStyle(fontSize: 11.5, color: _bronze, height: 1.5)),
         ]),
       );
 
