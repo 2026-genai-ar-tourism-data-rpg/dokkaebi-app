@@ -1,4 +1,15 @@
 // ============================================================
+// [v7] 동적 지역 핀 + 실시간 위치 추적.
+// 구현(요약): 지역 핀은 ScenarioStore.I.scenarios에서 만들어진 코스마다
+//            (앵커 노드 없으면 첫 노드) 좌표를 뽑아 찍는다 — 별도 레이어
+//            (_regionLayerId)를 써서 "내 위치" 마커(default 레이어)와
+//            섞이지 않게 하고, ScenarioStore 변경 시 clearMarkers 후 다시
+//            그린다. 위치는 버튼 탭 시 1회 조회하던 것을
+//            Geolocator.getPositionStream()으로 바꿔 계속 갱신 — 단, 카메라는
+//            최초 1번만 이동시키고 이후 업데이트는 마커 위치만 갱신한다
+//            (매번 재중심하면 사용자가 지도를 못 둘러본다).
+// 구현일: 2026-08-26 | 작성: ljs (world-map-live/ljs/v2)
+// ------------------------------------------------------------
 // [v6] 하드코딩된 지역 핀·범례 제거.
 // 구현(요약): _pins(서울·안동 등 6개 고정 지역)와 등급 범례를 제거 — 앞으로는
 //            퀘스트 생성 시 만들어지는 지역으로 핀이 동적으로 채워질 예정
@@ -37,6 +48,8 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart' show rootBundle;
+import 'package:geolocator/geolocator.dart'
+    show Geolocator, LocationAccuracy, LocationSettings, Position;
 import 'package:kakao_maps_flutter/kakao_maps_flutter.dart';
 
 import '../game/location_service.dart';
@@ -56,10 +69,20 @@ class _MapScreenState extends State<MapScreen> {
   final LocationService _locationService = const LocationService();
   KakaoMapController? _mapController;
   StreamSubscription<CameraMoveEndEvent>? _cameraSub;
+  StreamSubscription<Position>? _positionSub;
   bool _locating = false;
   bool _hasLocationMarker = false;
   static const _myLocationMarkerId = 'my_location';
   static const _myLocationStyleId = 'my_location_style';
+  static const _regionLayerId = 'region_layer'; // "내 위치" 레이어와 분리 — 코스가
+  // 바뀔 때마다 이 레이어만 clearMarkers 하기 위함(내 위치 마커까지 같이 지워지면 안 됨).
+
+  @override
+  void initState() {
+    super.initState();
+    // 코스 생성·삭제·조각 획득 등 스토어 변경 시 지역 핀을 다시 그린다.
+    ScenarioStore.I.addListener(_refreshRegionMarkers);
+  }
 
   // 한반도 팬·줌 제한 범위 — 패키지에 flutter_map의 CameraConstraint 같은
   // 하드 제약 API가 없어서, onCameraMoveEndStream으로 감지해 벗어나면
@@ -70,11 +93,11 @@ class _MapScreenState extends State<MapScreen> {
   Future<void> _onMapCreated(KakaoMapController controller) async {
     _mapController = controller;
     _cameraSub = controller.onCameraMoveEndStream.listen(_snapBackToKorea);
-    // 이 SDK는 기본 마커 레이어를 자동으로 만들어주지 않는다 — 먼저 명시적으로
+    // 이 SDK는 마커 레이어를 자동으로 만들어주지 않는다 — 먼저 명시적으로
     // 만들어야 addMarker(s)가 "LabelLayer not found"로 죽지 않는다.
-    // (지역 핀은 여기서 더 이상 안 찍지만, "내 위치" 마커가 이 레이어를 쓴다.)
     await controller.addMarkerLayer(
-        layerId: KakaoMapController.defaultLabelLayerId);
+        layerId: KakaoMapController.defaultLabelLayerId); // 내 위치 마커용
+    await controller.addMarkerLayer(layerId: _regionLayerId); // 퀘스트 지역 핀용
     final iconData = await rootBundle.load('assets/images/my_location.png');
     final iconBytes = iconData.buffer
         .asUint8List(iconData.offsetInBytes, iconData.lengthInBytes);
@@ -84,6 +107,38 @@ class _MapScreenState extends State<MapScreen> {
         perLevels: [MarkerPerLevelStyle.fromBytes(bytes: iconBytes)],
       ),
     ]);
+    await _refreshRegionMarkers(); // 최초 1회 — 이후는 스토어 리스너가 담당.
+  }
+
+  /// ScenarioStore에 있는 코스마다 지역 핀 하나 — 앵커 노드(없으면 첫 노드)
+  /// 좌표를 쓴다. 좌표 없는 코스는 건너뛴다.
+  List<MarkerOption> _questRegionMarkers() {
+    final markers = <MarkerOption>[];
+    for (final s in ScenarioStore.I.scenarios) {
+      final anchor =
+          s.anchorNodeId != null ? s.nodeById(s.anchorNodeId!) : null;
+      final node =
+          anchor ?? (s.nodeSequence.isNotEmpty ? s.nodeSequence.first : null);
+      final lat = node?.mapY, lng = node?.mapX;
+      if (lat == null || lng == null) continue;
+      markers.add(MarkerOption(
+        id: s.scenarioId,
+        latLng: LatLng(latitude: lat, longitude: lng),
+        text: s.region,
+      ));
+    }
+    return markers;
+  }
+
+  Future<void> _refreshRegionMarkers() async {
+    final controller = _mapController;
+    if (controller == null) return; // 지도 준비 전 — onMapCreated에서 다시 부름.
+    await controller.clearMarkers(layerId: _regionLayerId);
+    final markers = _questRegionMarkers();
+    if (markers.isNotEmpty) {
+      await controller.addMarkers(
+          markerOptions: markers, layerId: _regionLayerId);
+    }
   }
 
   void _snapBackToKorea(CameraMoveEndEvent e) {
@@ -100,7 +155,9 @@ class _MapScreenState extends State<MapScreen> {
 
   @override
   void dispose() {
+    ScenarioStore.I.removeListener(_refreshRegionMarkers);
     _cameraSub?.cancel();
+    _positionSub?.cancel();
     super.dispose();
   }
 
@@ -123,12 +180,28 @@ class _MapScreenState extends State<MapScreen> {
     }
 
     final here = LatLng(latitude: result.lat!, longitude: result.lng!);
+    await _placeMyLocationMarker(here);
+    await _mapController?.moveCamera(
+      cameraUpdate: CameraUpdate(position: here, zoomLevel: 14),
+      animation: const CameraAnimation(
+          duration: 500, autoElevation: false, isConsecutive: false),
+    );
+
+    // 실시간 추적 시작(최초 1번만) — 이후로는 위치가 바뀔 때마다 마커만 갱신하고
+    // 카메라는 다시 옮기지 않는다(매번 재중심하면 지도를 못 둘러본다).
+    _positionSub ??= Geolocator.getPositionStream(
+      locationSettings: const LocationSettings(
+          accuracy: LocationAccuracy.best, distanceFilter: 5),
+    ).listen((pos) => _placeMyLocationMarker(
+        LatLng(latitude: pos.latitude, longitude: pos.longitude)));
+  }
+
+  /// "내 위치" 마커를 옮긴다. 마커는 선언형이 아니라 명령형 API라, 지우고
+  /// 새로 찍는다 — 처음이면 지울 마커가 아직 없어서 removeMarker가
+  /// "LabelLayer not found" 예외를 던진다, 그럴 때만 건너뛴다.
+  Future<void> _placeMyLocationMarker(LatLng point) async {
     final controller = _mapController;
     if (controller == null) return;
-
-    // 마커는 선언형이 아니라 명령형 API라, 이전 "내 위치" 마커를 지우고 새로 찍는다.
-    // 처음 누른 거면 지울 마커가 아직 없어서 removeMarker가
-    // "LabelLayer not found" 예외를 던진다 — 그럴 때만 건너뛴다.
     if (_hasLocationMarker) {
       await controller.removeMarker(id: _myLocationMarkerId);
     }
@@ -136,14 +209,9 @@ class _MapScreenState extends State<MapScreen> {
     await controller.addMarker(
       markerOption: MarkerOption(
         id: _myLocationMarkerId,
-        latLng: here,
+        latLng: point,
         styleId: _myLocationStyleId,
       ),
-    );
-    await controller.moveCamera(
-      cameraUpdate: CameraUpdate(position: here, zoomLevel: 14),
-      animation: const CameraAnimation(
-          duration: 500, autoElevation: false, isConsecutive: false),
     );
   }
 
