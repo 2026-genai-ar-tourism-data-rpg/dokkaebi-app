@@ -98,6 +98,20 @@ class ScenarioStore extends ChangeNotifier {
     return result;
   }
 
+  /// 완료한 기억석 조각(식음 노드 제외)을 전부 모은다 — 기억석 도감 표시용.
+  /// 도깨비와 달리 같은 이름이어도 서로 다른 조각이라 중복 제거하지 않는다.
+  List<({String name, String region})> collectedStones() {
+    final result = <({String name, String region})>[];
+    for (final s in scenarios) {
+      final done = doneOf(s.scenarioId).toSet();
+      for (final node in s.stoneNodes) {
+        if (!done.contains(node.nodeId)) continue;
+        result.add((name: node.name ?? '이름 없는 조각', region: s.region));
+      }
+    }
+    return result;
+  }
+
   /// 저장된 탐험·진행 복원 (앱 시작·로그인 직후).
   Future<void> load() async {
     final p = await SharedPreferences.getInstance();
