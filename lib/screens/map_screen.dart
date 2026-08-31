@@ -45,6 +45,7 @@
 // 구현일: 2026-06-19~08-26 | 작성: kys, ljs
 // ============================================================
 import 'dart:async';
+import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart' show rootBundle;
@@ -74,6 +75,7 @@ class _MapScreenState extends State<MapScreen> {
   bool _hasLocationMarker = false;
   static const _myLocationMarkerId = 'my_location';
   static const _myLocationStyleId = 'my_location_style';
+  static const _regionPinStyleId = 'region_pin_style';
   static const _regionLayerId = 'region_layer'; // "내 위치" 레이어와 분리 — 코스가
   // 바뀔 때마다 이 레이어만 clearMarkers 하기 위함(내 위치 마커까지 같이 지워지면 안 됨).
 
@@ -98,16 +100,28 @@ class _MapScreenState extends State<MapScreen> {
     await controller.addMarkerLayer(
         layerId: KakaoMapController.defaultLabelLayerId); // 내 위치 마커용
     await controller.addMarkerLayer(layerId: _regionLayerId); // 퀘스트 지역 핀용
-    final iconData = await rootBundle.load('assets/images/my_location.png');
-    final iconBytes = iconData.buffer
-        .asUint8List(iconData.offsetInBytes, iconData.lengthInBytes);
     await controller.registerMarkerStyles(styles: [
       MarkerStyle(
         styleId: _myLocationStyleId,
-        perLevels: [MarkerPerLevelStyle.fromBytes(bytes: iconBytes)],
+        perLevels: [
+          MarkerPerLevelStyle.fromBytes(
+              bytes: await _loadAssetBytes('assets/images/my_location.png')),
+        ],
+      ),
+      MarkerStyle(
+        styleId: _regionPinStyleId,
+        perLevels: [
+          MarkerPerLevelStyle.fromBytes(
+              bytes: await _loadAssetBytes('assets/images/region_pin.png')),
+        ],
       ),
     ]);
     await _refreshRegionMarkers(); // 최초 1회 — 이후는 스토어 리스너가 담당.
+  }
+
+  Future<Uint8List> _loadAssetBytes(String path) async {
+    final data = await rootBundle.load(path);
+    return data.buffer.asUint8List(data.offsetInBytes, data.lengthInBytes);
   }
 
   /// ScenarioStore에 있는 코스마다 지역 핀 하나 — 앵커 노드(없으면 첫 노드)
@@ -125,6 +139,7 @@ class _MapScreenState extends State<MapScreen> {
         id: s.scenarioId,
         latLng: LatLng(latitude: lat, longitude: lng),
         text: s.region,
+        styleId: _regionPinStyleId,
       ));
     }
     return markers;
