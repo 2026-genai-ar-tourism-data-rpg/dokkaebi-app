@@ -28,7 +28,7 @@ class DexScreen extends StatelessWidget {
     return ListenableBuilder(
       listenable: ScenarioStore.I,
       builder: (context, _) {
-        final met = _metDokkaebi();
+        final met = ScenarioStore.I.metDokkaebi();
         return ListView(
           padding: const EdgeInsets.all(16),
           children: [
@@ -62,23 +62,6 @@ class DexScreen extends StatelessWidget {
         );
       },
     );
-  }
-
-  /// 완료한 노드 중 npcName이 있는 것들을 "만난 도깨비"로 모은다.
-  /// 이름 기준 중복 제거(같은 도깨비를 여러 노드/코스에서 만날 수 있음).
-  List<({String name, String region})> _metDokkaebi() {
-    final seen = <String>{};
-    final result = <({String name, String region})>[];
-    for (final s in ScenarioStore.I.scenarios) {
-      final done = ScenarioStore.I.doneOf(s.scenarioId).toSet();
-      for (final node in s.nodeSequence) {
-        if (!done.contains(node.nodeId)) continue;
-        if (node.npcName.isEmpty) continue;
-        if (!seen.add(node.npcName)) continue;
-        result.add((name: node.npcName, region: s.region));
-      }
-    }
-    return result;
   }
 
   Widget _dokkaebi(String name, String region) {

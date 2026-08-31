@@ -64,8 +64,39 @@ class ScenarioStore extends ChangeNotifier {
     return s.stoneNodes.where((n) => done.contains(n.nodeId)).length;
   }
 
+  /// 방문률 — 생성한 모든 코스의 (완료한 기억석 조각 합) / (전체 조각 합).
+  /// "전체 방문 가능 장소"라는 고정 분모가 없어, 내가 만든 코스 기준으로 계산한다.
+  /// 코스가 하나도 없으면 0.
+  double get visitRate {
+    var done = 0;
+    var total = 0;
+    for (final s in scenarios) {
+      done += stoneProgressOf(s);
+      total += s.stoneTotal;
+    }
+    return total == 0 ? 0 : done / total;
+  }
+
   /// 실제 밟은 경로 기준 노드 목록(선형이면 node_sequence 그대로).
   List<QuestNode> pathOf(Scenario s) => s.playedPath(choicesOf(s.scenarioId));
+
+  /// 완료한 노드 중 npcName이 있는 것들을 "만난 도깨비"로 모은다(이름 기준 중복
+  /// 제거 — 같은 도깨비를 여러 노드/코스에서 만날 수 있음). 도감 화면(카드
+  /// 목록)과 프로필 화면(개수 표시)이 함께 쓴다.
+  List<({String name, String region})> metDokkaebi() {
+    final seen = <String>{};
+    final result = <({String name, String region})>[];
+    for (final s in scenarios) {
+      final done = doneOf(s.scenarioId).toSet();
+      for (final node in s.nodeSequence) {
+        if (!done.contains(node.nodeId)) continue;
+        if (node.npcName.isEmpty) continue;
+        if (!seen.add(node.npcName)) continue;
+        result.add((name: node.npcName, region: s.region));
+      }
+    }
+    return result;
+  }
 
   /// 저장된 탐험·진행 복원 (앱 시작·로그인 직후).
   Future<void> load() async {
@@ -176,6 +207,18 @@ class ScenarioStore extends ChangeNotifier {
     _inventory.remove(scenarioId);
     _choices.remove(scenarioId);
     _endings.remove(scenarioId);
+    notifyListeners();
+    await _persist();
+  }
+
+  /// 내가 만든 모든 코스와 진행 상황을 전부 삭제 — 설정 화면의 "전체 초기화".
+  Future<void> resetAll() async {
+    scenarios.clear();
+    _doneNodes.clear();
+    _inventory.clear();
+    _choices.clear();
+    _endings.clear();
+    _prologueSeen.clear();
     notifyListeners();
     await _persist();
   }
