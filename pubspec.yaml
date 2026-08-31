@@ -62,6 +62,9 @@ dependencies:
   google_fonts: ^7.0.0
   geolocator: ^10.1.0
 
+  # 프로필 > 설정 화면의 앱 버전 표시.
+  package_info_plus: ^10.2.1
+
 dev_dependencies:
   flutter_test:
     sdk: flutter
