@@ -100,19 +100,25 @@ class _MapScreenState extends State<MapScreen> {
     await controller.addMarkerLayer(
         layerId: KakaoMapController.defaultLabelLayerId); // 내 위치 마커용
     await controller.addMarkerLayer(layerId: _regionLayerId); // 퀘스트 지역 핀용
+    // perLevels에 레벨을 하나만 등록하면 그 레벨에서만 보인다(패키지 예제 확인) —
+    // 최대 축소~최대 확대까지 전 구간에서 보이게 낮은 레벨·높은 레벨 둘 다 등록.
+    final myLocationBytes =
+        await _loadAssetBytes('assets/images/my_location.png');
+    final regionPinBytes =
+        await _loadAssetBytes('assets/images/region_pin.png');
     await controller.registerMarkerStyles(styles: [
       MarkerStyle(
         styleId: _myLocationStyleId,
         perLevels: [
-          MarkerPerLevelStyle.fromBytes(
-              bytes: await _loadAssetBytes('assets/images/my_location.png')),
+          MarkerPerLevelStyle.fromBytes(bytes: myLocationBytes, level: 1),
+          MarkerPerLevelStyle.fromBytes(bytes: myLocationBytes, level: 21),
         ],
       ),
       MarkerStyle(
         styleId: _regionPinStyleId,
         perLevels: [
-          MarkerPerLevelStyle.fromBytes(
-              bytes: await _loadAssetBytes('assets/images/region_pin.png')),
+          MarkerPerLevelStyle.fromBytes(bytes: regionPinBytes, level: 1),
+          MarkerPerLevelStyle.fromBytes(bytes: regionPinBytes, level: 21),
         ],
       ),
     ]);
