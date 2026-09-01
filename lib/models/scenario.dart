@@ -435,6 +435,7 @@ class NearbyPlace {
   final double? lng;
   final double? distM;
   final NearbyCategory category;
+  final String? summary;
 
   const NearbyPlace({
     required this.nodeId,
@@ -444,6 +445,7 @@ class NearbyPlace {
     this.lng,
     this.distM,
     this.category = NearbyCategory.other,
+    this.summary,
   });
 
   /// 목록에 보여줄 거리 표기(1km 이상은 km).
@@ -461,6 +463,7 @@ class NearbyPlace {
         lng: (j['lng'] as num?)?.toDouble(),
         distM: (j['dist_m'] as num?)?.toDouble(),
         category: NearbyCategory.parse(j['category'] as String?),
+        summary: j['summary'] as String?,
       );
 }
 

@@ -607,6 +607,12 @@ class _NearbyCard extends StatelessWidget {
               maxLines: 1, overflow: TextOverflow.ellipsis,
               style: const TextStyle(color: AppColors.textSecondary, fontSize: 11.5),
             ),
+            if (place.summary != null && place.summary!.isNotEmpty) ...[
+              const SizedBox(height: 4),
+              Text(place.summary!,
+                  maxLines: 1, overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(color: AppColors.textMuted, fontSize: 11.5)),
+            ],
           ]),
         ),
         const SizedBox(width: 8),
