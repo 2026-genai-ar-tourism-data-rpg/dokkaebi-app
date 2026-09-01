@@ -34,6 +34,7 @@ import '../models/scenario.dart';
 import '../store.dart';
 import '../theme.dart';
 import '../widgets/ar_frame.dart';
+import '../widgets/reward_pop.dart';
 import 'ar_search_screen.dart';
 import 'location_verify_screen.dart';
 
@@ -537,7 +538,8 @@ class _QuestPlayScreenState extends State<QuestPlayScreen> {
       );
 
   // ── 파편 획득 (1d) ───────────────────────────
-  Widget _rewardCard(QuestNode n) => ParchmentCard(
+  Widget _rewardCard(QuestNode n) => RewardPopIn(
+        child: ParchmentCard(
         child: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.start, children: [
           Row(children: [
             const Text('✦', style: TextStyle(color: Hanji.badge, fontSize: 22)),
@@ -572,6 +574,7 @@ class _QuestPlayScreenState extends State<QuestPlayScreen> {
                   : (n.isFinale ? '기억석 복원 — 완료!' : '다음 장소로'),
               onTap: () => Navigator.pop(context, _granted)),
         ]),
+        ),
       );
 
   // ── 공통 조각 ────────────────────────────────

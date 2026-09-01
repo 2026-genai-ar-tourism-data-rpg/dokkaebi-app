@@ -45,8 +45,9 @@ class SectionHeader extends StatelessWidget {
   }
 }
 
-/// 둥근 다크 카드 (보더 + 옵션 글로우)
-class GlowCard extends StatelessWidget {
+/// 둥근 다크 카드 (보더 + 옵션 글로우). 항상 은은한 입체 그림자 + 상단 하이라이트를 두르고,
+/// onTap이 있으면 누를 때 살짝 눌리는 스케일 피드백을 준다.
+class GlowCard extends StatefulWidget {
   final Widget child;
   final Color? glow;
   final EdgeInsets padding;
@@ -60,20 +61,60 @@ class GlowCard extends StatelessWidget {
   });
 
   @override
+  State<GlowCard> createState() => _GlowCardState();
+}
+
+class _GlowCardState extends State<GlowCard> {
+  bool _pressed = false;
+
+  void _setPressed(bool v) {
+    if (widget.onTap == null) return;
+    setState(() => _pressed = v);
+  }
+
+  @override
   Widget build(BuildContext context) {
+    final glow = widget.glow;
     return GestureDetector(
-      onTap: onTap,
-      child: Container(
-        padding: padding,
-        decoration: BoxDecoration(
-          color: AppColors.surface,
-          borderRadius: BorderRadius.circular(16),
-          border: Border.all(color: glow?.withOpacity(0.5) ?? AppColors.border),
-          boxShadow: glow != null
-              ? [BoxShadow(color: glow!.withOpacity(0.18), blurRadius: 20, spreadRadius: -4)]
-              : null,
+      onTap: widget.onTap,
+      onTapDown: (_) => _setPressed(true),
+      onTapUp: (_) => _setPressed(false),
+      onTapCancel: () => _setPressed(false),
+      child: AnimatedScale(
+        scale: _pressed ? 0.97 : 1.0,
+        duration: const Duration(milliseconds: 90),
+        curve: Curves.easeOut,
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 90),
+          padding: widget.padding,
+          decoration: BoxDecoration(
+            color: AppColors.surface,
+            borderRadius: BorderRadius.circular(16),
+            border: Border.all(color: glow?.withOpacity(0.5) ?? AppColors.border),
+            boxShadow: [
+              BoxShadow(
+                color: Colors.black.withOpacity(_pressed ? 0.15 : 0.35),
+                blurRadius: _pressed ? 5 : 12,
+                offset: Offset(0, _pressed ? 1 : 5),
+              ),
+              if (glow != null)
+                BoxShadow(
+                    color: glow.withOpacity(_pressed ? 0.10 : 0.18),
+                    blurRadius: 20,
+                    spreadRadius: -4),
+            ],
+          ),
+          // 위에서 빛이 떨어지는 듯한 은은한 하이라이트 (상단만 밝게 washed).
+          foregroundDecoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(16),
+            gradient: LinearGradient(
+              begin: Alignment.topCenter,
+              end: Alignment.center,
+              colors: [AppColors.textPrimary.withOpacity(0.05), Colors.transparent],
+            ),
+          ),
+          child: widget.child,
         ),
-        child: child,
       ),
     );
   }
@@ -109,7 +150,7 @@ class Pill extends StatelessWidget {
   }
 }
 
-/// 스탯 타일 (아이콘 + 값 + 라벨)
+/// 스탯 타일 (원형 메달 아이콘 + 값 + 라벨) — 게임 업적 배지 느낌.
 class StatTile extends StatelessWidget {
   final IconData icon;
   final String value;
@@ -120,22 +161,36 @@ class StatTile extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Expanded(
-      child: GlowCard(
-        padding: const EdgeInsets.symmetric(vertical: 14),
-        child: Column(children: [
-          Icon(icon, color: color, size: 22),
-          const SizedBox(height: 6),
-          Text(value,
-              style: const TextStyle(
-                  color: AppColors.textPrimary, fontSize: 18, fontWeight: FontWeight.bold)),
-          Text(label, style: const TextStyle(color: AppColors.textSecondary, fontSize: 11)),
-        ]),
-      ),
+      child: Column(children: [
+        Container(
+          width: 52,
+          height: 52,
+          alignment: Alignment.center,
+          decoration: BoxDecoration(
+            shape: BoxShape.circle,
+            color: color.withOpacity(0.14),
+            border: Border.all(color: color.withOpacity(0.6), width: 1.5),
+            boxShadow: [
+              BoxShadow(color: color.withOpacity(0.25), blurRadius: 14, spreadRadius: -2),
+              BoxShadow(
+                  color: Colors.black.withOpacity(0.3),
+                  blurRadius: 8,
+                  offset: const Offset(0, 3)),
+            ],
+          ),
+          child: Icon(icon, color: color, size: 22),
+        ),
+        const SizedBox(height: 8),
+        Text(value,
+            style: const TextStyle(
+                color: AppColors.textPrimary, fontSize: 16, fontWeight: FontWeight.bold)),
+        Text(label, style: const TextStyle(color: AppColors.textSecondary, fontSize: 11)),
+      ]),
     );
   }
 }
 
-/// 진행률 바 (그라데이션)
+/// 진행률 바 — 그라데이션 채움 + 값이 바뀔 때 부드럽게 차오르는 애니메이션.
 class ProgressBar extends StatelessWidget {
   final double value; // 0..1
   final Color color;
@@ -143,13 +198,30 @@ class ProgressBar extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final v = value.clamp(0, 1).toDouble();
     return ClipRRect(
       borderRadius: BorderRadius.circular(6),
-      child: LinearProgressIndicator(
-        value: value.clamp(0, 1),
-        minHeight: 8,
-        backgroundColor: AppColors.border,
-        valueColor: AlwaysStoppedAnimation(color),
+      child: Container(
+        height: 8,
+        color: AppColors.border,
+        child: Align(
+          alignment: Alignment.centerLeft,
+          child: TweenAnimationBuilder<double>(
+            tween: Tween(begin: 0, end: v),
+            duration: const Duration(milliseconds: 500),
+            curve: Curves.easeOutCubic,
+            builder: (context, animatedV, _) => FractionallySizedBox(
+              widthFactor: animatedV,
+              child: Container(
+                decoration: BoxDecoration(
+                  gradient: LinearGradient(
+                    colors: [color.withOpacity(0.75), color],
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ),
       ),
     );
   }

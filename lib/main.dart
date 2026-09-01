@@ -17,6 +17,7 @@ import 'screens/quest_tab_screen.dart';
 import 'session.dart';
 import 'store.dart';
 import 'theme.dart';
+import 'widgets/nav_icons.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -78,22 +79,34 @@ class _MainShellState extends State<MainShell> {
           height: 64,
           selectedIndex: _idx,
           onDestinationSelected: (i) => setState(() => _idx = i),
-          destinations: const [
+          destinations: [
             NavigationDestination(
-                icon: Icon(Icons.home_outlined),
-                selectedIcon: Icon(Icons.home),
+                icon: const DokkaebiNavIcon(DokkaebiNavIconType.home,
+                    color: AppColors.textSecondary),
+                selectedIcon: const DokkaebiNavIconPop(
+                    child: DokkaebiNavIcon(DokkaebiNavIconType.home,
+                        color: AppColors.teal, filled: true)),
                 label: '홈'),
             NavigationDestination(
-                icon: Icon(Icons.military_tech_outlined),
-                selectedIcon: Icon(Icons.military_tech),
+                icon: const DokkaebiNavIcon(DokkaebiNavIconType.quest,
+                    color: AppColors.textSecondary),
+                selectedIcon: const DokkaebiNavIconPop(
+                    child: DokkaebiNavIcon(DokkaebiNavIconType.quest,
+                        color: AppColors.teal, filled: true)),
                 label: '퀘스트'),
             NavigationDestination(
-                icon: Icon(Icons.menu_book_outlined),
-                selectedIcon: Icon(Icons.menu_book),
+                icon: const DokkaebiNavIcon(DokkaebiNavIconType.dex,
+                    color: AppColors.textSecondary),
+                selectedIcon: const DokkaebiNavIconPop(
+                    child: DokkaebiNavIcon(DokkaebiNavIconType.dex,
+                        color: AppColors.teal, filled: true)),
                 label: '도감'),
             NavigationDestination(
-                icon: Icon(Icons.person_outline),
-                selectedIcon: Icon(Icons.person),
+                icon: const DokkaebiNavIcon(DokkaebiNavIconType.profile,
+                    color: AppColors.textSecondary),
+                selectedIcon: const DokkaebiNavIconPop(
+                    child: DokkaebiNavIcon(DokkaebiNavIconType.profile,
+                        color: AppColors.teal, filled: true)),
                 label: '프로필'),
           ],
         ),

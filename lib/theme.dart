@@ -123,12 +123,19 @@ ThemeData buildDokkaebiTheme() {
       border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
     ),
     filledButtonTheme: FilledButtonThemeData(
-      style: FilledButton.styleFrom(
-        backgroundColor: AppColors.teal,
-        foregroundColor: const Color(0xFF06231F),
-        minimumSize: const Size.fromHeight(52),
-        textStyle: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+      // 입체감: 평소엔 살짝 떠 보이는 그림자, 누르면 눌린 듯 그림자가 줄어든다.
+      style: ButtonStyle(
+        backgroundColor: WidgetStateProperty.all(AppColors.teal),
+        foregroundColor: WidgetStateProperty.all(const Color(0xFF06231F)),
+        minimumSize: WidgetStateProperty.all(const Size.fromHeight(52)),
+        textStyle: WidgetStateProperty.all(
+            const TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
+        shape: WidgetStateProperty.all(
+            RoundedRectangleBorder(borderRadius: BorderRadius.circular(14))),
+        elevation: WidgetStateProperty.resolveWith(
+            (states) => states.contains(WidgetState.pressed) ? 0 : 4),
+        shadowColor: WidgetStateProperty.all(AppColors.teal.withOpacity(0.4)),
+        animationDuration: const Duration(milliseconds: 120),
       ),
     ),
   );

@@ -51,6 +51,7 @@ import '../game/run_session.dart';
 import '../models/scenario.dart';
 import '../store.dart';
 import '../theme.dart';
+import '../widgets/reward_pop.dart';
 
 // ── 시안 팔레트(로컬 상수) ──────────────────────────────
 const _ink = Color(0xFF17130F); // 먹빛
@@ -1891,7 +1892,8 @@ class _QuestJourneyScreenState extends State<QuestJourneyScreen> with TickerProv
                   ],
                   if (cafeState == 'correct') ...[
                     const SizedBox(height: 12),
-                    Container(
+                    RewardPopIn(
+                      child: Container(
                       padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
                       decoration: BoxDecoration(color: _goldDim.withOpacity(0.1), borderRadius: BorderRadius.circular(12), border: Border.all(color: _gold.withOpacity(0.5))),
                       child: Row(children: [
@@ -1900,6 +1902,7 @@ class _QuestJourneyScreenState extends State<QuestJourneyScreen> with TickerProv
                         const Expanded(child: Text('글씨조각 「민(民)」 획득 · 단서 「ㄱ」', style: TextStyle(fontSize: 13, color: _gold, fontWeight: FontWeight.w900))),
                         const Text('쿠폰 +1,300원', style: TextStyle(fontSize: 10.5, color: Color(0xFFA87F2C), fontWeight: FontWeight.w900)),
                       ]),
+                      ),
                     ),
                     const SizedBox(height: 12),
                     _cta('지도로 — 다음 기억을 찾아서', () => go('map'), bg: const Color(0xFFC89A3A), fg: const Color(0xFF3A2A08), gradient: _goldGrad),
@@ -2035,7 +2038,8 @@ class _QuestJourneyScreenState extends State<QuestJourneyScreen> with TickerProv
         ],
         if (insaState == 'opened') ...[
           const SizedBox(height: 12),
-          Container(
+          RewardPopIn(
+            child: Container(
             padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
             decoration: BoxDecoration(color: _goldDim.withOpacity(0.12), borderRadius: BorderRadius.circular(12), border: Border.all(color: _gold.withOpacity(0.5))),
             child: Row(children: [
@@ -2043,6 +2047,7 @@ class _QuestJourneyScreenState extends State<QuestJourneyScreen> with TickerProv
               const SizedBox(width: 10),
               const Expanded(child: Text('함이 열렸다 — 글씨조각 「정(正)」 획득', style: TextStyle(fontSize: 13, color: _gold, fontWeight: FontWeight.w900))),
             ]),
+            ),
           ),
           const SizedBox(height: 12),
           _cta('지도로 — 마지막 기억', () => go('map'), bg: const Color(0xFFC89A3A), fg: const Color(0xFF3A2A08), gradient: _goldGrad),
