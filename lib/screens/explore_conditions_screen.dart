@@ -77,6 +77,7 @@ class _ExploreConditionsScreenState extends State<ExploreConditionsScreen> {
                       (v) => setState(() => d.transportLabel = v)),
                   _section('동행', _companions, d.companion, (v) => setState(() => d.companion = v)),
                   _section('난이도', _difficulties, d.difficulty, (v) => setState(() => d.difficulty = v)),
+                  _radiusSection(d),
                   // [v2] 식음·예산 입력은 기능이 꺼져 있는 동안 숨긴다(위 헤더 참조).
                   //      되살릴 때: 아래 주석을 풀고 ExploreDraft의 고정값을 되돌린다.
                   // _section('식음 노드', const ['포함', '제외'], d.includeMeals ? '포함' : '제외',
@@ -98,6 +99,39 @@ class _ExploreConditionsScreenState extends State<ExploreConditionsScreen> {
             ),
           ],
         ),
+      ),
+    );
+  }
+
+  /// 탐색 반경(1~10km) — 현재 위치 기준. 직접 고르면 "시간" 기반 자동 반경 계산 대신
+  /// 이 값이 그대로 서버 검색 반경이 된다(ExploreDraft.radiusM 참고).
+  Widget _radiusSection(ExploreDraft d) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 20),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              const Text('탐색 반경',
+                  style: TextStyle(color: AppColors.textPrimary, fontWeight: FontWeight.bold)),
+              const Spacer(),
+              Text('${d.radiusKm}km',
+                  style: const TextStyle(color: AppColors.teal, fontWeight: FontWeight.bold)),
+            ],
+          ),
+          Text('현재 위치에서 반경 몇 km 안의 장소로 코스를 만들지 골라주세요.',
+              style: const TextStyle(color: AppColors.textSecondary, fontSize: 12)),
+          Slider(
+            value: d.radiusKm.toDouble(),
+            min: 1,
+            max: 10,
+            divisions: 9,
+            activeColor: AppColors.teal,
+            label: '${d.radiusKm}km',
+            onChanged: (v) => setState(() => d.radiusKm = v.round()),
+          ),
+        ],
       ),
     );
   }

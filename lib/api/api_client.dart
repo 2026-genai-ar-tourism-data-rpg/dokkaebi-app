@@ -154,12 +154,14 @@ class ApiClient {
     int headcount = 1,
     bool useFixedScript = false,
     bool withDialogue = true,
+    int? radiusM,
   }) async {
     final body = <String, dynamic>{
       'user_id': Session.userId ?? 'guest',
       'start': {'lat': startLat, 'lng': startLng},
       if (endLat != null && endLng != null) 'end': {'lat': endLat, 'lng': endLng},
       'transport': transport,
+      if (radiusM != null) 'radius_m': radiusM,
       'wishlist': wishlist
           .map((c) => <String, dynamic>{
                 'content_id': c.contentId,

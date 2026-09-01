@@ -34,6 +34,14 @@ class ExploreDraft {
   /// 월드맵에서 지역을 골라 들어온 경우 그 이름이 들어온다.
   String region = 'auto';
 
+  /// 탐색 반경(km) — 현재 위치 기준. 1~10km 사용자 직접 선택.
+  /// 서버에 그대로 보내면 AI가 탐험시간 기반 자동 반경 계산을 건너뛰고 이 값을 그대로 쓴다
+  /// (generator.py: `radius = base_radius if req.radius_m else radius_for(...)`).
+  int radiusKm = 3;
+
+  /// 서버로 보낼 반경(m).
+  int get radiusM => radiusKm * 1000;
+
   /// 서버로 보낼 transport 값 — 대중교통은 도보와 동일 처리되는 서버 특성상 car로 매핑.
   String get transport => transportLabel == '대중교통' ? 'car' : 'walk';
 

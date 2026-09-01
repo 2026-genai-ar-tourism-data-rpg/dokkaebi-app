@@ -85,6 +85,7 @@ class _ExploreConfirmScreenState extends State<ExploreConfirmScreen> {
         difficulty: d.difficultyCode,
         tags: d.tagList,
         headcount: d.headcount,
+        radiusM: d.radiusM,
       );
       final name = _nameController.text.trim();
       final named = name.isEmpty ? scn : scn.copyWith(title: name);
