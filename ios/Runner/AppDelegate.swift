@@ -12,5 +12,14 @@ import UIKit
 
   func didInitializeImplicitFlutterEngine(_ engineBridge: FlutterImplicitEngineBridge) {
     GeneratedPluginRegistrant.register(with: engineBridge.pluginRegistry)
+
+    guard let registrar = engineBridge.pluginRegistry.registrar(forPlugin: "DokkaebiArPlugin") else {
+      return
+    }
+    registrar.register(
+      DokkaebiArViewFactory(messenger: registrar.messenger()),
+      withId: "dokkaebi/ar_view"
+    )
+    DokkaebiArSupport.register(with: registrar.messenger())
   }
 }

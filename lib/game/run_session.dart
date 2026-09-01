@@ -41,6 +41,9 @@ class RunSession extends ChangeNotifier {
       _run?.collectedFragmentIds.contains(fragmentId) ?? false;
 
   /// 시나리오 플레이 시작. 이미 같은 시나리오를 돌고 있으면 그대로 이어 간다.
+  ///
+  /// GPS 판정에 쓸 노드 좌표는 서버가 저장된 시나리오에서 읽는다(server#8) —
+  /// 앱이 좌표를 함께 보낼 필요가 없다.
   Future<bool> start(String scenarioId) async {
     if (_run?.scenarioId == scenarioId && !_run!.isCompleted) return true;
     return _guard(() async {

@@ -51,6 +51,7 @@ import '../game/run_session.dart';
 import '../models/scenario.dart';
 import '../store.dart';
 import '../theme.dart';
+import '../widgets/native_ar_view.dart';
 import '../widgets/reward_pop.dart';
 
 // ── 시안 팔레트(로컬 상수) ──────────────────────────────
@@ -150,6 +151,12 @@ class _QuestJourneyScreenState extends State<QuestJourneyScreen> with TickerProv
   String summonPhase = 'scan';
   bool collOpen = false;
 
+  // ── 실제 AR(ARKit) ──
+  // null=확인 중, true=NativeArView(카메라+3D 마커), false=기존 2D 연출 폴백
+  // (시뮬레이터·미지원 기기·Android). 세션 에러가 나면 그 자리에서 2D로 강등.
+  bool? _arSupported;
+  bool _arError = false;
+
   late List<_Target> targets;
 
   // ── 상태 그래프 (시나리오구조화 3절) ──
@@ -191,6 +198,9 @@ class _QuestJourneyScreenState extends State<QuestJourneyScreen> with TickerProv
     _restoreProgress();
     targets = _resolveTargets(widget.scenario);
     fragments = math.min(_stoneTotal, fragments);   // 코스보다 많은 조각은 표시상 의미 없음
+    isArSupported().then((ok) {
+      if (mounted) setState(() => _arSupported = ok);
+    });
     _ensureRun();
   }
 
@@ -1264,20 +1274,49 @@ class _QuestJourneyScreenState extends State<QuestJourneyScreen> with TickerProv
   Widget _summonScreen() {
     final sejong = summonFor == 'sejong';
     final scanning = summonPhase == 'scan';
+    // 실제 AR 경로: 카메라 배경 + 3D 도깨비 마커. 2D 연출 요소(그라데이션 배경·지붕·
+    // 먹웅덩이·그림 도깨비)는 카메라를 가리므로 AR일 땐 그리지 않는다.
+    // 마커 탭 = '말 걸기'와 동일(스캔 중이면 대기를 건너뛰고 바로 등장).
+    final bool realAr = _arSupported == true && !_arError;
     return Container(
-      decoration: BoxDecoration(gradient: sejong ? _sejongBg : _dialBg),
+      decoration: realAr ? null : BoxDecoration(gradient: sejong ? _sejongBg : _dialBg),
       child: LayoutBuilder(builder: (ctx, box) {
         return Stack(children: [
-          Align(alignment: const Alignment(0, 0.55), child: ClipPath(clipper: _RoofClipper(), child: Container(height: 130, color: sejong ? const Color(0xFF2A1F16) : const Color(0xFF0C0A08)))),
+          if (realAr)
+            Positioned.fill(
+              child: NativeArView(
+                markers: [
+                  ArMarkerDef(
+                    id: 'summon',
+                    label: sejong ? '세종대왕' : (_npcName.isEmpty ? '도깨비' : _npcName),
+                    color: sejong ? _gold : AppColors.teal,
+                    forward: 1.8,
+                    down: 0.1,
+                  ),
+                ],
+                onMarkerTapped: (_) => setState(() {
+                  if (summonPhase == 'scan') {
+                    _summonTimer?.cancel();
+                    summonPhase = 'appear';
+                  } else {
+                    go(sejong ? 'sejong' : 'dialogue');
+                  }
+                }),
+                onError: () => setState(() => _arError = true),
+              ),
+            )
+          else
+            Align(alignment: const Alignment(0, 0.55), child: ClipPath(clipper: _RoofClipper(), child: Container(height: 130, color: sejong ? const Color(0xFF2A1F16) : const Color(0xFF0C0A08)))),
           Positioned(top: 58, left: 0, right: 0, child: Center(child: _pill(
             sejong ? 'AR — 수호 정령 반응 · 신호 매우 강함' : 'AR — 정령 반응 감지 · 신호 강함',
             border: _goldDim, textColor: _gold,
           ))),
-          // 먹 웅덩이
-          Positioned(
-            left: 0, right: 0, top: box.maxHeight * .60,
-            child: Center(child: Container(width: 180, height: 44, decoration: BoxDecoration(color: Colors.black.withOpacity(0.8), borderRadius: BorderRadius.circular(90)))),
-          ),
+          // 먹 웅덩이 (2D 폴백 전용)
+          if (!realAr)
+            Positioned(
+              left: 0, right: 0, top: box.maxHeight * .60,
+              child: Center(child: Container(width: 180, height: 44, decoration: BoxDecoration(color: Colors.black.withOpacity(0.8), borderRadius: BorderRadius.circular(90)))),
+            ),
           if (scanning) ...[
             Positioned(
               left: 0, right: 0, top: box.maxHeight * .48,
@@ -1286,16 +1325,20 @@ class _QuestJourneyScreenState extends State<QuestJourneyScreen> with TickerProv
                 decoration: BoxDecoration(shape: BoxShape.circle, border: Border.all(color: _gold.withOpacity(0.55 * (1 - _pulse.value)), width: 2)),
               ))),
             ),
-            Positioned(left: 0, right: 0, top: box.maxHeight * .74, child: Center(child: Text(sejong ? '거룩한 기운이 모여든다…' : '먹 기운이 모여든다…', style: dokkaebiTitle(size: 15, color: const Color(0xFFE8DCC4))))),
+            Positioned(left: 0, right: 0, top: box.maxHeight * .74, child: Center(child: Text(
+              realAr ? '천천히 주변을 비춰 보거라…' : (sejong ? '거룩한 기운이 모여든다…' : '먹 기운이 모여든다…'),
+              style: dokkaebiTitle(size: 15, color: const Color(0xFFE8DCC4))))),
           ] else ...[
-            Positioned(
-              left: 0, right: 0, top: box.maxHeight * .30,
-              child: Center(child: _Floaty(anim: _float, child: Column(mainAxisSize: MainAxisSize.min, children: [
-                _pill(sejong ? '세종대왕 · 수호' : '먹 도깨비 · Lv.7', border: _goldDim, textColor: _goldDim),
-                const SizedBox(height: 10),
-                sejong ? const _Sejong(size: 140) : const _Dokkaebi(size: 140),
-              ]))),
-            ),
+            // 실제 AR에서는 도깨비가 카메라 공간의 3D 마커로 떠 있으므로 그림을 겹치지 않는다.
+            if (!realAr)
+              Positioned(
+                left: 0, right: 0, top: box.maxHeight * .30,
+                child: Center(child: _Floaty(anim: _float, child: Column(mainAxisSize: MainAxisSize.min, children: [
+                  _pill(sejong ? '세종대왕 · 수호' : '먹 도깨비 · Lv.7', border: _goldDim, textColor: _goldDim),
+                  const SizedBox(height: 10),
+                  sejong ? const _Sejong(size: 140) : const _Dokkaebi(size: 140),
+                ]))),
+              ),
             Positioned(left: 14, right: 14, bottom: 40, child: Column(mainAxisSize: MainAxisSize.min, children: [
               Container(
                 width: double.infinity,

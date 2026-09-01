@@ -111,6 +111,28 @@ class ApiClient {
         .toList();
   }
 
+  /// 내 주변 POI(거리순) — "내 주변 탐험" 탭.
+  /// 코스 생성과 달리 LLM을 타지 않아 즉시 응답한다.
+  Future<List<NearbyPlace>> nearbyPlaces({
+    required double lat,
+    required double lng,
+    int? radiusM,
+  }) async {
+    final uri = Uri.parse('$baseUrl/v1/scenarios/nearby').replace(queryParameters: {
+      'lat': '$lat',
+      'lng': '$lng',
+      if (radiusM != null) 'radius_m': '$radiusM',
+    });
+    final res = await _http.get(uri, headers: _headers);
+    if (res.statusCode >= 400) {
+      throw ApiException.from('주변 탐색', res);
+    }
+    final List data = jsonDecode(utf8.decode(res.bodyBytes)) as List;
+    return data
+        .map((e) => NearbyPlace.fromJson(e as Map<String, dynamic>))
+        .toList();
+  }
+
   /// 시나리오 생성 — 입력 contract(아키텍처 5-6)를 서버에 전달.
   /// start/end는 좌표(앱 GPS/카카오 해석). wishlist는 자동완성 확정분(content_id + 좌표·이름).
   /// ⚠️ 좌표를 반드시 함께 보낸다 — 반경 밖 위시를 서버가 합성 앵커로 배치하려면 필수.
@@ -173,6 +195,8 @@ class ApiClient {
   // 흐름: startRun → (노드마다) verifyLocation → collectFragment → completeNode
 
   /// 플레이 시작 — 시나리오 1회 플레이(run) 생성.
+  ///
+  /// GPS 판정에 쓸 노드 좌표는 서버가 저장된 시나리오에서 읽는다(server#8).
   Future<QuestRun> startRun(String scenarioId) async {
     final res = await _http.post(
       Uri.parse('$baseUrl/v1/runs'),
