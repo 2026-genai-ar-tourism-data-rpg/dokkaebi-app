@@ -212,8 +212,7 @@ class _QuestJourneyScreenState extends State<QuestJourneyScreen> with TickerProv
   Future<void> _ensureRun() async {
     final s = widget.scenario;
     if (s == null) return;
-    // 노드 정의를 함께 보낸다 — 서버가 실좌표로 GPS 판정을 하게(run.module 참고).
-    await RunSession.I.start(s.scenarioId, nodes: s.nodeSequence);
+    await RunSession.I.start(s.scenarioId);
   }
 
   /// 저장된 진행 복원 — 갈림길 선택·인벤토리를 먼저 읽어야 경로가 확정된다.

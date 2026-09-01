@@ -18,7 +18,6 @@ import 'package:kakao_maps_flutter/kakao_maps_flutter.dart';
 
 import '../api/api_client.dart';
 import '../game/location_service.dart';
-import '../game/run_session.dart';
 import '../models/scenario.dart';
 import '../store.dart';
 import '../theme.dart';
@@ -260,15 +259,6 @@ class _NearbySectionState extends State<_NearbySection> {
     final remote = (p.distM ?? double.infinity) > _kOnSiteRadiusM;
     if (remote && !await _confirmRemote(p)) return;
 
-    final fragmentId = 'nearby_${p.nodeId}_fragment';
-    // 원격 체험은 실제 방문이 아니므로 서버 run을 열지 않는다(기록도 안 남는다).
-    var recorded = false;
-    if (!remote && p.lat != null && p.lng != null) {
-      recorded = await RunSession.I.startNearby(
-        nodeId: p.nodeId, lat: p.lat!, lng: p.lng!, fragmentId: fragmentId,
-      );
-    }
-
     if (!mounted) return;
     final found = await Navigator.push<bool>(
       context,
@@ -288,11 +278,11 @@ class _NearbySectionState extends State<_NearbySection> {
     );
 
     if (found == true) {
-      if (remote) {
-        _snack('기운만 스쳤느니라. 조각은 그 자리에 가야 손에 들어온다.');
-      } else if (recorded) {
-        await _recordFragment(p, fragmentId);
-      }
+      // 주변 탐험은 서버에 저장된 코스가 아니라 기록이 남지 않는다 — 정식 진행은
+      // 코스를 만들어 플레이해야 한다(서버 run은 저장된 시나리오에만 열린다, server#8).
+      _snack(remote
+          ? '기운만 스쳤느니라. 조각은 그 자리에 가야 손에 들어온다.'
+          : '기운을 느꼈느니라. 정식 기록은 코스를 만들어 진행하거라.');
     }
     if (mounted) await _refreshIfMoved();
   }
@@ -318,38 +308,6 @@ class _NearbySectionState extends State<_NearbySection> {
       ),
     );
     return ok == true;
-  }
-
-  /// AR에서 찾은 조각을 서버에 남긴다 — GPS 인증 → 획득 → 노드 완료.
-  ///
-  /// 조각의 주인은 서버다. 인증이 거절되면(그 자리에 실제로 없음) 사유를 보여주고
-  /// 획득으로 넘어가지 않는다 — 화면상으로만 얻은 척하면 진행도가 서버와 어긋난다.
-  Future<void> _recordFragment(NearbyPlace p, String fragmentId) async {
-    final loc = await widget.locationService.current();
-    if (!loc.isOk) {
-      _snack(loc.message);
-      return;
-    }
-    final verdict = await RunSession.I.verify(
-      nodeId: p.nodeId, lat: loc.lat!, lng: loc.lng!, accuracyM: loc.accuracyM,
-    );
-    if (verdict == null) {
-      _snack(RunSession.I.error ?? '위치를 확인하지 못했느니라.');
-      return;
-    }
-    if (!verdict.verified) {
-      _snack(verdict.message);
-      return;
-    }
-    final collected = await RunSession.I.collect(p.nodeId);
-    if (collected == null) {
-      _snack(RunSession.I.error ?? '조각을 기록하지 못했느니라.');
-      return;
-    }
-    await RunSession.I.complete(p.nodeId);
-    _snack(collected.alreadyCollected
-        ? '이미 지녔던 조각이니라.'
-        : '기억석 조각을 얻었느니라 — ${p.name ?? '이곳'}');
   }
 
   void _snack(String msg) {

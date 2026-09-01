@@ -196,20 +196,12 @@ class ApiClient {
 
   /// 플레이 시작 — 시나리오 1회 플레이(run) 생성.
   ///
-  /// [nodes]: 노드 정의(좌표·반경·조각). 서버는 시나리오를 저장하지 않는 얇은
-  /// 프록시라 GPS 판정에 쓸 좌표를 앱이 함께 보낸다 — 안 보내면 서버가
-  /// 판정 근거 없이 관대 모드(무조건 통과)로 돈다.
-  Future<QuestRun> startRun(
-    String scenarioId, {
-    List<Map<String, dynamic>>? nodes,
-  }) async {
+  /// GPS 판정에 쓸 노드 좌표는 서버가 저장된 시나리오에서 읽는다(server#8).
+  Future<QuestRun> startRun(String scenarioId) async {
     final res = await _http.post(
       Uri.parse('$baseUrl/v1/runs'),
       headers: _headers,
-      body: jsonEncode({
-        'scenario_id': scenarioId,
-        if (nodes != null) 'nodes': nodes,
-      }),
+      body: jsonEncode({'scenario_id': scenarioId}),
     );
     if (res.statusCode >= 400) throw ApiException.from('플레이 시작', res);
     return QuestRun.fromJson(jsonDecode(utf8.decode(res.bodyBytes)));
