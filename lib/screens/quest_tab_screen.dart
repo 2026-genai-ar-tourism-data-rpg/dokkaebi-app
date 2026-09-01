@@ -171,10 +171,10 @@ class _NearbySection extends StatefulWidget {
   State<_NearbySection> createState() => _NearbySectionState();
 }
 
-/// 반경 선택지(m). 도보 코스 반경(2km)을 기본으로 두고 위아래를 연다 —
-/// 주거지처럼 POI가 드문 곳은 넓히고, 도심은 좁혀야 걸어갈 만한 곳만 남는다.
-const _kRadiusChoices = <int>[500, 1000, 2000, 5000];
+/// 반경 기본값(m). 슬라이더 범위는 1~10km — 코스 생성(explore_conditions_screen)과 동일.
 const _kDefaultRadiusM = 2000;
+const _kRadiusMinM = 1000;
+const _kRadiusMaxM = 10000;
 
 /// 이만큼 움직이면 목록을 자동 갱신한다(m). 너무 작으면 GPS 흔들림에 계속 재조회한다.
 const _kAutoRefreshMoveM = 300.0;
@@ -240,12 +240,6 @@ class _NearbySectionState extends State<_NearbySection> {
     if (!loc.isOk) return;
     final moved = haversineMeters(_lat!, _lng!, loc.lat!, loc.lng!);
     if (moved >= _kAutoRefreshMoveM) await _load();
-  }
-
-  void _setRadius(int m) {
-    if (_radiusM == m) return;
-    setState(() => _radiusM = m);
-    _load();
   }
 
   /// 그 자리에서 바로 AR 탐색 — 코스 없이 단일 지점 조우.
@@ -378,18 +372,30 @@ class _NearbySectionState extends State<_NearbySection> {
     ]);
   }
 
-  Widget _radiusRow() => Row(children: [
-        const Text('반경', style: TextStyle(color: AppColors.textSecondary, fontSize: 12)),
-        const SizedBox(width: 8),
-        ..._kRadiusChoices.map((m) => Padding(
-              padding: const EdgeInsets.only(right: 6),
-              child: Pill(
-                m >= 1000 ? '${m ~/ 1000}km' : '${m}m',
-                active: _radiusM == m,
-                onTap: _loading ? null : () => _setRadius(m),
-              ),
-            )),
-      ]);
+  Widget _radiusRow() {
+    final km = _radiusM / 1000;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(children: [
+          const Text('반경', style: TextStyle(color: AppColors.textSecondary, fontSize: 12)),
+          const Spacer(),
+          Text('${km.toStringAsFixed(km.truncateToDouble() == km ? 0 : 1)}km',
+              style: const TextStyle(color: AppColors.teal, fontWeight: FontWeight.bold)),
+        ]),
+        Slider(
+          value: _radiusM.clamp(_kRadiusMinM, _kRadiusMaxM).toDouble(),
+          min: _kRadiusMinM.toDouble(),
+          max: _kRadiusMaxM.toDouble(),
+          divisions: (_kRadiusMaxM - _kRadiusMinM) ~/ 1000,
+          activeColor: AppColors.teal,
+          label: '${(_radiusM / 1000).round()}km',
+          onChanged: _loading ? null : (v) => setState(() => _radiusM = v.round()),
+          onChangeEnd: (_) => _load(),
+        ),
+      ],
+    );
+  }
 
   Widget _categoryRow() {
     // 실제로 결과가 있는 갈래만 칩으로 — 눌러도 빈 화면이 되는 칩은 만들지 않는다.
