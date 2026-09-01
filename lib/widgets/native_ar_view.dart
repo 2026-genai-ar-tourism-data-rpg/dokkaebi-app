@@ -8,6 +8,7 @@
 // ============================================================
 import 'dart:io' show Platform;
 
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
@@ -43,6 +44,9 @@ const _kArSupportChannel = MethodChannel('dokkaebi/ar_support');
 /// 이 기기가 실제 ARKit 월드 트래킹을 지원하는지. 시뮬레이터·구형 기기·Android는 false
 /// (Android는 아직 네이티브 구현이 없어 항상 false — 폴백 경로로 빠진다).
 Future<bool> isArSupported() async {
+  // 웹을 먼저 거른다 — dart:io의 Platform은 웹에서 값을 읽는 순간 터진다.
+  // (웹 빌드는 컴파일까지는 통과하므로 이 가드가 없으면 런타임에야 드러난다.)
+  if (kIsWeb) return false;
   if (!Platform.isIOS) return false;
   try {
     return (await _kArSupportChannel.invokeMethod<bool>('isSupported')) ?? false;
