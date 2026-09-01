@@ -405,6 +405,65 @@ class SearchCandidate {
       );
 }
 
+/// 주변 장소 갈래 — 목록 아이콘·필터칩의 기준.
+/// 문자열 값은 서버 category(dokkaebi-ai osm._category_of)와 일치해야 한다.
+enum NearbyCategory {
+  historic('historic', '유적'),
+  museum('museum', '박물관'),
+  artwork('artwork', '예술품'),
+  viewpoint('viewpoint', '전망'),
+  park('park', '공원'),
+  attraction('attraction', '명소'),
+  other('other', '기타');
+
+  final String wire;
+  final String label;
+  const NearbyCategory(this.wire, this.label);
+
+  /// 모르는 값은 조용히 버리지 않고 '기타'로 모은다 — 서버가 갈래를 늘려도 목록이 비지 않게.
+  static NearbyCategory parse(String? raw) => NearbyCategory.values
+      .firstWhere((c) => c.wire == raw, orElse: () => NearbyCategory.other);
+}
+
+/// 내 주변 POI 1개 — 코스 생성 없이 그 자리에서 바로 탐색하는 지점.
+/// 서버 NearbyPlace(dokkaebi-ai schemas.py)와 1:1.
+class NearbyPlace {
+  final String nodeId;
+  final String? name;
+  final String? addr;
+  final double? lat;
+  final double? lng;
+  final double? distM;
+  final NearbyCategory category;
+
+  const NearbyPlace({
+    required this.nodeId,
+    this.name,
+    this.addr,
+    this.lat,
+    this.lng,
+    this.distM,
+    this.category = NearbyCategory.other,
+  });
+
+  /// 목록에 보여줄 거리 표기(1km 이상은 km).
+  String get distLabel {
+    final d = distM;
+    if (d == null) return '';
+    return d >= 1000 ? '${(d / 1000).toStringAsFixed(1)}km' : '${d.round()}m';
+  }
+
+  factory NearbyPlace.fromJson(Map<String, dynamic> j) => NearbyPlace(
+        nodeId: (j['node_id'] ?? '').toString(),
+        name: j['name'],
+        addr: j['addr'],
+        lat: (j['lat'] as num?)?.toDouble(),
+        lng: (j['lng'] as num?)?.toDouble(),
+        distM: (j['dist_m'] as num?)?.toDouble(),
+        category: NearbyCategory.parse(j['category'] as String?),
+      );
+}
+
 /// 시나리오(루트) — 노드 시퀀스 + 메타
 class Scenario {
   final String scenarioId;

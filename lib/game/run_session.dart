@@ -11,6 +11,7 @@ import 'package:flutter/foundation.dart';
 
 import '../api/api_client.dart';
 import '../models/run.dart';
+import '../models/scenario.dart';
 
 class RunSession extends ChangeNotifier {
   RunSession({ApiClient? api}) : _api = api ?? ApiClient();
@@ -41,10 +42,54 @@ class RunSession extends ChangeNotifier {
       _run?.collectedFragmentIds.contains(fragmentId) ?? false;
 
   /// 시나리오 플레이 시작. 이미 같은 시나리오를 돌고 있으면 그대로 이어 간다.
-  Future<bool> start(String scenarioId) async {
+  ///
+  /// [nodes]를 주면 서버가 실좌표로 GPS 판정을 한다(서버는 시나리오를 저장하지
+  /// 않으므로 좌표의 출처는 앱). 안 주면 서버 관대 모드 — 판정 없이 통과.
+  Future<bool> start(String scenarioId, {List<QuestNode>? nodes}) async {
     if (_run?.scenarioId == scenarioId && !_run!.isCompleted) return true;
     return _guard(() async {
-      _run = await _api.startRun(scenarioId);
+      _run = await _api.startRun(
+        scenarioId,
+        nodes: nodes
+            ?.map((n) => {
+                  'node_id': n.nodeId,
+                  'lat': n.mapY,
+                  'lng': n.mapX,
+                  'trigger_radius_m': n.triggerRadiusM,
+                  'fragment_id': n.fragmentId.isEmpty ? null : n.fragmentId,
+                  'is_finale': n.isFinale,
+                })
+            .toList(),
+      );
+    });
+  }
+
+  /// "내 주변 탐험"에서 고른 단일 지점의 run을 연다 — 코스 없이 그 자리 하나짜리 플레이.
+  ///
+  /// 코스 플레이와 달리 시나리오가 없으므로 그 지점 하나를 노드로 삼아 run을 만든다.
+  /// 이렇게 해야 GPS 인증·조각 획득이 코스 플레이와 똑같이 서버에 기록된다
+  /// (기록이 없으면 AR에서 조각을 찾아도 아무 데도 남지 않아 헛도는 셈이다).
+  Future<bool> startNearby({
+    required String nodeId,
+    required double lat,
+    required double lng,
+    required String fragmentId,
+    int triggerRadiusM = 100,
+  }) {
+    return _guard(() async {
+      _run = await _api.startRun(
+        'nearby_$nodeId',
+        nodes: [
+          {
+            'node_id': nodeId,
+            'lat': lat,
+            'lng': lng,
+            'trigger_radius_m': triggerRadiusM,
+            'fragment_id': fragmentId,
+            'is_finale': true, // 한 곳뿐이라 이 지점이 곧 끝 — 완료 시 COMPLETED
+          },
+        ],
+      );
     });
   }
 

@@ -12,11 +12,19 @@
 // [v1] 지역 메인 퀘스트 + 내 코스(상태별 그룹) — 2026-06-18/19 kys (app-scaffold/kys/v1)
 // ============================================================
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart' show rootBundle;
+import 'package:http/http.dart' as http;
+import 'package:kakao_maps_flutter/kakao_maps_flutter.dart';
 
+import '../api/api_client.dart';
+import '../game/location_service.dart';
+import '../game/run_session.dart';
 import '../models/scenario.dart';
 import '../store.dart';
 import '../theme.dart';
 import '../widgets/ui.dart';
+import 'ar_search_screen.dart';
+import 'create_scenario_screen.dart' show haversineMeters;
 import 'explore_place_screen.dart';
 import 'quest_journey_screen.dart';
 import 'scenario_screen.dart';
@@ -63,7 +71,7 @@ class _QuestTabScreenState extends State<QuestTabScreen> {
             const SizedBox(height: 16),
 
             if (_section == 0)
-              const _NearbyPlaceholder()
+              const _NearbySection()
             else ...[
               Row(children: [
                 Pill('최신순', active: _sort == _Sort.latest,
@@ -143,22 +151,502 @@ class _SectionToggle extends StatelessWidget {
   }
 }
 
-/// "내 주변 탐험" 빈 상태 — 좌표 기반 추천 API가 아직 없다.
-class _NearbyPlaceholder extends StatelessWidget {
-  const _NearbyPlaceholder();
+/// "내 주변 탐험" — 현재 GPS 반경 내 실제 POI를 목록/지도로 보여준다.
+///
+/// 코스 생성(LLM 15초+)을 거치지 않고 지금 서 있는 자리에서 바로 AR 탐색으로 들어가는
+/// 짧은 경로다. 목록의 출처는 서버 /v1/scenarios/nearby(→ AI → TourAPI 또는 OSM 실데이터).
+/// 여기서 찾은 조각도 코스 플레이와 똑같이 서버(run)에 기록된다.
+class _NearbySection extends StatefulWidget {
+  /// 위치 서비스 주입 지점 — 테스트가 실기기 GPS 없이 좌표를 밀어 넣는다.
+  final LocationService locationService;
+
+  /// HTTP 실행기 주입 지점 — 테스트가 실제 서버 없이 응답을 흉내 낸다.
+  final http.Client? httpClient;
+
+  const _NearbySection({
+    this.locationService = const LocationService(),
+    this.httpClient,
+  });
+
+  @override
+  State<_NearbySection> createState() => _NearbySectionState();
+}
+
+/// 반경 선택지(m). 도보 코스 반경(2km)을 기본으로 두고 위아래를 연다 —
+/// 주거지처럼 POI가 드문 곳은 넓히고, 도심은 좁혀야 걸어갈 만한 곳만 남는다.
+const _kRadiusChoices = <int>[500, 1000, 2000, 5000];
+const _kDefaultRadiusM = 2000;
+
+/// 이만큼 움직이면 목록을 자동 갱신한다(m). 너무 작으면 GPS 흔들림에 계속 재조회한다.
+const _kAutoRefreshMoveM = 300.0;
+
+/// 이 반경 안이면 "그 자리에 있다"로 보고 실제 AR·조각 획득을 연다.
+/// 서버 run.module의 기본 trigger_radius(100m)와 같은 값 — 여기서 통과시켜 놓고
+/// 서버가 거절하면 사용자만 헷갈린다.
+const _kOnSiteRadiusM = 100.0;
+
+class _NearbySectionState extends State<_NearbySection> {
+  late final ApiClient _api = ApiClient(client: widget.httpClient);
+  List<NearbyPlace>? _places;
+  String? _error;
+  bool _loading = false;
+  bool _mapView = false;
+  int _radiusM = _kDefaultRadiusM;
+  NearbyCategory? _filter; // null = 전체
+  double? _lat, _lng;      // 목록을 만든 시점의 위치(자동 갱신 판정 기준)
+
+  @override
+  void initState() {
+    super.initState();
+    _load();
+  }
+
+  Future<void> _load({bool keepFilter = true}) async {
+    setState(() {
+      _loading = true;
+      _error = null;
+      if (!keepFilter) _filter = null;
+    });
+    try {
+      final loc = await widget.locationService.current();
+      if (!loc.isOk) {
+        // 위치를 못 얻으면 목록의 의미가 없다 — 사유를 그대로 보여준다(조용히 빈 목록 금지).
+        if (mounted) setState(() => _error = loc.message);
+        return;
+      }
+      final places = await _api.nearbyPlaces(
+          lat: loc.lat!, lng: loc.lng!, radiusM: _radiusM);
+      if (mounted) {
+        setState(() {
+          _places = places;
+          _lat = loc.lat;
+          _lng = loc.lng;
+        });
+      }
+    } on ApiException catch (e) {
+      if (mounted) setState(() => _error = e.message);
+    } catch (e) {
+      if (mounted) setState(() => _error = '주변을 살피지 못했느니라. ($e)');
+    } finally {
+      if (mounted) setState(() => _loading = false);
+    }
+  }
+
+  /// 화면으로 돌아왔을 때 많이 움직였으면 목록을 새로 받는다.
+  /// 자동 재조회를 거리로 거는 이유 — 매번 부르면 공개 POI API 호출이 낭비되고,
+  /// 안 부르면 한참 걸어간 뒤에도 옛 목록이 남는다.
+  Future<void> _refreshIfMoved() async {
+    if (_lat == null || _lng == null || _loading) return;
+    final loc = await widget.locationService.current();
+    if (!loc.isOk) return;
+    final moved = haversineMeters(_lat!, _lng!, loc.lat!, loc.lng!);
+    if (moved >= _kAutoRefreshMoveM) await _load();
+  }
+
+  void _setRadius(int m) {
+    if (_radiusM == m) return;
+    setState(() => _radiusM = m);
+    _load();
+  }
+
+  /// 그 자리에서 바로 AR 탐색 — 코스 없이 단일 지점 조우.
+  ///
+  /// 서버 run을 먼저 열어 두고 AR에서 조각을 찾으면 인증·획득을 서버에 기록한다.
+  /// run이 실패해도 AR 자체는 진행한다(서버 없이도 데모는 돌아야 한다).
+  Future<void> _explore(NearbyPlace p) async {
+    // 그 자리에 있나? 인증 반경(100m) 밖이면 원격 체험으로 돌린다.
+    // 예전엔 멀면 조각 획득 단계에서 "아직 멀었느니라"로 막혀 아무것도 못 하고 끝났다 —
+    // 집에서도 이야기와 연출은 볼 수 있어야 한다.
+    final remote = (p.distM ?? double.infinity) > _kOnSiteRadiusM;
+    if (remote && !await _confirmRemote(p)) return;
+
+    final fragmentId = 'nearby_${p.nodeId}_fragment';
+    // 원격 체험은 실제 방문이 아니므로 서버 run을 열지 않는다(기록도 안 남는다).
+    var recorded = false;
+    if (!remote && p.lat != null && p.lng != null) {
+      recorded = await RunSession.I.startNearby(
+        nodeId: p.nodeId, lat: p.lat!, lng: p.lng!, fragmentId: fragmentId,
+      );
+    }
+
+    if (!mounted) return;
+    final found = await Navigator.push<bool>(
+      context,
+      MaterialPageRoute(
+        builder: (_) => ArSearchScreen(
+          placeName: p.name ?? '이름 모를 자리',
+          order: remote
+              ? '멀리서 ${p.name ?? '이곳'}의 기운을 살펴라'
+              : '${p.name ?? '이곳'}에 잠든 기억석 조각을 찾아라',
+          hints: remote
+              ? const ['기운이 흐릿하구나 — 직접 찾아가면 또렷해진다']
+              : const ['주변을 천천히 비추어 보거라', '눈높이보다 조금 아래를 살펴라'],
+          total: 1,
+          remote: remote,
+        ),
+      ),
+    );
+
+    if (found == true) {
+      if (remote) {
+        _snack('기운만 스쳤느니라. 조각은 그 자리에 가야 손에 들어온다.');
+      } else if (recorded) {
+        await _recordFragment(p, fragmentId);
+      }
+    }
+    if (mounted) await _refreshIfMoved();
+  }
+
+  /// 원격 체험 진입 확인 — 무엇이 되고 무엇이 안 되는지 미리 알린다.
+  /// 그냥 들여보내면 조각이 왜 안 들어오는지 몰라 버그로 읽힌다.
+  Future<bool> _confirmRemote(NearbyPlace p) async {
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: AppColors.surface,
+        title: const Text('멀리서 살펴보겠느냐?'),
+        content: Text(
+          '${p.name ?? '이곳'}은 ${p.distLabel} 떨어져 있느니라.\n\n'
+          '원격으로도 이야기와 도깨비는 만날 수 있다. 다만 기억석 조각은 '
+          '그 자리에 직접 가야 손에 넣을 수 있느니.',
+          style: const TextStyle(height: 1.5),
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('그만두기')),
+          FilledButton(onPressed: () => Navigator.pop(ctx, true), child: const Text('멀리서 보기')),
+        ],
+      ),
+    );
+    return ok == true;
+  }
+
+  /// AR에서 찾은 조각을 서버에 남긴다 — GPS 인증 → 획득 → 노드 완료.
+  ///
+  /// 조각의 주인은 서버다. 인증이 거절되면(그 자리에 실제로 없음) 사유를 보여주고
+  /// 획득으로 넘어가지 않는다 — 화면상으로만 얻은 척하면 진행도가 서버와 어긋난다.
+  Future<void> _recordFragment(NearbyPlace p, String fragmentId) async {
+    final loc = await widget.locationService.current();
+    if (!loc.isOk) {
+      _snack(loc.message);
+      return;
+    }
+    final verdict = await RunSession.I.verify(
+      nodeId: p.nodeId, lat: loc.lat!, lng: loc.lng!, accuracyM: loc.accuracyM,
+    );
+    if (verdict == null) {
+      _snack(RunSession.I.error ?? '위치를 확인하지 못했느니라.');
+      return;
+    }
+    if (!verdict.verified) {
+      _snack(verdict.message);
+      return;
+    }
+    final collected = await RunSession.I.collect(p.nodeId);
+    if (collected == null) {
+      _snack(RunSession.I.error ?? '조각을 기록하지 못했느니라.');
+      return;
+    }
+    await RunSession.I.complete(p.nodeId);
+    _snack(collected.alreadyCollected
+        ? '이미 지녔던 조각이니라.'
+        : '기억석 조각을 얻었느니라 — ${p.name ?? '이곳'}');
+  }
+
+  void _snack(String msg) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(msg)));
+  }
+
+  /// 필터를 적용한 목록. 필터가 가리키는 갈래가 없으면 전체를 보여준다.
+  List<NearbyPlace> get _visible {
+    final all = _places ?? const <NearbyPlace>[];
+    if (_filter == null) return all;
+    return all.where((p) => p.category == _filter).toList();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (_loading && _places == null) {
+      return const GlowCard(
+        child: Row(children: [
+          SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2)),
+          SizedBox(width: 12),
+          Text('주변을 살피는 중…',
+              style: TextStyle(color: AppColors.textSecondary, fontSize: 13)),
+        ]),
+      );
+    }
+    if (_error != null) {
+      return GlowCard(
+        child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          Row(children: const [
+            Icon(Icons.error_outline, color: AppColors.vermilion, size: 18),
+            SizedBox(width: 8),
+            Text('주변을 살피지 못했어요',
+                style: TextStyle(color: AppColors.textPrimary, fontWeight: FontWeight.bold)),
+          ]),
+          const SizedBox(height: 6),
+          Text(_error!,
+              style: const TextStyle(color: AppColors.textSecondary, fontSize: 12, height: 1.5)),
+          const SizedBox(height: 10),
+          FilledButton.icon(
+            onPressed: _loading ? null : () => _load(),
+            icon: const Icon(Icons.refresh, size: 18),
+            label: const Text('다시 시도'),
+          ),
+        ]),
+      );
+    }
+
+    final visible = _visible;
+    return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+      _radiusRow(),
+      const SizedBox(height: 10),
+      if ((_places ?? const []).isNotEmpty) ...[
+        _categoryRow(),
+        const SizedBox(height: 10),
+      ],
+      _headerRow(visible.length),
+      const SizedBox(height: 4),
+      if (visible.isEmpty)
+        _emptyCard()
+      else if (_mapView)
+        _NearbyMap(places: visible, myLat: _lat, myLng: _lng, onTap: _explore)
+      else
+        ...visible.map((p) => Padding(
+              padding: const EdgeInsets.only(bottom: 10),
+              child: _NearbyCard(place: p, onExplore: () => _explore(p)),
+            )),
+    ]);
+  }
+
+  Widget _radiusRow() => Row(children: [
+        const Text('반경', style: TextStyle(color: AppColors.textSecondary, fontSize: 12)),
+        const SizedBox(width: 8),
+        ..._kRadiusChoices.map((m) => Padding(
+              padding: const EdgeInsets.only(right: 6),
+              child: Pill(
+                m >= 1000 ? '${m ~/ 1000}km' : '${m}m',
+                active: _radiusM == m,
+                onTap: _loading ? null : () => _setRadius(m),
+              ),
+            )),
+      ]);
+
+  Widget _categoryRow() {
+    // 실제로 결과가 있는 갈래만 칩으로 — 눌러도 빈 화면이 되는 칩은 만들지 않는다.
+    final counts = <NearbyCategory, int>{};
+    for (final p in _places ?? const <NearbyPlace>[]) {
+      counts[p.category] = (counts[p.category] ?? 0) + 1;
+    }
+    final cats = counts.keys.toList()
+      ..sort((a, b) => counts[b]!.compareTo(counts[a]!));
+    return SingleChildScrollView(
+      scrollDirection: Axis.horizontal,
+      child: Row(children: [
+        Pill('전체', active: _filter == null, onTap: () => setState(() => _filter = null)),
+        const SizedBox(width: 6),
+        ...cats.map((c) => Padding(
+              padding: const EdgeInsets.only(right: 6),
+              child: Pill(
+                '${c.label} ${counts[c]}',
+                active: _filter == c,
+                onTap: () => setState(() => _filter = _filter == c ? null : c),
+              ),
+            )),
+      ]),
+    );
+  }
+
+  Widget _headerRow(int shown) => Row(children: [
+        const Icon(Icons.near_me_outlined, color: AppColors.teal, size: 16),
+        const SizedBox(width: 6),
+        Text('가까운 순 $shown곳',
+            style: const TextStyle(color: AppColors.textSecondary, fontSize: 12)),
+        const Spacer(),
+        IconButton(
+          onPressed: () => setState(() => _mapView = !_mapView),
+          icon: Icon(_mapView ? Icons.list : Icons.map_outlined,
+              size: 18, color: AppColors.teal),
+          tooltip: _mapView ? '목록으로' : '지도로',
+          visualDensity: VisualDensity.compact,
+        ),
+        IconButton(
+          onPressed: _loading ? null : () => _load(),
+          icon: const Icon(Icons.refresh, size: 18, color: AppColors.teal),
+          tooltip: '새로고침',
+          visualDensity: VisualDensity.compact,
+        ),
+      ]);
+
+  Widget _emptyCard() => GlowCard(
+        child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          Text(
+            _filter != null ? '이 갈래는 주변에 없어요' : '주변에 알려진 자리가 없어요',
+            style: const TextStyle(color: AppColors.textPrimary, fontWeight: FontWeight.bold),
+          ),
+          const SizedBox(height: 6),
+          Text(
+            _filter != null
+                ? '"전체"로 돌리거나 다른 갈래를 골라보세요.'
+                : '반경을 넓히거나 자리를 옮겨 다시 살펴보세요.',
+            style: const TextStyle(color: AppColors.textSecondary, fontSize: 12, height: 1.5),
+          ),
+        ]),
+      );
+}
+
+/// 주변 POI를 지도 핀으로 — 어느 방향인지 감을 준다.
+///
+/// 지도는 팀 표준인 카카오맵(map_screen과 동일)을 쓴다. flutter_map으로 먼저
+/// 만들었다가 dev가 카카오맵으로 갈아타며 그 의존성이 빠져 포팅했다.
+/// 핀 이미지는 기존 region_pin 하나를 재사용한다 — 갈래 구분은 목록 아이콘이
+/// 이미 하고 있어서, 지도에까지 갈래별 PNG 6종을 새로 만들 이유가 없다.
+class _NearbyMap extends StatefulWidget {
+  final List<NearbyPlace> places;
+  final double? myLat, myLng;
+  final ValueChanged<NearbyPlace> onTap;
+  const _NearbyMap({
+    required this.places,
+    required this.myLat,
+    required this.myLng,
+    required this.onTap,
+  });
+
+  @override
+  State<_NearbyMap> createState() => _NearbyMapState();
+}
+
+class _NearbyMapState extends State<_NearbyMap> {
+  static const _pinStyleId = 'nearby_pin';
+  static const _layerId = 'nearby_layer';
+  KakaoMapController? _controller;
+
+  @override
+  void didUpdateWidget(covariant _NearbyMap old) {
+    super.didUpdateWidget(old);
+    // 필터·반경이 바뀌면 목록이 바뀐다 → 핀도 다시 그린다.
+    if (old.places != widget.places) _drawPins();
+  }
+
+  Future<void> _onMapCreated(KakaoMapController controller) async {
+    _controller = controller;
+    // 레이어를 먼저 만들어야 addMarkers가 "LabelLayer not found"로 죽지 않는다.
+    await controller.addMarkerLayer(layerId: _layerId);
+    final bytes = await rootBundle.load('assets/images/region_pin.png');
+    final pin = bytes.buffer.asUint8List();
+    await controller.registerMarkerStyles(styles: [
+      MarkerStyle(
+        styleId: _pinStyleId,
+        // 레벨을 하나만 등록하면 그 레벨에서만 보인다 — 축소·확대 양 끝을 등록.
+        perLevels: [
+          MarkerPerLevelStyle.fromBytes(bytes: pin, level: 1),
+          MarkerPerLevelStyle.fromBytes(bytes: pin, level: 21),
+        ],
+      ),
+    ]);
+    await _drawPins();
+  }
+
+  Future<void> _drawPins() async {
+    final c = _controller;
+    if (c == null) return; // 지도 준비 전 — onMapCreated에서 다시 부른다.
+    await c.clearMarkers(layerId: _layerId);
+    final markers = [
+      for (final p in widget.places)
+        if (p.lat != null && p.lng != null)
+          MarkerOption(
+            id: p.nodeId,
+            latLng: LatLng(latitude: p.lat!, longitude: p.lng!),
+            text: p.name ?? '',
+            styleId: _pinStyleId,
+          ),
+    ];
+    if (markers.isNotEmpty) {
+      await c.addMarkers(markerOptions: markers, layerId: _layerId);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    // 카메라 중심 — 내 위치가 있으면 그곳, 없으면 가장 가까운 장소.
+    final center = (widget.myLat != null && widget.myLng != null)
+        ? LatLng(latitude: widget.myLat!, longitude: widget.myLng!)
+        : (widget.places.isNotEmpty &&
+                widget.places.first.lat != null &&
+                widget.places.first.lng != null
+            ? LatLng(
+                latitude: widget.places.first.lat!,
+                longitude: widget.places.first.lng!)
+            : null);
+    if (center == null) return const SizedBox.shrink();
+    return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+      ClipRRect(
+        borderRadius: BorderRadius.circular(16),
+        child: SizedBox(
+          height: 320,
+          child: KakaoMap(onMapCreated: _onMapCreated, initialPosition: center),
+        ),
+      ),
+      const SizedBox(height: 6),
+      // 카카오맵 마커는 탭 콜백을 붙이기 번거로워(스타일·레이어 단위) 지도에서는
+      // 위치만 보여주고, 실제 진입은 목록에서 하도록 안내한다.
+      const Text('핀 위치를 확인하고, 목록에서 골라 탐색을 시작하세요.',
+          style: TextStyle(color: AppColors.textMuted, fontSize: 11)),
+    ]);
+  }
+}
+
+/// 갈래별 아이콘 — 목록·지도 핀이 같은 기호를 쓴다.
+IconData _iconOf(NearbyCategory c) => switch (c) {
+      NearbyCategory.historic => Icons.account_balance_outlined,
+      NearbyCategory.museum => Icons.museum_outlined,
+      NearbyCategory.artwork => Icons.palette_outlined,
+      NearbyCategory.viewpoint => Icons.landscape_outlined,
+      NearbyCategory.park => Icons.park_outlined,
+      NearbyCategory.attraction => Icons.star_outline,
+      NearbyCategory.other => Icons.place_outlined,
+    };
+
+/// 주변 POI 카드 — 갈래 아이콘·이름·거리·주소 + "AR로 탐색" 진입.
+class _NearbyCard extends StatelessWidget {
+  final NearbyPlace place;
+  final VoidCallback onExplore;
+  const _NearbyCard({required this.place, required this.onExplore});
+
   @override
   Widget build(BuildContext context) {
     return GlowCard(
-      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-        Row(children: const [
-          Icon(Icons.near_me_outlined, color: AppColors.textMuted, size: 18),
-          SizedBox(width: 8),
-          Text('내 주변 탐험은 준비 중이에요',
-              style: TextStyle(color: AppColors.textPrimary, fontWeight: FontWeight.bold)),
-        ]),
-        const SizedBox(height: 6),
-        const Text('위치 기반 추천은 GPS 연동 후 제공될 예정입니다. 그동안 시나리오 라이브러리를 둘러보세요.',
-            style: TextStyle(color: AppColors.textSecondary, fontSize: 12, height: 1.5)),
+      onTap: onExplore,
+      child: Row(children: [
+        Container(
+          width: 44, height: 44, alignment: Alignment.center,
+          decoration: BoxDecoration(
+            color: AppColors.surfaceHi,
+            shape: BoxShape.circle,
+            border: Border.all(color: AppColors.teal.withOpacity(0.4)),
+          ),
+          child: Icon(_iconOf(place.category), color: AppColors.teal, size: 20),
+        ),
+        const SizedBox(width: 12),
+        Expanded(
+          child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            Text(place.name ?? '이름 모를 자리',
+                maxLines: 1, overflow: TextOverflow.ellipsis,
+                style: const TextStyle(
+                    color: AppColors.textPrimary, fontSize: 15, fontWeight: FontWeight.bold)),
+            const SizedBox(height: 2),
+            Text(
+              [place.category.label, place.distLabel]
+                  .where((s) => s.isNotEmpty)
+                  .join(' · '),
+              maxLines: 1, overflow: TextOverflow.ellipsis,
+              style: const TextStyle(color: AppColors.textSecondary, fontSize: 11.5),
+            ),
+          ]),
+        ),
+        const SizedBox(width: 8),
+        const Icon(Icons.camera_alt_outlined, color: AppColors.teal, size: 20),
       ]),
     );
   }

@@ -227,7 +227,11 @@ class _ScenarioScreenState extends State<ScenarioScreen> {
   /// 실패해도 화면을 막지 않는다: 서버 없이도 코스를 훑어볼 수는 있어야 한다.
   /// 대신 그 상태에서는 조각이 서버에 기록되지 않으므로 상단 배너로 알린다.
   Future<void> _openRun() async {
-    await RunSession.I.start(widget.scenario.scenarioId);
+    // 노드 정의를 함께 보낸다 — 서버가 실좌표로 GPS 판정을 하게(run.module 참고).
+    await RunSession.I.start(
+      widget.scenario.scenarioId,
+      nodes: widget.scenario.nodeSequence,
+    );
     if (mounted) setState(() {});
   }
 

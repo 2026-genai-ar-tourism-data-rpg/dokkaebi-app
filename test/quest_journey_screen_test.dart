@@ -283,4 +283,23 @@ void main() {
       expect(find.textContaining('운현궁'), findsNothing);
     });
   });
+
+  // 실기기·시뮬레이터 양쪽에서 "걷기 시작 (GPS 시뮬레이션)"이 탭에 반응하지 않는
+  // 현상을 재현·격리하기 위한 테스트 — 입력 주입(합성 터치) 문제인지 위젯 자체
+  // 버그인지 UI 탐색 없이 가른다.
+  group('GPS 시뮬레이션', () {
+    testWidgets('이동 시작 → 걷기 시작을 누르면 거리가 줄고 걷는 중으로 바뀐다', (tester) async {
+      await _toMap(tester, _jongno());
+      expect(tester.takeException(), isNull);
+
+      await tester.tap(find.text('이동 시작 — GPS 추적'));
+      await tester.pump();
+      expect(find.text('걷기 시작 (GPS 시뮬레이션)'), findsOneWidget);
+
+      await tester.tap(find.text('걷기 시작 (GPS 시뮬레이션)'));
+      await tester.pump(const Duration(milliseconds: 140));
+
+      expect(find.text('걷는 중…'), findsOneWidget);
+    });
+  });
 }
