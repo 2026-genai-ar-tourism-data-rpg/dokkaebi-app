@@ -15,6 +15,13 @@
 //            + http.Client 주입 지점 — 지금까지 top-level http.post를 직접 불러서
 //              화면 단위 네트워크 목킹이 불가능했다(create_scenario_screen_test 주석 참조).
 // 구현일: 2026-08-18 | 작성: kys (explore-input-wiring/kys/v1)
+// ------------------------------------------------------------
+// [v3] 401 공통 처리 — 세션을 지우고 로그인 화면으로 보낸다.
+// 구현(요약): 보호 API가 401을 주면(토큰 만료·다른 서버 토큰) 지금까지는 화면마다
+//            "다시 청하기"만 떠서 같은 토큰으로 같은 401을 반복했다. 응답 검사를
+//            _check 한 곳으로 모으고, 401이면 Session.clear + AppNav.toLogin.
+//            로그인 요청 자체의 401은 제외(세션이 없으니 보낼 곳이 없다).
+// 구현일: 2026-09-04 | 작성: kys (dev 직접 반영 — 팀 실기기 테스트 중 401 막힘)
 // ============================================================
 import 'dart:convert';
 
@@ -23,6 +30,7 @@ import 'package:http/http.dart' as http;
 import '../config.dart';
 import '../models/run.dart';
 import '../models/scenario.dart';
+import '../nav.dart';
 import '../session.dart';
 
 class ApiClient {
@@ -40,6 +48,17 @@ class ApiClient {
         'Content-Type': 'application/json',
         if (Session.token != null) 'Authorization': 'Bearer ${Session.token}',
       };
+
+  /// 응답 공통 검사 — 4xx/5xx면 ApiException. 401이면 세션을 버리고 로그인으로.
+  /// 동시에 여러 요청이 401을 받아도 첫 번째만 화면을 옮긴다(이후엔 세션이 이미 없음).
+  http.Response _check(String action, http.Response res) {
+    if (res.statusCode == 401 && Session.isLoggedIn) {
+      Session.clear(); // 메모리는 즉시 비워지고 저장소 정리는 뒤따른다
+      AppNav.toLogin(notice: '로그인이 풀렸습니다. 다시 로그인해 주세요.');
+    }
+    if (res.statusCode >= 400) throw ApiException.from(action, res);
+    return res;
+  }
 
   /// 게스트 로그인 — 닉네임만으로 토큰 발급받아 세션 저장.
   Future<void> guestLogin(String nickname) async {
@@ -91,9 +110,7 @@ class ApiClient {
       headers: _headers,
       body: jsonEncode(body),
     );
-    if (res.statusCode >= 400) {
-      throw ApiException.from('대화', res);
-    }
+    _check('대화', res);
     return DialogueTurn.fromJson(jsonDecode(utf8.decode(res.bodyBytes)));
   }
 
@@ -102,9 +119,7 @@ class ApiClient {
     final uri = Uri.parse('$baseUrl/v1/scenarios/search')
         .replace(queryParameters: {'keyword': keyword});
     final res = await _http.get(uri, headers: _headers);
-    if (res.statusCode >= 400) {
-      throw ApiException.from('검색', res);
-    }
+    _check('검색', res);
     final List data = jsonDecode(utf8.decode(res.bodyBytes)) as List;
     return data
         .map((e) => SearchCandidate.fromJson(e as Map<String, dynamic>))
@@ -124,9 +139,7 @@ class ApiClient {
       if (radiusM != null) 'radius_m': '$radiusM',
     });
     final res = await _http.get(uri, headers: _headers);
-    if (res.statusCode >= 400) {
-      throw ApiException.from('주변 탐색', res);
-    }
+    _check('주변 탐색', res);
     final List data = jsonDecode(utf8.decode(res.bodyBytes)) as List;
     return data
         .map((e) => NearbyPlace.fromJson(e as Map<String, dynamic>))
@@ -186,9 +199,7 @@ class ApiClient {
       headers: _headers,
       body: jsonEncode(body),
     );
-    if (res.statusCode >= 400) {
-      throw ApiException.from('시나리오 생성', res);
-    }
+    _check('시나리오 생성', res);
     return Scenario.fromJson(jsonDecode(utf8.decode(res.bodyBytes)));
   }
 
@@ -205,14 +216,14 @@ class ApiClient {
       headers: _headers,
       body: jsonEncode({'scenario_id': scenarioId}),
     );
-    if (res.statusCode >= 400) throw ApiException.from('플레이 시작', res);
+    _check('플레이 시작', res);
     return QuestRun.fromJson(jsonDecode(utf8.decode(res.bodyBytes)));
   }
 
   /// 진행 상태 조회 — 앱 재시작·복귀 시 진행도 복원.
   Future<QuestRun> getRun(String runId) async {
     final res = await _http.get(Uri.parse('$baseUrl/v1/runs/$runId'), headers: _headers);
-    if (res.statusCode >= 400) throw ApiException.from('플레이 조회', res);
+    _check('플레이 조회', res);
     return QuestRun.fromJson(jsonDecode(utf8.decode(res.bodyBytes)));
   }
 
@@ -239,7 +250,7 @@ class ApiClient {
         if (accuracyM != null) 'accuracy_m': accuracyM,
       }),
     );
-    if (res.statusCode >= 400) throw ApiException.from('위치 인증', res);
+    _check('위치 인증', res);
     return LocationVerdict.fromJson(jsonDecode(utf8.decode(res.bodyBytes)));
   }
 
@@ -253,7 +264,7 @@ class ApiClient {
       headers: _headers,
       body: jsonEncode({}),
     );
-    if (res.statusCode >= 400) throw ApiException.from('조각 획득', res);
+    _check('조각 획득', res);
     return CollectResult.fromJson(jsonDecode(utf8.decode(res.bodyBytes)));
   }
 
@@ -268,7 +279,7 @@ class ApiClient {
       headers: _headers,
       body: jsonEncode({if (choiceId != null) 'choice_id': choiceId}),
     );
-    if (res.statusCode >= 400) throw ApiException.from('노드 완료', res);
+    _check('노드 완료', res);
     return NodeReward.fromJson(jsonDecode(utf8.decode(res.bodyBytes)));
   }
 }

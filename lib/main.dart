@@ -4,11 +4,13 @@
 // 구현(요약): 다크 RPG 테마 + 하단 5탭(홈/지도/퀘스트/도감/프로필). 시안 1~10 기반.
 //            ⚠️ 지도·도감·AR·실시간은 TODO(정찬희/이지선) — 탭 골격만.
 // 구현일: 2026-06-18 | 작성: kys (app-theme/kys/v1)
+// [v2] 2026-09-04: navigatorKey(AppNav) — ApiClient가 401을 받으면 로그인 화면으로 보낸다.
 // ============================================================
 import 'package:flutter/material.dart';
 import 'package:kakao_maps_flutter/kakao_maps_flutter.dart';
 
 import 'config.dart';
+import 'nav.dart';
 import 'screens/dex_screen.dart';
 import 'screens/map_screen.dart';
 import 'screens/onboarding_screen.dart';
@@ -37,6 +39,7 @@ class DokkaebiApp extends StatelessWidget {
   Widget build(BuildContext context) {
     return MaterialApp(
       title: '도깨비: 팔도의 비밀',
+      navigatorKey: AppNav.key,
       theme: buildDokkaebiTheme(),
       // 로그인돼 있으면 메인 셸(홈=지역 선택 지도), 아니면 온보딩 → 로그인.
       // 프롤로그는 로그인 직후가 아니라 첫 코스 생성 직후에 뜬다(explore_confirm_screen.dart).
