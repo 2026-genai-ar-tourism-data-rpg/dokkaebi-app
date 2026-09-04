@@ -5,7 +5,9 @@
 //            ⚠️ 지도·도감·AR·실시간은 TODO(정찬희/이지선) — 탭 골격만.
 // 구현일: 2026-06-18 | 작성: kys (app-theme/kys/v1)
 // [v2] 2026-09-04: navigatorKey(AppNav) — ApiClient가 401을 받으면 로그인 화면으로 보낸다.
+//                  카카오 init은 웹에서 건너뛰고 실패해도 앱을 죽이지 않는다(흰 화면 방지).
 // ============================================================
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:kakao_maps_flutter/kakao_maps_flutter.dart';
 
@@ -25,8 +27,15 @@ void main() async {
   WidgetsFlutterBinding.ensureInitialized();
   // 키 없이도 앱은 뜨게 둔다(다른 화면 작업엔 지장 없어야 함) — 지도 탭만
   // 못 그려진다. 실제 키는 --dart-define=KAKAO_NATIVE_APP_KEY=... 로 주입.
-  if (AppConfig.kakaoNativeAppKey.isNotEmpty) {
-    await KakaoMapsFlutter.init(AppConfig.kakaoNativeAppKey);
+  // 웹은 네이티브 키가 아니라 JavaScript 키를 요구해 init이 무조건 던진다 → 웹에선 건너뛴다.
+  // 키가 잘못돼도(예시 파일의 자리표시자 그대로 등) 앱이 흰 화면으로 죽으면 안 되므로
+  // 실패는 로그만 남기고 계속 간다.
+  if (!kIsWeb && AppConfig.kakaoNativeAppKey.isNotEmpty) {
+    try {
+      await KakaoMapsFlutter.init(AppConfig.kakaoNativeAppKey);
+    } catch (e) {
+      debugPrint('KakaoMapsFlutter.init 실패 — 지도 탭만 비활성: $e');
+    }
   }
   await Session.load(); // 저장된 로그인 복원
   if (Session.isLoggedIn) await ScenarioStore.I.load(); // 내 탐험 복원
