@@ -467,6 +467,22 @@ class NearbyPlace {
       );
 }
 
+/// 코스 오프닝 프롤로그 대본 한 줄. speaker="beat"면 text 없이 연출 트리거(beat)만 있다.
+/// 서버(dokkaebi-ai PrologueLineSchema)와 1:1 — speaker: narration|npc|player|beat.
+class PrologueLine {
+  final String speaker;
+  final String text;
+  final String? beat;
+
+  const PrologueLine({required this.speaker, required this.text, this.beat});
+
+  factory PrologueLine.fromJson(Map<String, dynamic> j) => PrologueLine(
+        speaker: (j['speaker'] ?? 'narration').toString(),
+        text: (j['text'] ?? '').toString(),
+        beat: j['beat']?.toString(),
+      );
+}
+
 /// 시나리오(루트) — 노드 시퀀스 + 메타
 class Scenario {
   final String scenarioId;
@@ -484,6 +500,10 @@ class Scenario {
   /// 저장된 코스의 예산을 표시할 수 없었다 → 파싱·왕복 대상에 포함.
   final int? budget;
 
+  /// 코스 오프닝 프롤로그 대본(화자 순서·연출 비트 고정, 대사만 region·첫 장소로 생성).
+  /// 비어있으면(구버전 캐시·생성 실패) 프롤로그 화면이 자체 정적 텍스트로 폴백한다.
+  final List<PrologueLine> prologue;
+
   Scenario({
     required this.scenarioId,
     required this.title,
@@ -494,6 +514,7 @@ class Scenario {
     this.isBranching = false,
     this.routeTree,
     this.budget,
+    this.prologue = const [],
   }) : _stoneTotal = stoneTotal;
 
   /// 기억석 조각 노드만(식음 제외). 진행률·조각수 표시는 전부 이걸 기준으로.
@@ -531,6 +552,7 @@ class Scenario {
         isBranching: isBranching,
         routeTree: routeTree,
         budget: budget,
+        prologue: prologue,
       );
 
   factory Scenario.fromJson(Map<String, dynamic> j) => Scenario(
@@ -546,6 +568,9 @@ class Scenario {
             : null,
         nodeSequence: ((j['node_sequence'] ?? []) as List)
             .map((e) => QuestNode.fromJson(e as Map<String, dynamic>))
+            .toList(),
+        prologue: ((j['prologue'] ?? []) as List)
+            .map((e) => PrologueLine.fromJson(e as Map<String, dynamic>))
             .toList(),
       );
 
