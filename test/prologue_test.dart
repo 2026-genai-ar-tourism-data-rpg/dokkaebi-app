@@ -5,7 +5,7 @@
 //       ② prologue 키가 없으면(구버전 캐시) 빈 배열로 떨어진다(하위호환)
 //       ③ PrologueScreen이 서버 프롤로그를 그대로 보여준다
 //       ④ prologue가 비어있으면 기존 정적(종로) 대본으로 폴백한다
-// 구현일: 2026-09-04 | 작성: Claude (prologue-story-gen/claude/v1)
+// 구현일: 2026-09-04 | 작성: ljs (prologue-story-gen/ljs/v1)
 // ============================================================
 import 'package:dokkaebi_app/models/scenario.dart';
 import 'package:dokkaebi_app/screens/prologue_screen.dart';
