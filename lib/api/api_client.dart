@@ -5,6 +5,23 @@
 //            앱은 AI를 직접 호출하지 않는다 ❌ — 전부 게임 서버 경유.
 //            서버 오류는 ApiException으로 감싸 code/message로 분기 가능하게 한다.
 // 구현일: 2026-06-18 (게임 루프 배선: 2026-08-04) | 작성: kys (app-scaffold/kys/v1)
+// ------------------------------------------------------------
+// [v2] 마법사 입력 전달 — duration·companion·difficulty·tags·headcount·region.
+// 구현(요약): 앱이 보내던 건 transport·wishlist·budget·no_meals 4개뿐이었고 region은
+//            '종로' 하드코딩 기본값이었다 → 사용자가 무엇을 골라도, 어디에 있어도 같은
+//            종로 코스가 나왔다. region 기본값을 'auto'(서버가 좌표로 판정)로 바꾸고
+//            나머지 입력을 계약대로 실어 보낸다. 서버 DTO·AI 스키마와 이름이 1:1이어야
+//            한다 — 서버 ValidationPipe가 whitelist라 이름이 다르면 조용히 잘린다.
+//            + http.Client 주입 지점 — 지금까지 top-level http.post를 직접 불러서
+//              화면 단위 네트워크 목킹이 불가능했다(create_scenario_screen_test 주석 참조).
+// 구현일: 2026-08-18 | 작성: kys (explore-input-wiring/kys/v1)
+// ------------------------------------------------------------
+// [v3] 401 공통 처리 — 세션을 지우고 로그인 화면으로 보낸다.
+// 구현(요약): 보호 API가 401을 주면(토큰 만료·다른 서버 토큰) 지금까지는 화면마다
+//            "다시 청하기"만 떠서 같은 토큰으로 같은 401을 반복했다. 응답 검사를
+//            _check 한 곳으로 모으고, 401이면 Session.clear + AppNav.toLogin.
+//            로그인 요청 자체의 401은 제외(세션이 없으니 보낼 곳이 없다).
+// 구현일: 2026-09-04 | 작성: kys (dev 직접 반영 — 팀 실기기 테스트 중 401 막힘)
 // ============================================================
 import 'dart:convert';
 
@@ -13,11 +30,18 @@ import 'package:http/http.dart' as http;
 import '../config.dart';
 import '../models/run.dart';
 import '../models/scenario.dart';
+import '../nav.dart';
 import '../session.dart';
 
 class ApiClient {
   final String baseUrl;
-  ApiClient({String? baseUrl}) : baseUrl = baseUrl ?? AppConfig.serverBaseUrl;
+
+  /// HTTP 실행기 — 테스트가 MockClient로 갈아끼운다. 기본은 실제 네트워크.
+  final http.Client _http;
+
+  ApiClient({String? baseUrl, http.Client? client})
+      : baseUrl = baseUrl ?? AppConfig.serverBaseUrl,
+        _http = client ?? http.Client();
 
   /// 공통 헤더(로그인 토큰 포함).
   Map<String, String> get _headers => {
@@ -25,9 +49,20 @@ class ApiClient {
         if (Session.token != null) 'Authorization': 'Bearer ${Session.token}',
       };
 
+  /// 응답 공통 검사 — 4xx/5xx면 ApiException. 401이면 세션을 버리고 로그인으로.
+  /// 동시에 여러 요청이 401을 받아도 첫 번째만 화면을 옮긴다(이후엔 세션이 이미 없음).
+  http.Response _check(String action, http.Response res) {
+    if (res.statusCode == 401 && Session.isLoggedIn) {
+      Session.clear(); // 메모리는 즉시 비워지고 저장소 정리는 뒤따른다
+      AppNav.toLogin(notice: '로그인이 풀렸습니다. 다시 로그인해 주세요.');
+    }
+    if (res.statusCode >= 400) throw ApiException.from(action, res);
+    return res;
+  }
+
   /// 게스트 로그인 — 닉네임만으로 토큰 발급받아 세션 저장.
   Future<void> guestLogin(String nickname) async {
-    final res = await http.post(
+    final res = await _http.post(
       Uri.parse('$baseUrl/v1/auth/guest'),
       headers: {'Content-Type': 'application/json'},
       body: jsonEncode({'nickname': nickname}),
@@ -40,32 +75,42 @@ class ApiClient {
   }
 
   /// 분기 대화 한 턴 — 선택마다 호출. inventory로 연계(이전 단서 인지).
+  ///
+  /// [branch]는 갈림길 노드의 `node.branch` 그대로. AI는 시나리오를 들고 있지 않아
+  /// 이 값을 받아야 갈림길을 인지하고, 종료 선택지를 갈래 id(main|b1)로 낸다.
+  /// [regionId]는 grounding 원문 재조회 시 지역 워킹셋 편입에 쓰인다.
   Future<DialogueTurn> dialogueTurn({
     required String nodeId,
     String? nodeName,
     String? fragmentId,
+    String? regionId,
     List<Map<String, String>> history = const [],
     List<String> inventory = const [],
     String? lastChoice,
     int turn = 0,
+    Map<String, dynamic>? branch,
+    Map<String, dynamic>? playerState,
+    String? kind,
   }) async {
     final body = {
       'node_id': nodeId,
       if (nodeName != null) 'node_name': nodeName,
       if (fragmentId != null) 'fragment_id': fragmentId,
+      if (regionId != null) 'region_id': regionId,
       'history': history,
       'inventory': {'items': inventory},
       if (lastChoice != null) 'last_choice': lastChoice,
       'turn': turn,
+      if (branch != null) 'branch': branch,
+      if (playerState != null) 'player_state': playerState,
+      if (kind != null) 'kind': kind,
     };
-    final res = await http.post(
+    final res = await _http.post(
       Uri.parse('$baseUrl/v1/dialogue/turn'),
       headers: _headers,
       body: jsonEncode(body),
     );
-    if (res.statusCode >= 400) {
-      throw ApiException.from('대화', res);
-    }
+    _check('대화', res);
     return DialogueTurn.fromJson(jsonDecode(utf8.decode(res.bodyBytes)));
   }
 
@@ -73,13 +118,31 @@ class ApiClient {
   Future<List<SearchCandidate>> searchAttractions(String keyword) async {
     final uri = Uri.parse('$baseUrl/v1/scenarios/search')
         .replace(queryParameters: {'keyword': keyword});
-    final res = await http.get(uri, headers: _headers);
-    if (res.statusCode >= 400) {
-      throw ApiException.from('검색', res);
-    }
+    final res = await _http.get(uri, headers: _headers);
+    _check('검색', res);
     final List data = jsonDecode(utf8.decode(res.bodyBytes)) as List;
     return data
         .map((e) => SearchCandidate.fromJson(e as Map<String, dynamic>))
+        .toList();
+  }
+
+  /// 내 주변 POI(거리순) — "내 주변 탐험" 탭.
+  /// 코스 생성과 달리 LLM을 타지 않아 즉시 응답한다.
+  Future<List<NearbyPlace>> nearbyPlaces({
+    required double lat,
+    required double lng,
+    int? radiusM,
+  }) async {
+    final uri = Uri.parse('$baseUrl/v1/scenarios/nearby').replace(queryParameters: {
+      'lat': '$lat',
+      'lng': '$lng',
+      if (radiusM != null) 'radius_m': '$radiusM',
+    });
+    final res = await _http.get(uri, headers: _headers);
+    _check('주변 탐색', res);
+    final List data = jsonDecode(utf8.decode(res.bodyBytes)) as List;
+    return data
+        .map((e) => NearbyPlace.fromJson(e as Map<String, dynamic>))
         .toList();
   }
 
@@ -96,14 +159,22 @@ class ApiClient {
     List<SearchCandidate> wishlist = const [],
     int? budget,
     bool noMeals = false,
-    String region = '종로',
+    String region = 'auto',
+    String duration = '2h',
+    String companion = 'solo',
+    String difficulty = 'normal',
+    List<String> tags = const [],
+    int headcount = 1,
+    bool useFixedScript = false,
     bool withDialogue = true,
+    int? radiusM,
   }) async {
     final body = <String, dynamic>{
       'user_id': Session.userId ?? 'guest',
       'start': {'lat': startLat, 'lng': startLng},
       if (endLat != null && endLng != null) 'end': {'lat': endLat, 'lng': endLng},
       'transport': transport,
+      if (radiusM != null) 'radius_m': radiusM,
       'wishlist': wishlist
           .map((c) => <String, dynamic>{
                 'content_id': c.contentId,
@@ -113,18 +184,22 @@ class ApiClient {
               })
           .toList(),
       if (budget != null) 'budget': budget,
+      'headcount': headcount,
       'no_meals': noMeals,
       'region': region,
+      'duration': duration,
+      'companion': companion,
+      'difficulty': difficulty,
+      'tags': tags,
+      'use_fixed_script': useFixedScript,
       'with_dialogue': withDialogue,
     };
-    final res = await http.post(
+    final res = await _http.post(
       Uri.parse('$baseUrl/v1/scenarios/custom'),
       headers: _headers,
       body: jsonEncode(body),
     );
-    if (res.statusCode >= 400) {
-      throw ApiException.from('시나리오 생성', res);
-    }
+    _check('시나리오 생성', res);
     return Scenario.fromJson(jsonDecode(utf8.decode(res.bodyBytes)));
   }
 
@@ -133,20 +208,22 @@ class ApiClient {
   // 흐름: startRun → (노드마다) verifyLocation → collectFragment → completeNode
 
   /// 플레이 시작 — 시나리오 1회 플레이(run) 생성.
+  ///
+  /// GPS 판정에 쓸 노드 좌표는 서버가 저장된 시나리오에서 읽는다(server#8).
   Future<QuestRun> startRun(String scenarioId) async {
-    final res = await http.post(
+    final res = await _http.post(
       Uri.parse('$baseUrl/v1/runs'),
       headers: _headers,
       body: jsonEncode({'scenario_id': scenarioId}),
     );
-    if (res.statusCode >= 400) throw ApiException.from('플레이 시작', res);
+    _check('플레이 시작', res);
     return QuestRun.fromJson(jsonDecode(utf8.decode(res.bodyBytes)));
   }
 
   /// 진행 상태 조회 — 앱 재시작·복귀 시 진행도 복원.
   Future<QuestRun> getRun(String runId) async {
-    final res = await http.get(Uri.parse('$baseUrl/v1/runs/$runId'), headers: _headers);
-    if (res.statusCode >= 400) throw ApiException.from('플레이 조회', res);
+    final res = await _http.get(Uri.parse('$baseUrl/v1/runs/$runId'), headers: _headers);
+    _check('플레이 조회', res);
     return QuestRun.fromJson(jsonDecode(utf8.decode(res.bodyBytes)));
   }
 
@@ -164,7 +241,7 @@ class ApiClient {
     required double lng,
     double? accuracyM,
   }) async {
-    final res = await http.post(
+    final res = await _http.post(
       Uri.parse('$baseUrl/v1/runs/$runId/nodes/$nodeId/verify-location'),
       headers: _headers,
       body: jsonEncode({
@@ -173,7 +250,7 @@ class ApiClient {
         if (accuracyM != null) 'accuracy_m': accuracyM,
       }),
     );
-    if (res.statusCode >= 400) throw ApiException.from('위치 인증', res);
+    _check('위치 인증', res);
     return LocationVerdict.fromJson(jsonDecode(utf8.decode(res.bodyBytes)));
   }
 
@@ -182,12 +259,12 @@ class ApiClient {
     required String runId,
     required String nodeId,
   }) async {
-    final res = await http.post(
+    final res = await _http.post(
       Uri.parse('$baseUrl/v1/runs/$runId/nodes/$nodeId/collect'),
       headers: _headers,
       body: jsonEncode({}),
     );
-    if (res.statusCode >= 400) throw ApiException.from('조각 획득', res);
+    _check('조각 획득', res);
     return CollectResult.fromJson(jsonDecode(utf8.decode(res.bodyBytes)));
   }
 
@@ -197,12 +274,12 @@ class ApiClient {
     required String nodeId,
     String? choiceId,
   }) async {
-    final res = await http.post(
+    final res = await _http.post(
       Uri.parse('$baseUrl/v1/runs/$runId/nodes/$nodeId/complete'),
       headers: _headers,
       body: jsonEncode({if (choiceId != null) 'choice_id': choiceId}),
     );
-    if (res.statusCode >= 400) throw ApiException.from('노드 완료', res);
+    _check('노드 완료', res);
     return NodeReward.fromJson(jsonDecode(utf8.decode(res.bodyBytes)));
   }
 }

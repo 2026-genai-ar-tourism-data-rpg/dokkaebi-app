@@ -28,6 +28,7 @@ class ScenarioStore extends ChangeNotifier {
   final Map<String, List<String>> _inventory = {}; // scenarioId -> 획득 상태(StateRef 표기)
   final Map<String, Map<String, String>> _choices = {}; // scenarioId -> {분기노드id: choiceId}
   final Map<String, String> _endings = {}; // scenarioId -> 엔딩 코드
+  final Set<String> _prologueSeen = {}; // 프롤로그를 본 scenarioId — 코스별로 최초 1회만.
 
   String get _key => 'store_${Session.userId ?? 'guest'}';
 
@@ -35,6 +36,17 @@ class ScenarioStore extends ChangeNotifier {
   List<String> doneOf(String scenarioId) => _doneNodes[scenarioId] ?? const [];
   List<String> inventoryOf(String scenarioId) => _inventory[scenarioId] ?? const [];
   int progressOf(Scenario s) => doneOf(s.scenarioId).length;
+
+  /// 이 코스의 프롤로그를 이미 봤는가 — 봤으면 재진입 시 프롤로그를 건너뛴다.
+  bool prologueSeenOf(String scenarioId) => _prologueSeen.contains(scenarioId);
+
+  /// 프롤로그 시청 완료 표시(코스별). 같은 코스를 나중에 다시 만들어도(같은 scenarioId)
+  /// 다시 뜨지 않지만, 아직 안 본 다른 코스는 각자 첫 진입 때 뜬다.
+  Future<void> markPrologueSeen(String scenarioId) async {
+    _prologueSeen.add(scenarioId);
+    notifyListeners();
+    await _persist();
+  }
 
   /// 갈림길 선택 — `Scenario.playedPath()`에 그대로 넘긴다.
   Map<String, String> choicesOf(String scenarioId) => _choices[scenarioId] ?? const {};
@@ -52,8 +64,53 @@ class ScenarioStore extends ChangeNotifier {
     return s.stoneNodes.where((n) => done.contains(n.nodeId)).length;
   }
 
+  /// 방문률 — 생성한 모든 코스의 (완료한 기억석 조각 합) / (전체 조각 합).
+  /// "전체 방문 가능 장소"라는 고정 분모가 없어, 내가 만든 코스 기준으로 계산한다.
+  /// 코스가 하나도 없으면 0.
+  double get visitRate {
+    var done = 0;
+    var total = 0;
+    for (final s in scenarios) {
+      done += stoneProgressOf(s);
+      total += s.stoneTotal;
+    }
+    return total == 0 ? 0 : done / total;
+  }
+
   /// 실제 밟은 경로 기준 노드 목록(선형이면 node_sequence 그대로).
   List<QuestNode> pathOf(Scenario s) => s.playedPath(choicesOf(s.scenarioId));
+
+  /// 완료한 노드 중 npcName이 있는 것들을 "만난 도깨비"로 모은다(이름 기준 중복
+  /// 제거 — 같은 도깨비를 여러 노드/코스에서 만날 수 있음). 도감 화면(카드
+  /// 목록)과 프로필 화면(개수 표시)이 함께 쓴다.
+  List<({String name, String region})> metDokkaebi() {
+    final seen = <String>{};
+    final result = <({String name, String region})>[];
+    for (final s in scenarios) {
+      final done = doneOf(s.scenarioId).toSet();
+      for (final node in s.nodeSequence) {
+        if (!done.contains(node.nodeId)) continue;
+        if (node.npcName.isEmpty) continue;
+        if (!seen.add(node.npcName)) continue;
+        result.add((name: node.npcName, region: s.region));
+      }
+    }
+    return result;
+  }
+
+  /// 완료한 기억석 조각(식음 노드 제외)을 전부 모은다 — 기억석 도감 표시용.
+  /// 도깨비와 달리 같은 이름이어도 서로 다른 조각이라 중복 제거하지 않는다.
+  List<({String name, String region})> collectedStones() {
+    final result = <({String name, String region})>[];
+    for (final s in scenarios) {
+      final done = doneOf(s.scenarioId).toSet();
+      for (final node in s.stoneNodes) {
+        if (!done.contains(node.nodeId)) continue;
+        result.add((name: node.name ?? '이름 없는 조각', region: s.region));
+      }
+    }
+    return result;
+  }
 
   /// 저장된 탐험·진행 복원 (앱 시작·로그인 직후).
   Future<void> load() async {
@@ -63,6 +120,7 @@ class ScenarioStore extends ChangeNotifier {
     _inventory.clear();
     _choices.clear();
     _endings.clear();
+    _prologueSeen.clear();
     final raw = p.getString(_key);
     if (raw != null && raw.isNotEmpty) {
       final d = jsonDecode(raw) as Map<String, dynamic>;
@@ -76,6 +134,8 @@ class ScenarioStore extends ChangeNotifier {
       (d['choices'] as Map<String, dynamic>? ?? {}).forEach((k, v) =>
           _choices[k] = (v as Map).map((ck, cv) => MapEntry(ck.toString(), cv.toString())));
       (d['endings'] as Map<String, dynamic>? ?? {}).forEach((k, v) => _endings[k] = v.toString());
+      _prologueSeen.addAll(
+          ((d['prologueSeen'] ?? []) as List).map((e) => e.toString()));
     }
     notifyListeners();
   }
@@ -84,6 +144,17 @@ class ScenarioStore extends ChangeNotifier {
   Future<void> add(Scenario s) async {
     scenarios.removeWhere((e) => e.scenarioId == s.scenarioId);
     scenarios.insert(0, s);
+    notifyListeners();
+    await _persist();
+  }
+
+  /// 코스 삭제 — 시나리오 자체와 진행 상황(완료 노드·인벤토리·갈림길·엔딩)을 함께 지운다.
+  Future<void> remove(String scenarioId) async {
+    scenarios.removeWhere((s) => s.scenarioId == scenarioId);
+    _doneNodes.remove(scenarioId);
+    _inventory.remove(scenarioId);
+    _choices.remove(scenarioId);
+    _endings.remove(scenarioId);
     notifyListeners();
     await _persist();
   }
@@ -154,6 +225,18 @@ class ScenarioStore extends ChangeNotifier {
     await _persist();
   }
 
+  /// 내가 만든 모든 코스와 진행 상황을 전부 삭제 — 설정 화면의 "전체 초기화".
+  Future<void> resetAll() async {
+    scenarios.clear();
+    _doneNodes.clear();
+    _inventory.clear();
+    _choices.clear();
+    _endings.clear();
+    _prologueSeen.clear();
+    notifyListeners();
+    await _persist();
+  }
+
   Future<void> _persist() async {
     final p = await SharedPreferences.getInstance();
     await p.setString(_key, jsonEncode({
@@ -162,6 +245,7 @@ class ScenarioStore extends ChangeNotifier {
       'inventory': _inventory,
       'choices': _choices,
       'endings': _endings,
+      'prologueSeen': _prologueSeen.toList(),
     }));
   }
 }

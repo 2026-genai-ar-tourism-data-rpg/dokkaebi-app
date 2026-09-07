@@ -46,13 +46,24 @@ dependencies:
   # 위치(GPS) — 노드 반경 도착 판정. 서버 verify-location에 좌표+정확도를 보낸다.
   # ⚠️ 13+는 Flutter 3.27+를 요구한다(Color.toARGB32). 팀 SDK 3.24.3 기준으로 10.x에 고정.
   #    android/build.gradle의 geolocator 심도 함께 참고 — SDK 올리면 둘 다 정리할 것.
-  # 아직: flutter_map(지도) · socket_io_client(실시간) · camera(AR)
+  # 아직: socket_io_client(실시간) · camera(AR)
+
+  # 팔도 지도(홈 탭) — 카카오맵 SDK.
+  # ⚠️ CARTO(무료 타일 서버)는 상업 배포 약관이 불명확하고 래스터 타일 자체가
+  #    단계적 폐기 중이라 이걸로 교체(world-map-live/ljs/v2). 앱 실행에는
+  #    Kakao Developers에서 발급받은 네이티브 앱 키가 필요(config.dart 참고).
+  kakao_maps_flutter: ^0.2.2
 
   # The following adds the Cupertino Icons font to your application.
   # Use with the CupertinoIcons class for iOS style icons.
   cupertino_icons: ^1.0.8
-  google_fonts: ^6.3.0
+  # ⚠️ 7.0.0+는 Flutter 3.35.0+ 요구(6.x는 최신 Dart SDK에서 const 평가 오류로 빌드 불가).
+  #    3.35 미만 팀원은 flutter upgrade 필요 — 이슈 참고.
+  google_fonts: ^7.0.0
   geolocator: ^10.1.0
+
+  # 프로필 > 설정 화면의 앱 버전 표시.
+  package_info_plus: ^10.2.1
 
 dev_dependencies:
   flutter_test:
@@ -78,10 +89,10 @@ flutter:
   # the material Icons class.
   uses-material-design: true
 
-  # To add assets to your application, add an assets section, like this:
-  # assets:
-  #   - images/a_dot_burr.jpeg
-  #   - images/a_dot_ham.jpeg
+  # 팔도 지도 — 카카오맵 "내 위치" 커스텀 마커.
+  assets:
+    - assets/images/my_location.png
+    - assets/images/region_pin.png
 
   # An image asset can refer to one or more resolution-specific "variants", see
   # https://flutter.dev/to/resolution-aware-images

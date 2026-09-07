@@ -170,6 +170,10 @@ class QuestNode {
   final String fragmentId; // 기억석 조각 id. 식음 노드는 빈 문자열(조각 아님)
   final int? stoneNo; // 기억석 조각 번호(1-base). 식음 노드는 null
   final String npcDialogue;
+
+  /// 이 장소를 지키는 도깨비 이름(AI가 노드마다 합성). 서버 도감(DexEntry)도 이 값을 쓴다.
+  /// 없으면 빈 문자열 — 화면이 기본 이름으로 폴백한다.
+  final String npcName;
   final bool isFinale;
   final int? priceBand; // 식음: 가격대 밴드 1~4(미상 null)
   final String? priceBandLabel; // 식음: ₩~₩₩₩₩ 표시용
@@ -209,6 +213,7 @@ class QuestNode {
     required this.fragmentId,
     this.stoneNo,
     required this.npcDialogue,
+    this.npcName = '',
     required this.isFinale,
     this.priceBand,
     this.priceBandLabel,
@@ -282,6 +287,7 @@ class QuestNode {
         fragmentId: j['fragment_id'] ?? '', // 식음 노드는 null → ''
         stoneNo: (j['stone_no'] as num?)?.toInt(),
         npcDialogue: j['npc_dialogue'] ?? '',
+        npcName: ((j['npc'] as Map?)?['name'] ?? '').toString(),
         isFinale: j['is_finale'] ?? false,
         priceBand: (j['price_band'] as num?)?.toInt(),
         priceBandLabel: j['price_band_label'],
@@ -324,6 +330,7 @@ class QuestNode {
         'fragment_id': fragmentId,
         if (stoneNo != null) 'stone_no': stoneNo,
         'npc_dialogue': npcDialogue,
+        if (npcName.isNotEmpty) 'npc': {'name': npcName},
         'is_finale': isFinale,
         if (priceBand != null) 'price_band': priceBand,
         if (priceBandLabel != null) 'price_band_label': priceBandLabel,
@@ -398,6 +405,84 @@ class SearchCandidate {
       );
 }
 
+/// 주변 장소 갈래 — 목록 아이콘·필터칩의 기준.
+/// 문자열 값은 서버 category(dokkaebi-ai osm._category_of)와 일치해야 한다.
+enum NearbyCategory {
+  historic('historic', '유적'),
+  museum('museum', '박물관'),
+  artwork('artwork', '예술품'),
+  viewpoint('viewpoint', '전망'),
+  park('park', '공원'),
+  attraction('attraction', '명소'),
+  other('other', '기타');
+
+  final String wire;
+  final String label;
+  const NearbyCategory(this.wire, this.label);
+
+  /// 모르는 값은 조용히 버리지 않고 '기타'로 모은다 — 서버가 갈래를 늘려도 목록이 비지 않게.
+  static NearbyCategory parse(String? raw) => NearbyCategory.values
+      .firstWhere((c) => c.wire == raw, orElse: () => NearbyCategory.other);
+}
+
+/// 내 주변 POI 1개 — 코스 생성 없이 그 자리에서 바로 탐색하는 지점.
+/// 서버 NearbyPlace(dokkaebi-ai schemas.py)와 1:1.
+class NearbyPlace {
+  final String nodeId;
+  final String? name;
+  final String? addr;
+  final double? lat;
+  final double? lng;
+  final double? distM;
+  final NearbyCategory category;
+  final String? summary;
+
+  const NearbyPlace({
+    required this.nodeId,
+    this.name,
+    this.addr,
+    this.lat,
+    this.lng,
+    this.distM,
+    this.category = NearbyCategory.other,
+    this.summary,
+  });
+
+  /// 목록에 보여줄 거리 표기(1km 이상은 km).
+  String get distLabel {
+    final d = distM;
+    if (d == null) return '';
+    return d >= 1000 ? '${(d / 1000).toStringAsFixed(1)}km' : '${d.round()}m';
+  }
+
+  factory NearbyPlace.fromJson(Map<String, dynamic> j) => NearbyPlace(
+        nodeId: (j['node_id'] ?? '').toString(),
+        name: j['name'],
+        addr: j['addr'],
+        lat: (j['lat'] as num?)?.toDouble(),
+        lng: (j['lng'] as num?)?.toDouble(),
+        distM: (j['dist_m'] as num?)?.toDouble(),
+        category: NearbyCategory.parse(j['category'] as String?),
+        summary: j['summary'] as String?,
+      );
+}
+
+/// 코스 오프닝 프롤로그 대본 한 줄. speaker="beat"면 text 없이 연출 트리거(beat)만 있다.
+/// 서버(dokkaebi-ai PrologueLineSchema)와 1:1 — speaker: narration|npc|player|beat.
+class PrologueLine {
+  final String speaker;
+  final String text;
+  final String? beat;
+
+  const PrologueLine({required this.speaker, required this.text, this.beat});
+
+  factory PrologueLine.fromJson(Map<String, dynamic> j) => PrologueLine(
+        speaker: (j['speaker'] ?? 'narration').toString(),
+        text: (j['text'] ?? '').toString(),
+        beat: j['beat']?.toString(),
+      );
+}
+
 /// 시나리오(루트) — 노드 시퀀스 + 메타
 class Scenario {
   final String scenarioId;
@@ -415,6 +500,10 @@ class Scenario {
   /// 저장된 코스의 예산을 표시할 수 없었다 → 파싱·왕복 대상에 포함.
   final int? budget;
 
+  /// 코스 오프닝 프롤로그 대본(화자 순서·연출 비트 고정, 대사만 region·첫 장소로 생성).
+  /// 비어있으면(구버전 캐시·생성 실패) 프롤로그 화면이 자체 정적 텍스트로 폴백한다.
+  final List<PrologueLine> prologue;
+
   Scenario({
     required this.scenarioId,
     required this.title,
@@ -425,6 +514,7 @@ class Scenario {
     this.isBranching = false,
     this.routeTree,
     this.budget,
+    this.prologue = const [],
   }) : _stoneTotal = stoneTotal;
 
   /// 기억석 조각 노드만(식음 제외). 진행률·조각수 표시는 전부 이걸 기준으로.
@@ -451,6 +541,20 @@ class Scenario {
           .whereType<QuestNode>()
           .toList();
 
+  /// 코스 이름을 사용자가 직접 지었을 때(입력 확인 화면) 덮어쓰기용.
+  Scenario copyWith({String? title}) => Scenario(
+        scenarioId: scenarioId,
+        title: title ?? this.title,
+        region: region,
+        nodeSequence: nodeSequence,
+        anchorNodeId: anchorNodeId,
+        stoneTotal: _stoneTotal,
+        isBranching: isBranching,
+        routeTree: routeTree,
+        budget: budget,
+        prologue: prologue,
+      );
+
   factory Scenario.fromJson(Map<String, dynamic> j) => Scenario(
         scenarioId: j['scenario_id'] ?? '',
         title: j['title'] ?? '',
@@ -464,6 +568,9 @@ class Scenario {
             : null,
         nodeSequence: ((j['node_sequence'] ?? []) as List)
             .map((e) => QuestNode.fromJson(e as Map<String, dynamic>))
+            .toList(),
+        prologue: ((j['prologue'] ?? []) as List)
+            .map((e) => PrologueLine.fromJson(e as Map<String, dynamic>))
             .toList(),
       );
 

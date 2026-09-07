@@ -12,6 +12,7 @@ import 'package:flutter/material.dart';
 
 import '../models/scenario.dart';
 import '../session.dart';
+import '../store.dart';
 import '../theme.dart';
 import 'scenario_screen.dart';
 
@@ -39,7 +40,40 @@ class _PrologueScreenState extends State<PrologueScreen> {
 
   static const _npcEntersAt = 12;
 
-  static const _lines = <_Line>[
+  late final List<_Line> _lines = _linesFrom(widget.scenario.prologue);
+
+  /// 서버 생성 프롤로그(코스별 지역·첫 장소 반영)를 화면 대본으로 변환.
+  /// 비어있거나(구버전 캐시) 형식이 안 맞으면 기존 정적 대본으로 폴백.
+  static List<_Line> _linesFrom(List<PrologueLine> raw) {
+    if (raw.isEmpty) return _fallbackLines;
+    try {
+      return raw
+          .map((l) => _Line(
+                _speakerOf(l.speaker),
+                l.text,
+                beat: l.speaker == 'beat' ? _beatOf(l.beat) : null,
+              ))
+          .toList();
+    } catch (_) {
+      return _fallbackLines;
+    }
+  }
+
+  static _Speaker _speakerOf(String v) => switch (v) {
+        'npc' => _Speaker.npc,
+        'player' => _Speaker.player,
+        'beat' => _Speaker.beat,
+        _ => _Speaker.narration,
+      };
+
+  static _Beat _beatOf(String? v) => switch (v) {
+        'reveal' => _Beat.reveal,
+        'recoil' => _Beat.recoil,
+        'longing' => _Beat.longing,
+        _ => _Beat.reach,
+      };
+
+  static const _fallbackLines = <_Line>[
     _Line(_Speaker.narration, '{name}는 종로를 지나던 평범한 사람이다.'),
     _Line(_Speaker.narration, '오래된 골목길을 걷던 중, 낡은 담장 아래에서 희미하게 흔들리는 푸른빛을 발견한다.'),
     _Line(_Speaker.narration, '처음에는 누군가 떨어뜨린 조명이나 반사광이라고 생각한다.'),
@@ -86,7 +120,7 @@ class _PrologueScreenState extends State<PrologueScreen> {
   }
 
   Future<void> _finish() async {
-    await Session.markPrologueSeen();
+    await ScenarioStore.I.markPrologueSeen(widget.scenario.scenarioId);
     if (!mounted) return;
     Navigator.pushReplacement(context,
         MaterialPageRoute(builder: (_) => ScenarioScreen(scenario: widget.scenario)));

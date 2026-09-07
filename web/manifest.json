@@ -1,6 +1,6 @@
 {
-    "name": "dokkaebi_app",
-    "short_name": "dokkaebi_app",
+    "name": "도깨비: 팔도의 비밀",
+    "short_name": "도깨비",
     "start_url": ".",
     "display": "standalone",
     "background_color": "#0175C2",

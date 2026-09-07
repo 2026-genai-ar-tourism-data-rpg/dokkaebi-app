@@ -10,7 +10,7 @@ import 'package:flutter/material.dart';
 
 import '../models/explore_draft.dart';
 import '../models/scenario.dart';
-import '../session.dart';
+import '../store.dart';
 import '../theme.dart';
 import '../widgets/ui.dart';
 import 'prologue_screen.dart';
@@ -26,7 +26,7 @@ class ScenarioPreviewScreen extends StatelessWidget {
       .fold(0.0, (a, b) => a + b);
 
   void _startExploring(BuildContext context) {
-    final target = Session.prologueSeen
+    final target = ScenarioStore.I.prologueSeenOf(scenario.scenarioId)
         ? ScenarioScreen(scenario: scenario)
         : PrologueScreen(scenario: scenario);
     Navigator.of(context).pushAndRemoveUntil(
@@ -106,13 +106,13 @@ class ScenarioPreviewScreen extends StatelessWidget {
                     style: OutlinedButton.styleFrom(
                       minimumSize: const Size.fromHeight(52),
                       side: const BorderSide(color: AppColors.border),
+                      textStyle: const TextStyle(fontSize: 13),
                     ),
-                    child: const Text('내 취향으로 수정'),
+                    child: const Text('내 취향으로 수정', maxLines: 1, overflow: TextOverflow.ellipsis),
                   ),
                 ),
                 const SizedBox(width: 10),
                 Expanded(
-                  flex: 2,
                   child: FilledButton(
                     onPressed: () => _startExploring(context),
                     child: const Text('탐험 시작'),
