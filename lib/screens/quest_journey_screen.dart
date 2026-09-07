@@ -44,6 +44,7 @@ import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 
+import '../api/api_client.dart';
 import '../game/hint_ladder_controller.dart';
 import '../game/player_state.dart';
 import '../game/location_service.dart';
@@ -111,7 +112,16 @@ class QuestJourneyScreen extends StatefulWidget {
   final LocationService locationService;
 
   final Scenario? scenario;
-  const QuestJourneyScreen({super.key, this.scenario, this.locationService = const LocationService()});
+
+  /// 대화(A/B 선택지 답변)에 쓸 API 클라이언트. 테스트가 MockClient로 갈아끼운다.
+  final ApiClient? apiClient;
+
+  const QuestJourneyScreen({
+    super.key,
+    this.scenario,
+    this.locationService = const LocationService(),
+    this.apiClient,
+  });
   @override
   State<QuestJourneyScreen> createState() => _QuestJourneyScreenState();
 }
@@ -123,6 +133,11 @@ class _QuestJourneyScreenState extends State<QuestJourneyScreen> with TickerProv
   int budget = 20000, hours = 2;
   String? flag;
   int dlgStep = 0;
+  late final ApiClient _api = widget.apiClient ?? ApiClient();
+  // A/B("사연이오?"/"보상은?")는 dialogueTurn으로 실제 장소 정보를 물어 받는다.
+  // C(바로 진행)는 안 물어보므로 대상 없음. 실패하면 _npcLines 고정 문구로 폴백.
+  bool _dialogueLoading = false;
+  String? _liveAnswer;
   String quizState = 'idle';
   int fragments = 0, coupon = 0, spent = 0, exp = 0, brush = 3;
   late List<Map<String, dynamic>> enemies = [
@@ -514,6 +529,41 @@ class _QuestJourneyScreenState extends State<QuestJourneyScreen> with TickerProv
     pstate.applyAll(refs);
     final s = widget.scenario;
     if (s != null) await ScenarioStore.I.grant(s.scenarioId, refs);
+  }
+
+  /// A/B/C 선택 — 플래그·보상은 원래대로 고정이고(엔딩 분기가 여기 걸려 있다),
+  /// A/B(정보를 묻는 선택)만 실제 도깨비 대화(dialogueTurn)로 답을 받는다.
+  /// C는 안 물어보는 선택이라 API를 안 탄다. 실패하면 _npcLines 고정 문구로 폴백.
+  Future<void> _pickChoice(String letter, String question, List<StateRef> refs,
+      {VoidCallback? extra}) async {
+    extra?.call();
+    if (question.isEmpty) {
+      setState(() { flag = letter; dlgStep = 1; });
+      await _applyChoice(refs);
+      return;
+    }
+    setState(() { flag = letter; _dialogueLoading = true; });
+    final node = _curNode;
+    String? answer;
+    if (node != null) {
+      try {
+        final t = await _api.dialogueTurn(
+          nodeId: node.nodeId,
+          nodeName: node.name,
+          fragmentId: node.fragmentId,
+          regionId: widget.scenario?.region,
+          history: [{'role': 'me', 'text': question}],
+          kind: node.kind,
+          playerState: {'progress': fragments, 'required': _stoneTotal},
+        );
+        answer = t.response.isNotEmpty ? t.response : null;
+      } catch (_) {
+        answer = null; // 실패 → 아래에서 고정 문구로 폴백
+      }
+    }
+    if (!mounted) return;
+    setState(() { _liveAnswer = answer; _dialogueLoading = false; dlgStep = 1; });
+    await _applyChoice(refs);
   }
 
   /// 피날레 마감 — 조각 복원 + **엔딩 분기**(3절 규칙 3조: 플래그는 여기서만 지불).
@@ -1368,9 +1418,10 @@ class _QuestJourneyScreenState extends State<QuestJourneyScreen> with TickerProv
 
   Widget _dialogueScreen() {
     // 실제 코스면 AI가 이 노드용으로 지은 대사를 쓰고, 데모(코스 데이터 없음)면 시안 대사로.
+    // dlgStep==1의 답변도 마찬가지 — dialogueTurn이 준 실제 답이 있으면 그걸, 없으면(데모·실패) 고정 문구.
     final npcLine = dlgStep == 0
         ? (_curNode?.npcDialogue.isNotEmpty == true ? _curNode!.npcDialogue : _npcLines[0]!)
-        : _npcLines[flag]!;
+        : (_liveAnswer ?? _npcLines[flag]!);
     return Container(
       decoration: BoxDecoration(gradient: _dialBg),
       child: LayoutBuilder(builder: (ctx, box) {
@@ -1394,7 +1445,13 @@ class _QuestJourneyScreenState extends State<QuestJourneyScreen> with TickerProv
                   border: Border.all(color: _goldDim.withOpacity(0.55), width: 1.5),
                   boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.6), blurRadius: 40, offset: const Offset(0, 14))],
                 ),
-                child: Text(npcLine, style: dokkaebiTitle(size: 16, color: _cream, height: 1.65)),
+                child: _dialogueLoading
+                    ? const Padding(
+                        padding: EdgeInsets.symmetric(vertical: 4),
+                        child: SizedBox(
+                            width: 22, height: 22,
+                            child: CircularProgressIndicator(strokeWidth: 2.4, color: _gold)))
+                    : Text(npcLine, style: dokkaebiTitle(size: 16, color: _cream, height: 1.65)),
               ),
               Positioned(top: -14, left: 16, child: Container(
                 padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 5),
@@ -1402,13 +1459,21 @@ class _QuestJourneyScreenState extends State<QuestJourneyScreen> with TickerProv
                 child: Text(_npcName, style: const TextStyle(color: Color(0xFFFDF6E6), fontSize: 13, fontWeight: FontWeight.w900)),
               )),
             ]),
-            if (dlgStep == 0) ...[
+            if (dlgStep == 0 && !_dialogueLoading) ...[
               const SizedBox(height: 10),
-              _choiceRow('A', _tealDeep, const Color(0xFFEAFFF9), '"그게 무슨 사연이오?"', '친밀도+', _teal, () { setState(() { flag = 'A'; dlgStep = 1; }); _applyChoice([const StateRef(kind: StateKind.flag, value: '호기심'), const StateRef(kind: StateKind.affinity, value: '', amount: 1)]); }),
+              _choiceRow('A', _tealDeep, const Color(0xFFEAFFF9), '"그게 무슨 사연이오?"', '친밀도+', _teal,
+                  () => _pickChoice('A', '그게 무슨 사연이오? 이곳에 얽힌 이야기가 궁금하오.',
+                      [const StateRef(kind: StateKind.flag, value: '호기심'), const StateRef(kind: StateKind.affinity, value: '', amount: 1)])),
               const SizedBox(height: 8),
-              _choiceRow('B', _goldDim, _parchInk, '"보상은 무엇이오?"', '쿠폰+100', _gold, () { setState(() { flag = 'B'; dlgStep = 1; coupon += 100; }); _applyChoice([const StateRef(kind: StateKind.flag, value: '실리'), const StateRef(kind: StateKind.coupon, value: '', amount: 100)]); }),
+              _choiceRow('B', _goldDim, _parchInk, '"보상은 무엇이오?"', '쿠폰+100', _gold,
+                  () => _pickChoice('B', '이 조각을 찾으면 무슨 보상이 있소?',
+                      [const StateRef(kind: StateKind.flag, value: '실리'), const StateRef(kind: StateKind.coupon, value: '', amount: 100)],
+                      extra: () => coupon += 100)),
               const SizedBox(height: 8),
-              _choiceRow('C', const Color(0xFF3A352E), _soft, '"그냥 빨리 찾겠소."', '바로 진행', _muted, () { setState(() { flag = 'C'; dlgStep = 1; }); _applyChoice([const StateRef(kind: StateKind.flag, value: '실속')]); }),
+              _choiceRow('C', const Color(0xFF3A352E), _soft, '"그냥 빨리 찾겠소."', '바로 진행', _muted,
+                  () => _pickChoice('C', '', [const StateRef(kind: StateKind.flag, value: '실속')])),
+            ] else if (dlgStep == 0 && _dialogueLoading) ...[
+              const SizedBox(height: 4),
             ] else ...[
               const SizedBox(height: 10),
               // 퀴즈가 없는 노드(대부분의 미션 타입)는 시험을 건너뛰고 지령으로.

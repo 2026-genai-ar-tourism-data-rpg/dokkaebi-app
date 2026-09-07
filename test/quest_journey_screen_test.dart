@@ -19,12 +19,17 @@
 //            미션 타입 → 스테이지 매핑과 노드 퀴즈·NPC 사용을 검증한다.
 // 구현일: 2026-08-22 | 작성: kys (play-path-unify/kys/v1)
 // ============================================================
+import 'dart:convert';
+
+import 'package:dokkaebi_app/api/api_client.dart';
 import 'package:dokkaebi_app/models/scenario.dart';
 import 'package:dokkaebi_app/screens/quest_journey_screen.dart';
 import 'package:dokkaebi_app/store.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:google_fonts/google_fonts.dart';
+import 'package:http/http.dart' as http;
+import 'package:http/testing.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 const sid = 'jongno_1';
@@ -91,16 +96,16 @@ Scenario _jongno() => Scenario.fromJson({
       ],
     });
 
-Future<void> _pump(WidgetTester tester, Scenario? sc) async {
-  await tester.pumpWidget(MaterialApp(home: QuestJourneyScreen(scenario: sc)));
+Future<void> _pump(WidgetTester tester, Scenario? sc, {ApiClient? apiClient}) async {
+  await tester.pumpWidget(MaterialApp(home: QuestJourneyScreen(scenario: sc, apiClient: apiClient)));
   await tester.pump(const Duration(milliseconds: 400));
 }
 
 /// 챕터 목록이 그려지는 화면(map)까지 진행.
 /// app#26에서 '새 여정 꾸리기(setup)' 화면이 사라지고 map이 첫 화면이 됐다 —
 /// 예전에는 여기서 '도깨비에게 길 묻기'를 눌러 넘어갔다(그 버튼은 이제 없다).
-Future<void> _toMap(WidgetTester tester, Scenario? sc) async {
-  await _pump(tester, sc);
+Future<void> _toMap(WidgetTester tester, Scenario? sc, {ApiClient? apiClient}) async {
+  await _pump(tester, sc, apiClient: apiClient);
   await tester.pump(const Duration(milliseconds: 500));
 }
 
@@ -335,9 +340,9 @@ void main() {
         });
 
     /// 챕터 지도 → GPS 이동 → 도착 인증 → 소환 → "말 걸기"까지 실제로 눌러서 진행.
-    Future<void> _toDialogue(WidgetTester tester, Scenario? sc) async {
+    Future<void> _toDialogue(WidgetTester tester, Scenario? sc, {ApiClient? apiClient}) async {
       if (sc != null) await ScenarioStore.I.add(sc);
-      await _toMap(tester, sc);
+      await _toMap(tester, sc, apiClient: apiClient);
 
       await tester.tap(find.text('이동 시작 — GPS 추적'));
       await tester.pump();
@@ -366,6 +371,46 @@ void main() {
       await _toDialogue(tester, null);
       expect(tester.takeException(), isNull);
       expect(find.textContaining('운현궁에 발을 들였구나'), findsOneWidget);
+    });
+
+    // 선택지 자체(A/B/C)·플래그·쿠폰·엔딩 분기는 그대로 유지 — A/B("사연이오?"/"보상은?")를
+    // 골랐을 때 NPC의 답변만 dialogueTurn(실제 도깨비 대화 엔진)으로 받아온다.
+    testWidgets('선택지 A를 고르면 dialogueTurn이 준 실제 답을 보여준다', (tester) async {
+      final client = MockClient((req) async {
+        if (req.url.path.endsWith('/v1/dialogue/turn')) {
+          return http.Response(
+            jsonEncode({
+              'response': '허허, 이곳 동백섬은 옛적 도깨비들이 모여 쉬던 자리였다느니라.',
+              'choices': [], 'grants': [], 'done': false,
+            }),
+            200,
+            headers: {'content-type': 'application/json; charset=utf-8'},
+          );
+        }
+        return http.Response('{}', 200);
+      });
+
+      await _toDialogue(tester, _busan(), apiClient: ApiClient(client: client));
+      await tester.tap(find.text('"그게 무슨 사연이오?"'));
+      await tester.pump(); // _dialogueLoading = true, 선택지 숨김
+      await tester.pump(const Duration(milliseconds: 50)); // dialogueTurn 응답 대기
+
+      expect(tester.takeException(), isNull);
+      expect(find.textContaining('옛적 도깨비들이 모여 쉬던 자리'), findsOneWidget);
+      // 원래 고정 답변(폴백 문구)으로 안 떨어졌는지 확인.
+      expect(find.textContaining('마음이 곧은 자로군'), findsNothing);
+    });
+
+    testWidgets('dialogueTurn이 실패하면 기존 고정 답변으로 폴백한다', (tester) async {
+      final client = MockClient((req) async => http.Response('서버 오류', 500));
+
+      await _toDialogue(tester, _busan(), apiClient: ApiClient(client: client));
+      await tester.tap(find.text('"그게 무슨 사연이오?"'));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 50));
+
+      expect(tester.takeException(), isNull);
+      expect(find.textContaining('마음이 곧은 자로군'), findsOneWidget);
     });
   });
 }
