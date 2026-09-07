@@ -1358,15 +1358,19 @@ class _QuestJourneyScreenState extends State<QuestJourneyScreen> with TickerProv
   // ════════════════════════════════════════════════════
   // 5. DIALOGUE — 분기 대화
   // ════════════════════════════════════════════════════
+  // 데모(코스 데이터 없음, _curNode==null) 전용 폴백 대사 — 종로 시안 그대로.
   static const _npcLines = {
     0: '"허허, 운현궁에 발을 들였구나. 흥선대원군의 사저에… 세종 임금의 글씨 한 조각이 먹물 속으로 숨어버렸느니라. 자네, 글을 아끼는 자인가?"',
-    'A': '"훈민정음이 흩어졌느니, 백성의 글이 잠들었지. 마음이 곧은 자로구나." (친밀도 +1)',
-    'B': '"허허, 셈부터 빠르구나. 글씨엔 옛 기록의 힘이 깃들었지." (이후 쿠폰 +100원)',
+    'A': '"허허, 사연이 궁금한 게로구나. 마음이 곧은 자로군." (친밀도 +1)',
+    'B': '"허허, 셈부터 빠르구나. 이 조각엔 옛 기억의 힘이 깃들었지." (이후 쿠폰 +100원)',
     'C': '"성격 급한 게로구나. 그럼 따라오너라."',
   };
 
   Widget _dialogueScreen() {
-    final npcLine = dlgStep == 0 ? _npcLines[0]! : _npcLines[flag]!;
+    // 실제 코스면 AI가 이 노드용으로 지은 대사를 쓰고, 데모(코스 데이터 없음)면 시안 대사로.
+    final npcLine = dlgStep == 0
+        ? (_curNode?.npcDialogue.isNotEmpty == true ? _curNode!.npcDialogue : _npcLines[0]!)
+        : _npcLines[flag]!;
     return Container(
       decoration: BoxDecoration(gradient: _dialBg),
       child: LayoutBuilder(builder: (ctx, box) {

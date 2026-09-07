@@ -302,4 +302,70 @@ void main() {
       expect(find.text('걷는 중…'), findsOneWidget);
     });
   });
+
+  // NPC 이름(_npcName)은 이미 노드 데이터를 쓰는데 말풍선(_npcLines)은 종로 시안
+  // "운현궁" 대사가 고정으로 박혀 있었다 — 이름은 맞는데 내용이 딴 지역 얘기였다.
+  group('첫 대사 (dialogue)', () {
+    Map<String, dynamic> _dialogueNode(String id, String name,
+            {String npcDialogue = '', bool finale = false}) =>
+        {
+          'node_id': id,
+          'name': name,
+          'kind': 'spot',
+          'fragment_id': 'frag_$id',
+          'grants': const [],
+          'requires': const [],
+          'requires_mode': 'none',
+          'is_finale': finale,
+          'map_x': 129.16,
+          'map_y': 35.16,
+          'dist_m': 550,
+          'npc_dialogue': npcDialogue,
+          'mission': {'type': 'RESTORE_AR', 'order': '$name에서 조각을 찾아라', 'hints': const []},
+        };
+
+    Scenario _busan() => Scenario.fromJson({
+          'scenario_id': 'busan_dialogue_test',
+          'title': '해운대구의 기억석',
+          'region': '해운대구',
+          'node_sequence': [
+            _dialogueNode('b1', '동백섬', npcDialogue: '"이곳 동백섬의 기운이 심상치 않구나. 살펴보거라."'),
+            _dialogueNode('b2', '해운대해수욕장', finale: true),
+          ],
+        });
+
+    /// 챕터 지도 → GPS 이동 → 도착 인증 → 소환 → "말 걸기"까지 실제로 눌러서 진행.
+    Future<void> _toDialogue(WidgetTester tester, Scenario? sc) async {
+      if (sc != null) await ScenarioStore.I.add(sc);
+      await _toMap(tester, sc);
+
+      await tester.tap(find.text('이동 시작 — GPS 추적'));
+      await tester.pump();
+      await tester.tap(find.text('걷기 시작 (GPS 시뮬레이션)'));
+      // gpsDist 550 → 48/tick(130ms)씩 감소, 30 이하까지 넉넉히 펌프.
+      await tester.pump(const Duration(milliseconds: 1600));
+
+      await tester.tap(find.text('GPS 도착 인증'));
+      await tester.pump(); // screen='summon', summonPhase='scan'
+      await tester.pump(const Duration(milliseconds: 1600)); // summonTimer(1500ms) → 'appear'
+
+      await tester.tap(find.text('말 걸기'));
+      await tester.pump();
+    }
+
+    testWidgets('실제 코스 노드는 AI가 지은 대사를 보여준다 — 운현궁이 아니다', (tester) async {
+      await _toDialogue(tester, _busan());
+      expect(tester.takeException(), isNull);
+      expect(find.textContaining('동백섬의 기운이 심상치 않구나'), findsOneWidget);
+      // 말풍선이 고정 종로 대사로 안 돌아갔는지(헤더 라벨 "운현궁 · 첫 번째 기억"은
+      // 이 버그와 무관한 별개 하드코딩이라 여기서는 안 건드린다).
+      expect(find.textContaining('허허, 운현궁에 발을 들였구나'), findsNothing);
+    });
+
+    testWidgets('데모 모드(코스 데이터 없음)는 기존 시안 대사로 폴백한다', (tester) async {
+      await _toDialogue(tester, null);
+      expect(tester.takeException(), isNull);
+      expect(find.textContaining('운현궁에 발을 들였구나'), findsOneWidget);
+    });
+  });
 }
