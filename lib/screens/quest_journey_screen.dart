@@ -1404,7 +1404,7 @@ class _QuestJourneyScreenState extends State<QuestJourneyScreen> with TickerProv
             ]),
             if (dlgStep == 0) ...[
               const SizedBox(height: 10),
-              _choiceRow('A', _tealDeep, const Color(0xFFEAFFF9), '"세종대왕의 글씨라니, 무슨 일이오?"', '친밀도+', _teal, () { setState(() { flag = 'A'; dlgStep = 1; }); _applyChoice([const StateRef(kind: StateKind.flag, value: '호기심'), const StateRef(kind: StateKind.affinity, value: '', amount: 1)]); }),
+              _choiceRow('A', _tealDeep, const Color(0xFFEAFFF9), '"그게 무슨 사연이오?"', '친밀도+', _teal, () { setState(() { flag = 'A'; dlgStep = 1; }); _applyChoice([const StateRef(kind: StateKind.flag, value: '호기심'), const StateRef(kind: StateKind.affinity, value: '', amount: 1)]); }),
               const SizedBox(height: 8),
               _choiceRow('B', _goldDim, _parchInk, '"보상은 무엇이오?"', '쿠폰+100', _gold, () { setState(() { flag = 'B'; dlgStep = 1; coupon += 100; }); _applyChoice([const StateRef(kind: StateKind.flag, value: '실리'), const StateRef(kind: StateKind.coupon, value: '', amount: 100)]); }),
               const SizedBox(height: 8),
