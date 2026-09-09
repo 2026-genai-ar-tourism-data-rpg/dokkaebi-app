@@ -4,6 +4,11 @@
 // 구현(요약): 장소 검색(자동완성) + 취향 태그 선택 + 건너뛰기.
 //            ⚠️ "지도에서 선택하기"는 실제 지도 SDK 미구현 — 탭하면 준비중 안내만.
 // 구현일: 2026-08-05 | 작성: Claude · 시안: dokkaebi-ai/docs/images/04-wishlist.png
+// ------------------------------------------------------------
+// [v2] "지도에서 선택하기" 버튼 제거.
+// 구현(요약): 위시리스트 항목은 관광공사 데이터(content_id)가 있는 실제 장소여야 해서
+//            지도에서 아무 곳이나 찍는 방식과는 안 맞는다. 장소 검색으로 충분해 버튼째 삭제.
+// 구현일: 2026-09-09 | 작성: ljs (remove-map-select/ljs/v1)
 // ============================================================
 import 'dart:async';
 
@@ -84,12 +89,6 @@ class _ExplorePlaceScreenState extends State<ExplorePlaceScreen> {
     });
   }
 
-  void _onMapSelectTap() {
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(content: Text('지도에서 선택하기는 준비 중입니다 — 장소 검색을 이용해 주세요.')),
-    );
-  }
-
   Future<void> _skip() async {
     final ok = await showDialog<bool>(
       context: context,
@@ -148,16 +147,6 @@ class _ExplorePlaceScreenState extends State<ExplorePlaceScreen> {
                           : null,
                     ),
                   ),
-                  const SizedBox(height: 10),
-                  OutlinedButton.icon(
-                    onPressed: _onMapSelectTap,
-                    icon: const Icon(Icons.map_outlined, size: 18),
-                    label: const Text('지도에서 선택하기'),
-                    style: OutlinedButton.styleFrom(
-                      minimumSize: const Size.fromHeight(48),
-                      side: const BorderSide(color: AppColors.border),
-                    ),
-                  ),
                   if (_searchError != null)
                     Padding(
                       padding: const EdgeInsets.only(top: 8),
@@ -194,7 +183,7 @@ class _ExplorePlaceScreenState extends State<ExplorePlaceScreen> {
                         border: Border.all(color: AppColors.border),
                         borderRadius: BorderRadius.circular(12),
                       ),
-                      child: const Text('장소를 검색하거나 지도에서 선택해 주세요',
+                      child: const Text('장소를 검색해 주세요',
                           style: TextStyle(color: AppColors.textMuted, fontSize: 13)),
                     )
                   else
