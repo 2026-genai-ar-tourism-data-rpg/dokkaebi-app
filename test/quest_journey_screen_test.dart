@@ -25,6 +25,10 @@
 //            장소·개발자 옵션(장소 좌표 전송)·조각 기록 시 재인증 없음·지도 카드 실제 거리를 검증.
 //            코스 없는 데모 모드는 시뮬레이션 그대로라 기존 시뮬레이션 테스트는 데모로 옮겼다.
 // 구현일: 2026-09-12 | 작성: ljs (mission-strategy-routing/ljs/v1)
+// ------------------------------------------------------------
+// [v5] 위치 권한이 꺼져 있을 때 — 이미 인증한 장소도 권한은 확인(좌표는 안 읽음), 권한 경고엔
+//      설정 열기, 지도 카드는 "위치 권한 필요". 실기기에서 권한을 끄고 같은 장소가 그냥 통과한 회귀.
+// 구현일: 2026-09-12 | 작성: ljs (mission-strategy-routing/ljs/v1)
 // ============================================================
 import 'dart:convert';
 
@@ -51,6 +55,11 @@ class _StubLocation extends LocationService {
 
   @override
   Future<LocationResult> current({Duration timeout = const Duration(seconds: 15)}) async => result;
+
+  /// 권한·서비스 확인 — 신호 없음(timeout)은 권한 문제가 아니므로 통과로 본다.
+  @override
+  Future<LocationFailure?> checkAccess() async =>
+      result.failure == LocationFailure.timeout ? null : result.failure;
 }
 
 /// 노드 좌표(_stone: 37.57, 126.98) 바로 그 자리.
@@ -730,6 +739,57 @@ void main() {
       expect(find.textContaining('까지 1.1km'), findsOneWidget);
       expect(find.textContaining('까지 550m'), findsNothing,
           reason: '코스 출발점 기준 거리(dist_m)가 남아 있다');
+    });
+
+    // 실기기 재현: 도착 인증 → iOS 설정에서 위치 권한 끔(앱 강제 종료) → 다시 열어 같은 장소 도착 인증
+    // → 서버에 인증 기록이 있어 위치를 안 보고 통과했다. 권한은 확인하고, 좌표는 읽지 않는다.
+    testWidgets('이미 인증한 장소라도 위치 권한이 막혀 있으면 설정 열기를 보여주고 멈춘다', (tester) async {
+      final sc = quizCourse();
+      await ScenarioStore.I.setRunId(sc.scenarioId, 'r1'); // 앱이 다시 열려 같은 run을 되살린 상황
+      final server = _FakeQuestServer(scenarioId: sc.scenarioId, verifiedNodeIds: const ['q1']);
+      await _tapArrival(tester, sc, server,
+          location: const _StubLocation(LocationResult.fail(LocationFailure.deniedForever)));
+      await tester.pump(const Duration(milliseconds: 1600));
+
+      expect(find.textContaining('위치 권한이 막혀'), findsOneWidget);
+      expect(find.text('설정 열기'), findsOneWidget);
+      expect(find.text('다시 확인'), findsOneWidget);
+      expect(find.text('말 걸기'), findsNothing);
+      expect(server.count('verify-location'), 0);
+    });
+
+    testWidgets('이미 인증한 장소는 권한만 켜져 있으면 GPS 신호가 없어도 진행한다', (tester) async {
+      final sc = quizCourse();
+      await ScenarioStore.I.setRunId(sc.scenarioId, 'r1');
+      final server = _FakeQuestServer(scenarioId: sc.scenarioId, verifiedNodeIds: const ['q1']);
+      await _tapArrival(tester, sc, server, location: _noFix);
+      await tester.pump(const Duration(milliseconds: 1600));
+
+      expect(server.count('verify-location'), 0);
+      expect(find.text('말 걸기'), findsOneWidget);
+    });
+
+    testWidgets('이동 화면에 위치 권한 경고가 뜨면 설정 열기도 함께 보여준다', (tester) async {
+      final sc = quizCourse();
+      final server = _FakeQuestServer(scenarioId: sc.scenarioId);
+      await ScenarioStore.I.add(sc);
+      await _toMap(tester, sc,
+          runSession: server.session(),
+          location: const _StubLocation(LocationResult.fail(LocationFailure.deniedForever)));
+      await tester.tap(find.text('이동 시작 — GPS 추적'));
+      await tester.pump(const Duration(milliseconds: 50));
+
+      expect(find.textContaining('위치 권한이 막혀'), findsOneWidget, reason: '같은 경고가 두 번 뜨면 안 된다');
+      expect(find.text('설정 열기'), findsOneWidget,
+          reason: '도착 인증을 누르기 전에도 권한 경고에 행동 버튼이 있어야 한다');
+    });
+
+    testWidgets('위치 권한이 막혀 있으면 지도 카드에 위치 설정 필요로 보인다', (tester) async {
+      await _toMap(tester, _course(3),
+          location: const _StubLocation(LocationResult.fail(LocationFailure.deniedForever)));
+
+      expect(find.textContaining('위치 설정 필요'), findsOneWidget);
+      expect(find.textContaining('거리 확인 중'), findsNothing);
     });
   });
 }

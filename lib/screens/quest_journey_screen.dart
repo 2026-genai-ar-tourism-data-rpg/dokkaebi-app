@@ -1,4 +1,14 @@
 // ============================================================
+// [v6] 위치 권한이 꺼져 있으면 이미 도착 인증한 장소도 멈춘다 + 권한 경고에 설정 열기.
+// 구현(요약): 실기기에서 도착 인증 → iOS 설정에서 위치 권한 끔(앱 강제 종료) → 다시 열어 같은 장소
+//            도착 인증을 누르니 그대로 진행됐다. 서버에 인증 기록이 있으면 위치를 전혀 보지 않고
+//            통과시켰기 때문이다. 이제 이미 인증한 장소는 서버 재판정 없이 위치 권한·위치 서비스만
+//            확인한다(LocationService.checkAccess — 좌표는 안 읽어 실내 신호 약함엔 막히지 않음).
+//            거리 갱신 중 권한·서비스 문제가 보이면 도착 인증 전에도 설정 열기를 주고, 지도 카드는
+//            "거리 확인 중"에 머물지 않고 "위치 설정 필요/위치 확인 불가"로 보여준다.
+//            같은 경고가 거리 줄과 안내에 두 번 뜨던 것도 한 번으로 줄였다.
+// 구현일: 2026-09-12 | 작성: ljs (mission-strategy-routing/ljs/v1)
+// ------------------------------------------------------------
 // [v5] 이동 단계를 실제 GPS 도착 인증으로 — 걷기 시뮬레이션·조각 기록 시점 위치 확인 제거.
 // 구현(요약): 이동 화면이 걷기 애니메이션으로 거리를 줄이고 "GPS 도착 인증"은 위치 확인 없이
 //            통과했다. 실제 위치는 미션을 끝내고 조각을 기록할 때만 확인해, 그 자리에 없으면
@@ -180,6 +190,9 @@ class _QuestJourneyScreenState extends State<QuestJourneyScreen> with TickerProv
 
   /// 현재 위치를 못 읽은 사유(권한·신호). 읽으면 null.
   String? _locError;
+
+  /// 위치를 못 읽은 이유가 앱 설정으로 가야 풀리는 것인지(권한 영구 거부·위치 서비스 꺼짐).
+  bool _locNeedsSettings = false;
   bool _locating = false; // 위치 읽기가 겹치지 않게
   Timer? _gpsPollTimer;
 
@@ -564,8 +577,10 @@ class _QuestJourneyScreenState extends State<QuestJourneyScreen> with TickerProv
         _liveDistNodeId = n.nodeId;
         _liveAccuracyM = loc.accuracyM;
         _locError = null;
+        _locNeedsSettings = false;
       } else {
         _locError = loc.message;
+        _locNeedsSettings = loc.needsSettings;
       }
     });
   }
@@ -581,22 +596,31 @@ class _QuestJourneyScreenState extends State<QuestJourneyScreen> with TickerProv
       setState(() => guidance = check);
       return;
     }
-    // 이미 도착 인증한 장소(재진입·앱 재시작)는 다시 묻지 않는다 — 서버 run 기록 기준.
-    if (_session.isVerified(t.node!.nodeId)) {
-      _verifyGps();
-      return;
-    }
     setState(() {
       _arriving = true;
       _arrivalFailure = null;
     });
-    final failure = await _requestArrival(t.node!);
+    // 이미 도착 인증한 장소(재진입·앱 재시작)는 서버에 다시 묻지 않는다 — 서버 run 기록 기준.
+    // 다만 위치 권한·위치 서비스는 확인한다(좌표는 안 읽어 실내 신호 약함엔 막히지 않는다).
+    final failure = _session.isVerified(t.node!.nodeId)
+        ? await _checkLocationAccess()
+        : await _requestArrival(t.node!);
     if (!mounted) return;
     setState(() {
       _arriving = false;
       _arrivalFailure = failure;
     });
     if (failure == null) _verifyGps();
+  }
+
+  /// 이미 도착 인증한 장소 — 위치 권한·위치 서비스만 확인한다. 쓸 수 있으면 null.
+  /// 디버그 빌드에서 개발자 옵션을 켜면 확인을 건너뛴다(이동 없이 테스트).
+  Future<_ArrivalFailure?> _checkLocationAccess() async {
+    if (kDebugMode && DebugFlags.skipGpsVerify) return null;
+    final denied = await widget.locationService.checkAccess();
+    if (denied == null) return null;
+    final result = LocationResult.fail(denied);
+    return (message: result.message, needsSettings: result.needsSettings, noCoords: false);
   }
 
   /// 서버에 도착 판정을 요청한다. 통과면 null, 아니면 실패 사유.
@@ -1391,8 +1415,10 @@ class _QuestJourneyScreenState extends State<QuestJourneyScreen> with TickerProv
     final collectPct = _stoneTotal == 0 ? 0.0 : fragments / _stoneTotal;
     // 실제 GPS 모드는 지금 위치 기준 거리(아직 못 읽었으면 확인 중), 데모는 시안 거리.
     final int? distM = _usesRealGps(t) ? _liveDistTo(t) : t.dist0;
-    final distText =
-        distM == null ? '📍 ${t.name} · 거리 확인 중' : '📍 ${t.name}까지 ${_distLabel(distM)}';
+    // 위치를 못 읽으면 "거리 확인 중"에 머물지 않고 이유를 짧게 — 설정으로 풀어야 하는지 구분한다.
+    final distText = distM != null
+        ? '📍 ${t.name}까지 ${_distLabel(distM)}'
+        : '📍 ${t.name} · ${_locError == null ? '거리 확인 중' : (_locNeedsSettings ? '위치 설정 필요' : '위치 확인 불가')}';
     return Container(
       padding: const EdgeInsets.fromLTRB(18, 16, 18, 16),
       decoration: BoxDecoration(
@@ -1474,8 +1500,9 @@ class _QuestJourneyScreenState extends State<QuestJourneyScreen> with TickerProv
         ? 0
         : (real ? math.min(1.0, radiusM / math.max(1, dist)) : 1 - dist / gpsT.dist0);
     final distLabel = dist == null ? '—' : _distLabel(dist);
+    // 위치를 못 읽은 사유 전문은 아래 안내에서 한 번만 보여준다 — 여기엔 짧게.
     final distNote = dist == null
-        ? (_locError ?? '위치를 확인하는 중')
+        ? (_locError == null ? '위치를 확인하는 중' : '위치 확인 불가')
         : '남음 · 걸어서 약 ${math.max(1, (dist / _walkMetersPerMinute).ceil())}분';
     final accuracyLabel = !real
         ? '정확도 ±8m'
@@ -1613,7 +1640,8 @@ class _QuestJourneyScreenState extends State<QuestJourneyScreen> with TickerProv
         bg: near ? _tealDeep : _parchInk,
         fg: near ? const Color(0xFFEAFFF9) : _cream,
       ),
-      if (failure != null && failure.needsSettings) ...[
+      // 설정 열기 — 도착 인증 실패뿐 아니라, 거리 갱신 중 권한·위치 서비스 문제가 보일 때도 준다.
+      if ((failure?.needsSettings ?? false) || (_locError != null && _locNeedsSettings)) ...[
         const SizedBox(height: 8),
         _cta('설정 열기', () => widget.locationService.openSettings(), bg: _bronze, fg: _cream),
       ],
