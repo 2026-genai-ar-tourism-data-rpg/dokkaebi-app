@@ -477,8 +477,8 @@ class _ScenarioScreenState extends State<ScenarioScreen> {
                   node: next,
                   // '탐험 시작'(첫 조각 진입, 식음 아님)은 "새 퀘스트 시작하기"와
                   // 같은 화면(QuestJourneyScreen)으로 보낸다 — 두 진입점을 하나로 동기화.
-                  // 피날레도 QuestJourneyScreen이 strategy 기준으로 처리한다(구 AR 검색
-                  // 화면은 strategy를 몰라 항상 "AR로 기억석 찾기"로 뭉뚱그려졌었다).
+                  // 피날레도 QuestJourneyScreen이 strategy 기준으로 처리한다(장소 단위 화면
+                  // QuestPlayScreen은 strategy를 몰라 항상 "AR로 기억석 찾기"로 뭉뚱그려졌었다).
                   onGo: !next.isFood
                       ? () => Navigator.push(context,
                           MaterialPageRoute(builder: (_) => QuestJourneyScreen(scenario: scn)))
@@ -525,8 +525,8 @@ class _ScenarioScreenState extends State<ScenarioScreen> {
                     isDone: done.contains(n.nodeId),
                     isNext: n.nodeId == next?.nodeId,
                     locked: n.requires.isNotEmpty && !scn.checkEntry(n, state).ok && n.isHardGated,
-                    // "다음 목표" 카드와 같은 규칙 — 지금 밟을 차례인 지점(next)만 새 화면으로
-                    // 보낸다. 이미 끝났거나 아직 먼 지점은 그대로 옛날 화면에서 훑어보게 둔다
+                    // "다음 목표" 카드와 같은 규칙 — 지금 밟을 차례인 지점(next)만 코스 진행 화면으로
+                    // 보낸다. 이미 끝났거나 아직 먼 지점은 그대로 장소 단위 화면(QuestPlayScreen)에서 훑어보게 둔다
                     // (QuestJourneyScreen은 특정 지점을 지정해 열 수 없고 항상 현재 진행
                     // 지점부터 시작한다 — 다른 지점을 열면 엉뚱한 지점이 뜬다).
                     onTap: (!n.isFood && n.nodeId == next?.nodeId)
