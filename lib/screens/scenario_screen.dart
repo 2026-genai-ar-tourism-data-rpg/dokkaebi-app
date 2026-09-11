@@ -475,9 +475,11 @@ class _ScenarioScreenState extends State<ScenarioScreen> {
               if (!allDone && next != null)
                 _NextTarget(
                   node: next,
-                  // '탐험 시작'(첫 조각 진입, 식음·피날레 아님)은 "새 퀘스트 시작하기"와
+                  // '탐험 시작'(첫 조각 진입, 식음 아님)은 "새 퀘스트 시작하기"와
                   // 같은 화면(QuestJourneyScreen)으로 보낸다 — 두 진입점을 하나로 동기화.
-                  onGo: (!next.isFood && !next.isFinale)
+                  // 피날레도 QuestJourneyScreen이 strategy 기준으로 처리한다(구 AR 검색
+                  // 화면은 strategy를 몰라 항상 "AR로 기억석 찾기"로 뭉뚱그려졌었다).
+                  onGo: !next.isFood
                       ? () => Navigator.push(context,
                           MaterialPageRoute(builder: (_) => QuestJourneyScreen(scenario: scn)))
                       : () => _play(next!, carried),
