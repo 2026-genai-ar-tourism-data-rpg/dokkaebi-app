@@ -27,7 +27,11 @@
 // 구현일: 2026-09-12 | 작성: ljs (mission-strategy-routing/ljs/v1)
 // ------------------------------------------------------------
 // [v5] 위치 권한이 꺼져 있을 때 — 이미 인증한 장소도 권한은 확인(좌표는 안 읽음), 권한 경고엔
-//      설정 열기, 지도 카드는 "위치 권한 필요". 실기기에서 권한을 끄고 같은 장소가 그냥 통과한 회귀.
+//      설정 열기, 지도 카드는 "위치 설정 필요". 실기기에서 권한을 끄고 같은 장소가 그냥 통과한 회귀.
+// 구현일: 2026-09-12 | 작성: ljs (mission-strategy-routing/ljs/v1)
+// ------------------------------------------------------------
+// [v6] 조각 기록(C1) — 서버 기록이 성공해야 확정·획득 팝업, 5xx는 다시 시도만, 403은 기록 없이 계속,
+//      좌표 없는 장소는 기록 시도 안 함, 연타해도 요청 1번, 피날레 기록 실패 시 엔딩으로 안 넘어감.
 // 구현일: 2026-09-12 | 작성: ljs (mission-strategy-routing/ljs/v1)
 // ============================================================
 import 'dart:convert';
@@ -99,6 +103,9 @@ class _FakeQuestServer {
   final int openRunStatus;
   final requests = <http.Request>[];
 
+  /// 조각 기록(collect) 응답 코드 — 테스트 도중 바꿔 "다시 시도" 성공을 흉내낸다.
+  int collectStatus = 200;
+
   /// 경로에 [part]가 들어간 요청 수.
   int count(String part) => requests.where((r) => r.url.path.contains(part)).length;
 
@@ -120,6 +127,11 @@ class _FakeQuestServer {
     if (path == '/v1/runs/r1') return _json(run);
     if (path.endsWith('/verify-location')) return _json(verdict);
     if (path.endsWith('/collect')) {
+      if (collectStatus == 403) {
+        return http.Response(jsonEncode({'message': '먼저 그 자리에 당도해야 하느니라. (GPS 미인증)'}), 403,
+            headers: {'content-type': 'application/json; charset=utf-8'});
+      }
+      if (collectStatus != 200) return http.Response('error', collectStatus);
       return _json({
         'fragment_id': 'frag',
         'collected': true,
@@ -790,6 +802,140 @@ void main() {
 
       expect(find.textContaining('위치 설정 필요'), findsOneWidget);
       expect(find.textContaining('거리 확인 중'), findsNothing);
+    });
+
+    // 계획 C1 — 조각은 서버 기록이 성공해야 확정된다(실패하면 공통 팝업으로 멈추고 다시 시도).
+    // 소환 화면에서 대화(C) → 시험 → 정답까지 진행해 "계속하기"만 남긴다.
+    Future<void> answerQuiz(WidgetTester tester) async {
+      await tester.tap(find.text('말 걸기'));
+      await tester.pump();
+      await tester.tap(find.text('"그냥 빨리 찾겠소."'));
+      await tester.pump();
+      await tester.tap(find.text('계속 — 도깨비의 시험'));
+      await tester.pump();
+      await tester.tap(find.text('별'));
+      await tester.pump();
+    }
+
+    Future<void> toQuizContinue(WidgetTester tester, Scenario sc, _FakeQuestServer server) async {
+      await _tapArrival(tester, sc, server);
+      await tester.pump(const Duration(milliseconds: 1600));
+      await answerQuiz(tester);
+    }
+
+    testWidgets('조각 기록 — 서버에 기록되어야 조각이 확정되고 획득 팝업이 뜬다', (tester) async {
+      final sc = quizCourse();
+      final server = _FakeQuestServer(scenarioId: sc.scenarioId);
+      await toQuizContinue(tester, sc, server);
+
+      await tester.tap(find.text('계속하기'));
+      await tester.pump(const Duration(milliseconds: 100));
+      await tester.pump(const Duration(milliseconds: 100));
+
+      expect(tester.takeException(), isNull);
+      expect(server.count('/collect'), 1);
+      expect(server.count('/complete'), 1);
+      expect(find.text('획 득'), findsOneWidget);
+      expect(ScenarioStore.I.doneOf(sc.scenarioId), ['q1']);
+    });
+
+    testWidgets('조각 기록 — 서버 5xx면 확정하지 않고 다시 시도만 준다, 다시 시도에 성공하면 확정', (tester) async {
+      final sc = quizCourse();
+      final server = _FakeQuestServer(scenarioId: sc.scenarioId)..collectStatus = 500;
+      await toQuizContinue(tester, sc, server);
+
+      await tester.tap(find.text('계속하기'));
+      await tester.pump(const Duration(milliseconds: 100));
+      await tester.pump(const Duration(milliseconds: 100));
+
+      expect(find.text('조각을 기록하지 못했느니라'), findsOneWidget);
+      expect(find.text('다시 시도'), findsOneWidget);
+      expect(find.text('기록 없이 계속'), findsNothing,
+          reason: '다시 해볼 만한 실패엔 기록 없이 계속을 주지 않는다');
+      expect(find.text('획 득'), findsNothing);
+      expect(ScenarioStore.I.doneOf(sc.scenarioId), isEmpty);
+
+      server.collectStatus = 200;
+      await tester.tap(find.text('다시 시도'));
+      await tester.pump(const Duration(milliseconds: 100));
+      await tester.pump(const Duration(milliseconds: 100));
+
+      expect(find.text('획 득'), findsOneWidget);
+      expect(ScenarioStore.I.doneOf(sc.scenarioId), ['q1']);
+    });
+
+    testWidgets('조각 기록 — 다시 해도 안 되는 실패(403)면 기록 없이 계속을 준다', (tester) async {
+      final sc = quizCourse();
+      final server = _FakeQuestServer(scenarioId: sc.scenarioId)..collectStatus = 403;
+      await toQuizContinue(tester, sc, server);
+
+      await tester.tap(find.text('계속하기'));
+      await tester.pump(const Duration(milliseconds: 100));
+      await tester.pump(const Duration(milliseconds: 100));
+      expect(find.textContaining('당도해야'), findsOneWidget);
+
+      await tester.tap(find.text('기록 없이 계속'));
+      await tester.pump(const Duration(milliseconds: 100));
+
+      expect(find.text('획 득'), findsOneWidget);
+      expect(server.count('/complete'), 0);
+      expect(ScenarioStore.I.doneOf(sc.scenarioId), ['q1']);
+    });
+
+    testWidgets('조각 기록 — 좌표 없는 장소를 건너뛰었으면 서버 기록을 시도하지 않는다', (tester) async {
+      final sc = quizCourse();
+      final server = _FakeQuestServer(
+          scenarioId: sc.scenarioId,
+          verdict: _verdict(verified: false, reason: 'NODE_HAS_NO_COORDS'));
+      await _tapArrival(tester, sc, server);
+      await tester.tap(find.text('위치 확인 없이 진행'));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 1600));
+      await answerQuiz(tester);
+
+      await tester.tap(find.text('계속하기'));
+      await tester.pump(const Duration(milliseconds: 100));
+      await tester.pump(const Duration(milliseconds: 100));
+
+      expect(server.count('/collect'), 0);
+      expect(server.count('/complete'), 0);
+      expect(find.text('획 득'), findsOneWidget);
+    });
+
+    testWidgets('조각 기록 — 기록 중에 버튼을 연타해도 서버 요청은 한 번이다', (tester) async {
+      final sc = quizCourse();
+      final server = _FakeQuestServer(scenarioId: sc.scenarioId);
+      await toQuizContinue(tester, sc, server);
+
+      await tester.tap(find.text('계속하기'));
+      await tester.tap(find.text('계속하기'), warnIfMissed: false);
+      await tester.pump(const Duration(milliseconds: 100));
+      await tester.pump(const Duration(milliseconds: 100));
+
+      expect(server.count('/collect'), 1);
+      expect(server.count('/complete'), 1);
+    });
+
+    testWidgets('조각 기록 — 피날레 기록이 실패하면 엔딩으로 넘어가지 않는다', (tester) async {
+      final sc = Scenario.fromJson({
+        'scenario_id': 'finale_only',
+        'title': '종로구의 기억석',
+        'region': '종로구',
+        'node_sequence': [_stone('f1', '광화문', finale: true)],
+      });
+      final server = _FakeQuestServer(scenarioId: sc.scenarioId)..collectStatus = 500;
+      await _tapArrival(tester, sc, server);
+      await tester.pump(const Duration(milliseconds: 1600)); // 수호 정령 소환 → 'appear'
+      await tester.tap(find.text('말 걸기'));
+      await tester.pump();
+
+      await tester.tap(find.text('"백성을 위한 글이었군요."'));
+      await tester.pump(const Duration(milliseconds: 100));
+      await tester.pump(const Duration(milliseconds: 100));
+
+      expect(find.text('조각을 기록하지 못했느니라'), findsOneWidget);
+      expect(find.text('처음부터 다시'), findsNothing, reason: '엔딩 화면으로 넘어가면 안 된다');
+      expect(ScenarioStore.I.endingOf(sc.scenarioId), isNull);
     });
   });
 }

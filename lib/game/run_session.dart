@@ -16,6 +16,12 @@
 //            · 완료된 run도 그대로 되살린다(완료한 코스는 서버에도 완료로 남긴다)
 //            · 같은 코스 start가 겹치면 요청 하나를 같이 기다린다(run 중복 생성 방지)
 // 구현일: 2026-09-12 | 작성: ljs (mission-strategy-routing/ljs/v1)
+// ------------------------------------------------------------
+// [v3] 마지막 실패가 다시 해볼 만한 실패인지(errorRetryable) 알려준다.
+// 구현(요약): 코스 진행 화면이 조각 기록 실패를 "다시 시도"로만 막을지, 다시 해도 안 되는 실패
+//            (4xx 조건 미충족)라 "기록 없이 계속"도 줄지 가르는 근거. 판정은 ApiException.isRetryable
+//            (5xx·요청 과다)을 그대로 쓰고, 응답 자체가 없는 통신 실패는 다시 해볼 만한 실패로 본다.
+// 구현일: 2026-09-12 | 작성: ljs (mission-strategy-routing/ljs/v1)
 // ============================================================
 import 'package:flutter/foundation.dart';
 
@@ -37,6 +43,7 @@ class RunSession extends ChangeNotifier {
 
   QuestRun? _run;
   String? _error;
+  bool _errorRetryable = false;
   bool _busy = false;
 
   /// 진행 중인 start 요청 — 코스 허브와 코스 진행 화면이 거의 동시에 부르면 같이 기다린다.
@@ -46,6 +53,10 @@ class RunSession extends ChangeNotifier {
   QuestRun? get run => _run;
   String? get runId => _run?.runId;
   String? get error => _error;
+
+  /// 마지막 실패가 다시 해볼 만한 실패인지 — 통신 끊김·5xx·요청 과다면 true,
+  /// 조건 미충족 같은 4xx(다시 보내도 같은 답)면 false.
+  bool get errorRetryable => _errorRetryable;
   bool get busy => _busy;
   bool get isActive => _run != null;
 
@@ -184,15 +195,18 @@ class RunSession extends ChangeNotifier {
   Future<bool> _guard(Future<void> Function() body) async {
     _busy = true;
     _error = null;
+    _errorRetryable = false;
     notifyListeners();
     try {
       await body();
       return true;
     } on ApiException catch (e) {
       _error = e.message;
+      _errorRetryable = e.isRetryable;
       return false;
     } catch (e) {
       _error = '서버와 통신하지 못했느니라. ($e)';
+      _errorRetryable = true; // 응답 자체가 없음 — 연결이 돌아오면 될 수 있다
       return false;
     } finally {
       _busy = false;

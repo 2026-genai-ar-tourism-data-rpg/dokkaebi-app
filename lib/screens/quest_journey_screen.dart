@@ -1,4 +1,14 @@
 // ============================================================
+// [v7] 조각은 서버 기록이 성공해야 확정 — 실패하면 공통 팝업으로 멈추고 다시 시도(계획 C1).
+// 구현(요약): 미션을 끝내면 조각 수·획득 팝업·로컬 저장을 먼저 하고 서버 기록(collect·complete)은
+//            결과를 보지 않아, 폰에선 완주·서버에선 미완주가 생겼다.
+//            → 미션 버튼 6곳(퀴즈·사냥·수집·사진·발자국·카페)과 피날레가 _claimChapter 한 경로로
+//              서버에 먼저 기록하고, 성공해야 화면(조각 수·획득 팝업·엔딩)과 로컬 진행에 반영한다.
+//              실패하면 공통 팝업(_recordSheet): 통신·5xx는 다시 시도만, 4xx 조건 미충족처럼 다시 해도
+//              안 되는 실패는 "기록 없이 계속"도 준다(RunSession.errorRetryable). 서버 run이 없으면
+//              다시 시도 때 다시 연다. 좌표 없는 장소라 도착 인증을 건너뛴 곳은 기록을 시도하지 않는다.
+// 구현일: 2026-09-12 | 작성: ljs (mission-strategy-routing/ljs/v1)
+// ------------------------------------------------------------
 // [v6] 위치 권한이 꺼져 있으면 이미 도착 인증한 장소도 멈춘다 + 권한 경고에 설정 열기.
 // 구현(요약): 실기기에서 도착 인증 → iOS 설정에서 위치 권한 끔(앱 강제 종료) → 다시 열어 같은 장소
 //            도착 인증을 누르니 그대로 진행됐다. 서버에 인증 기록이 있으면 위치를 전혀 보지 않고
@@ -96,6 +106,13 @@ const _demoArriveRadiusM = 30;
 
 /// 도착 인증 실패 — 안내 문구와 다음 행동(설정 열기·위치 확인 없이 진행)을 고르는 근거.
 typedef _ArrivalFailure = ({String message, bool needsSettings, bool noCoords});
+
+/// 조각 서버 기록 실패 — 안내 문구와, 다시 해도 안 되는 실패라 "기록 없이 계속"을 줄지.
+typedef _RecordFailure = ({String message, bool canSkip});
+
+/// 서버 기록을 기다리는 챕터 확정 — 다시 시도·기록 없이 계속이 같은 챕터를 이어받는다.
+/// [onClaimed]는 확정된 뒤의 화면 반영(조각 수·획득 팝업·엔딩 등).
+typedef _PendingClaim = ({int chapterIdx, List<StateRef> extra, Future<void> Function() onClaimed});
 
 // ── 시안 팔레트(로컬 상수) ──────────────────────────────
 const _ink = Color(0xFF17130F); // 먹빛
@@ -201,6 +218,19 @@ class _QuestJourneyScreenState extends State<QuestJourneyScreen> with TickerProv
 
   /// 도착 인증 실패 안내. null이면 안내 없음.
   _ArrivalFailure? _arrivalFailure;
+
+  // ── 조각 서버 기록(확정은 기록 성공 뒤) ──
+  /// 서버에 조각을 기록하는 중 — 공통 팝업을 띄우고 연타를 막는다.
+  bool _recording = false;
+
+  /// 조각 기록 실패. null이면 실패 없음.
+  _RecordFailure? _recordFailure;
+
+  /// 기록을 기다리는(또는 실패한) 챕터 확정 — 다시 시도·기록 없이 계속이 이어받는다.
+  _PendingClaim? _pendingClaim;
+
+  /// 도착 인증을 건너뛴 장소(서버가 좌표 없는 장소라고 함) — 서버가 기록을 거절하니 시도하지 않는다.
+  final Set<String> _unrecordedNodeIds = {};
   // A/B("사연이오?"/"보상은?")는 dialogueTurn으로 실제 장소 정보를 물어 받는다.
   // C(바로 진행)는 안 물어보므로 대상 없음. 실패하면 _npcLines 고정 문구로 폴백.
   bool _dialogueLoading = false;
@@ -657,6 +687,7 @@ class _QuestJourneyScreenState extends State<QuestJourneyScreen> with TickerProv
   /// 서버가 좌표 없는 장소라 위치를 확인할 수 없을 때의 탈출구 — 진행은 하되 조각은 서버에 남지 않는다.
   void _skipArrival() {
     setState(() => _arrivalFailure = null);
+    _unrecordedNodeIds.add(targets[gpsIdx].node!.nodeId);
     _verifyGps();
   }
 
@@ -751,26 +782,75 @@ class _QuestJourneyScreenState extends State<QuestJourneyScreen> with TickerProv
     if (s == null) return;
     if (n != null) {
       await ScenarioStore.I.completeNodeWithGrants(s.scenarioId, n, extra: extra);
-      await _recordOnServer(n);          // [v3] 로컬만 쌓고 끝나던 것을 서버에도 남긴다
     } else {
       await ScenarioStore.I
           .completeNode(s.scenarioId, 'chapter_$chapterIdx', refs.map((r) => r.toStorageString()).toList());
     }
   }
 
-  /// 챕터 완료를 서버 run에 기록한다 — 조각·경험치·도감·칭호가 여기서 나온다.
+  /// 지금 챕터 조각 확정(일반 챕터) — 서버에 기록되면 조각 수를 올리고 획득 팝업을 띄운다.
+  /// [also]는 그 챕터 고유의 화면 반영(발자국 파편 거두기·카페 주문 완료 등) — 확정될 때 함께 적용한다.
+  void _claimCurrentChapter({List<StateRef> extra = const [], VoidCallback? also}) {
+    final idx = _tIdx; // 확정되면 fragments가 바뀌어 _tIdx도 바뀐다 — 지금 챕터를 먼저 읽어 둔다
+    _claimChapter(idx, extra: extra, onClaimed: () async {
+      setState(() {
+        also?.call();
+        fragments = idx + 1;
+        showReward = true;
+      });
+    });
+  }
+
+  /// 챕터 조각 확정 — 서버 기록(collect·complete)이 성공해야 화면(onClaimed)과 로컬 진행(_grantChapter)에
+  /// 반영한다. 실패하면 공통 팝업(_recordSheet)으로 이유와 다시 시도를 보여준다 — 조각의 주인은 서버다.
+  Future<void> _claimChapter(int idx,
+      {List<StateRef> extra = const [], required Future<void> Function() onClaimed}) async {
+    if (_recording) return;
+    final claim = (chapterIdx: idx, extra: extra, onClaimed: onClaimed);
+    setState(() {
+      _recording = true;
+      _recordFailure = null;
+      _pendingClaim = claim;
+    });
+    final failure = await _recordOnServer(targets[idx.clamp(0, targets.length - 1)].node);
+    if (!mounted) return;
+    setState(() {
+      _recording = false;
+      _recordFailure = failure;
+    });
+    if (failure == null) await _confirmClaim(claim);
+  }
+
+  /// 확정 반영 — 서버 기록이 성공했거나, 다시 해도 안 되는 실패에서 "기록 없이 계속"을 골랐을 때.
+  Future<void> _confirmClaim(_PendingClaim claim) async {
+    setState(() {
+      _pendingClaim = null;
+      _recordFailure = null;
+    });
+    await claim.onClaimed();
+    await _grantChapter(claim.chapterIdx, extra: claim.extra);
+  }
+
+  /// 챕터 조각을 서버 run에 기록한다(collect → complete) — 조각·경험치·도감·칭호가 여기서 나온다.
+  /// 성공했거나 서버에 기록할 수 없는 챕터면 null, 실패하면 사유(다시 해도 안 되는 실패인지 포함).
   ///
-  /// 이 화면은 지금까지 서버를 한 번도 부르지 않아, 메인 CTA로 플레이한 사용자는
-  /// 진행도가 로컬에만 남고 서버에는 아무것도 쌓이지 않았다(다른 기기·재설치 시 소멸).
   /// 위치는 다시 확인하지 않는다 — 도착 인증(_arrive)에서 서버에 방문이 이미 남았다.
-  /// 실패해도 연출은 막지 않는다 — 서버가 없으면 데모 모드처럼 계속 진행한다.
-  Future<void> _recordOnServer(QuestNode n) async {
-    if (!_session.isActive) return;
-    if (n.fragmentId.isNotEmpty) await _session.collect(n.nodeId);
-    await _session.complete(
+  /// 서버 run이 없으면(앱 재시작 후 복원 실패 등) 여기서 다시 연다 — 다시 시도가 곧 재연결이다.
+  Future<_RecordFailure?> _recordOnServer(QuestNode? n) async {
+    final s = widget.scenario;
+    // 데모 모드(코스 없음)·노드 없는 챕터·도착 인증을 건너뛴 장소는 서버가 기록할 수 없다 — 로컬만.
+    if (s == null || n == null || _unrecordedNodeIds.contains(n.nodeId)) return null;
+    _RecordFailure fail() => (
+          message: _session.error ?? '조각을 기록하지 못했느니라.',
+          canSkip: !_session.errorRetryable,
+        );
+    if (!_session.isActive && !await _session.start(s.scenarioId)) return fail();
+    if (n.fragmentId.isNotEmpty && await _session.collect(n.nodeId) == null) return fail();
+    final reward = await _session.complete(
       n.nodeId,
       choiceId: branchChoices[n.nodeId],   // 갈림길을 골랐으면 그 갈래를 함께 보낸다
     );
+    return reward == null ? fail() : null;
   }
 
   /// 선택지 효과(플래그·친밀도·쿠폰) 즉시 적용 + 영속. 규칙 2조: grants 종류는 안 바뀐다.
@@ -824,16 +904,18 @@ class _QuestJourneyScreenState extends State<QuestJourneyScreen> with TickerProv
   Future<void> _finish(String pick) async {
     final curious = pstate.flags.contains('호기심');
     final resolved = (pick == 'good' && curious) ? 'good' : 'normal';
-    setState(() {
-      ending = resolved;
-      screen = 'ending';
-      fragments = _stoneTotal;
-      exp += 200;
-    });
     // 챕터 번호 하드코딩(옛 4챕터 종로 대본) 제거 — 피날레는 늘 마지막 챕터다.
-    await _grantChapter(_stoneTotal - 1);
-    final s = widget.scenario;
-    if (s != null) await ScenarioStore.I.setEnding(s.scenarioId, resolved);
+    // 피날레 조각도 서버 기록이 성공해야 엔딩으로 넘어간다(_claimChapter).
+    await _claimChapter(_stoneTotal - 1, onClaimed: () async {
+      setState(() {
+        ending = resolved;
+        screen = 'ending';
+        fragments = _stoneTotal;
+        exp += 200;
+      });
+      final s = widget.scenario;
+      if (s != null) await ScenarioStore.I.setEnding(s.scenarioId, resolved);
+    });
   }
 
   void _snack(String msg) {
@@ -888,6 +970,8 @@ class _QuestJourneyScreenState extends State<QuestJourneyScreen> with TickerProv
       guidance = null;
       branchAt = null;
       _arrivalFailure = null;
+      _recordFailure = null;
+      _pendingClaim = null;
       pstate.clear();
       branchChoices.clear();
       targets = _resolveTargets(widget.scenario);
@@ -937,6 +1021,7 @@ class _QuestJourneyScreenState extends State<QuestJourneyScreen> with TickerProv
           ),
         ),
         if (showReward) _rewardModal(),
+        if (_recording || _recordFailure != null) _recordSheet(),
         if (hintOpen) _hintSheet(),
         if (collOpen) _collSheet(),
         if (branchAt != null) _branchSheet(branchAt!),
@@ -1907,11 +1992,7 @@ class _QuestJourneyScreenState extends State<QuestJourneyScreen> with TickerProv
                       // S3(퀴즈→개봉)은 정답 자체가 곧 개봉이다 — 지령 화면을
                       // 거치지 않고 바로 조각을 지급한다(원래 order→hunt로
                       // 흘러가던 건 챕터 0 전용 하드코딩 사슬이었다).
-                      _cta('계속하기', () {
-                        final idx = _tIdx;
-                        setState(() { fragments = idx + 1; showReward = true; });
-                        _grantChapter(idx);
-                      }),
+                      _cta('계속하기', () => _claimCurrentChapter()),
                     ],
                   ]),
                 ),
@@ -2078,12 +2159,8 @@ class _QuestJourneyScreenState extends State<QuestJourneyScreen> with TickerProv
             )),
             // 예전엔 여기서 photo→trail로 이어졌다 — 챕터 0(운현궁) 전용 3화면
             // 사슬이었다. 사냥(S1/S2/S6 임시 재사용)은 독립 미션이라 여기서
-            // 바로 조각을 지급한다.
-            Positioned(left: 14, right: 14, bottom: 34, child: _cta('돌아와 조각을 살피다', () {
-              final idx = _tIdx;
-              setState(() { fragments = idx + 1; showReward = true; });
-              _grantChapter(idx);
-            })),
+            // 바로 조각을 지급한다(서버 기록이 성공해야 확정).
+            Positioned(left: 14, right: 14, bottom: 34, child: _cta('돌아와 조각을 살피다', () => _claimCurrentChapter())),
           ] else
             Positioned(right: 18, bottom: 34, child: GestureDetector(
               onTap: () => setState(() => hintOpen = true),
@@ -2146,11 +2223,7 @@ class _QuestJourneyScreenState extends State<QuestJourneyScreen> with TickerProv
                 const Expanded(child: Text('모두 거두었다 — 이제 조각을 살필 차례', style: TextStyle(fontSize: 13.5, color: Color(0xFFBDEEE1), fontWeight: FontWeight.w700))),
               ]),
             )),
-            Positioned(left: 14, right: 14, bottom: 34, child: _cta('돌아와 조각을 살피다', () {
-              final idx = _tIdx;
-              setState(() { fragments = idx + 1; showReward = true; });
-              _grantChapter(idx);
-            })),
+            Positioned(left: 14, right: 14, bottom: 34, child: _cta('돌아와 조각을 살피다', () => _claimCurrentChapter())),
           ] else
             Positioned(right: 18, bottom: 34, child: GestureDetector(
               onTap: () => setState(() => hintOpen = true),
@@ -2206,11 +2279,7 @@ class _QuestJourneyScreenState extends State<QuestJourneyScreen> with TickerProv
           if (photoState == 'done')
             Positioned(left: 14, right: 14, bottom: 34, child: hasTrail
                 ? _cta('길이 열렸다 — 발자국을 따라가라', () => go('trail'))
-                : _cta('돌아와 조각을 살피다', () {
-                    final idx = _tIdx;
-                    setState(() { fragments = idx + 1; showReward = true; });
-                    _grantChapter(idx);
-                  })),
+                : _cta('돌아와 조각을 살피다', () => _claimCurrentChapter())),
         ]);
       }),
     );
@@ -2292,14 +2361,15 @@ class _QuestJourneyScreenState extends State<QuestJourneyScreen> with TickerProv
             Positioned(
               right: box.maxWidth * .14, bottom: box.maxHeight * .5,
               child: GestureDetector(
-                onTap: () {
-                // 챕터 번호 하드코딩(옛 4챕터 종로 대본: 발자국=항상 0번) 제거 —
-                // setState가 fragments를 바꾸면 _tIdx도 같이 바뀌므로, 지금 챕터
-                // 번호를 미리 읽어둔다(먼저 읽어야 옛 값을 잡는다).
-                final idx = _tIdx;
-                setState(() { fragTaken = true; showReward = true; fragments = idx + 1; exp += 50; coupon += 500; });
-                _grantChapter(idx, extra: [const StateRef(kind: StateKind.coupon, value: '', to: '익선동카페', amount: 500)]);
-              },
+                // 서버 기록이 성공해야 파편을 거둔다 — 지금 챕터 번호는 _claimCurrentChapter가 먼저 읽어 둔다.
+                onTap: () => _claimCurrentChapter(
+                  extra: [const StateRef(kind: StateKind.coupon, value: '', to: '익선동카페', amount: 500)],
+                  also: () {
+                    fragTaken = true;
+                    exp += 50;
+                    coupon += 500;
+                  },
+                ),
                 child: _Floaty(anim: _float, child: SizedBox(
                   width: 110, height: 110,
                   child: Stack(alignment: Alignment.center, clipBehavior: Clip.none, children: [
@@ -2408,17 +2478,11 @@ class _QuestJourneyScreenState extends State<QuestJourneyScreen> with TickerProv
                 ),
                 const SizedBox(height: 12),
                 if (!cafeOrdered)
-                  _cta('영수증 촬영으로 인증하기', () {
-                    final idx = _tIdx;
-                    setState(() {
-                      cafeOrdered = true;
-                      spent += cafePayN;
-                      coupon = 0;
-                      fragments = idx + 1;
-                      showReward = true;
-                    });
-                    _grantChapter(idx);
-                  }, fontSize: 15)
+                  _cta('영수증 촬영으로 인증하기', () => _claimCurrentChapter(also: () {
+                    cafeOrdered = true;
+                    spent += cafePayN;
+                    coupon = 0;
+                  }), fontSize: 15)
                 else
                   Container(
                     padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
@@ -2774,6 +2838,51 @@ class _QuestJourneyScreenState extends State<QuestJourneyScreen> with TickerProv
   // ════════════════════════════════════════════════════
   // 모달: 보상 / 힌트 / 컬렉션
   // ════════════════════════════════════════════════════
+  /// 조각 기록 공통 팝업 — 기록 중 안내, 실패하면 이유와 다시 시도.
+  /// 다시 해도 안 되는 실패면 "기록 없이 계속"도 준다. 닫으면 미션 화면에 남아 버튼으로 다시 시도할 수 있다.
+  Widget _recordSheet() {
+    final failure = _recordFailure;
+    final claim = _pendingClaim;
+    return Positioned.fill(child: Container(
+      color: Colors.black.withOpacity(0.72),
+      alignment: Alignment.center,
+      padding: const EdgeInsets.symmetric(horizontal: 26),
+      child: _parchment(
+        padding: const EdgeInsets.fromLTRB(20, 20, 20, 16),
+        child: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+          Text(failure == null ? '조각을 기록하는 중…' : '조각을 기록하지 못했느니라',
+              textAlign: TextAlign.center, style: dokkaebiTitle(size: 18, color: _parchInk)),
+          const SizedBox(height: 14),
+          if (failure == null)
+            const Center(child: SizedBox(width: 26, height: 26, child: CircularProgressIndicator(strokeWidth: 2.6, color: _verm)))
+          else ...[
+            Text(
+              failure.canSkip ? '${failure.message} 기록 없이 가면 이 조각은 서버에 남지 않느니라.' : failure.message,
+              textAlign: TextAlign.center,
+              style: _gowun(13.5, _parchInkSoft, height: 1.55),
+            ),
+            const SizedBox(height: 16),
+            if (claim != null) ...[
+              _cta('다시 시도', () => _claimChapter(claim.chapterIdx, extra: claim.extra, onClaimed: claim.onClaimed)),
+              if (failure.canSkip) ...[
+                const SizedBox(height: 8),
+                _cta('기록 없이 계속', () => _confirmClaim(claim), bg: _bronze, fg: _cream),
+              ],
+            ],
+            const SizedBox(height: 6),
+            Center(child: TextButton(
+              onPressed: () => setState(() {
+                _recordFailure = null;
+                _pendingClaim = null;
+              }),
+              child: const Text('닫기', style: TextStyle(color: _bronze, fontWeight: FontWeight.w700)),
+            )),
+          ],
+        ]),
+      ),
+    ));
+  }
+
   Widget _rewardModal() => Positioned.fill(child: Container(
         color: Colors.black.withOpacity(0.8),
         alignment: Alignment.center,

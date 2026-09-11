@@ -5,6 +5,9 @@
 //            조회만 하고(POST 없음) 서버에 없을 때만 새로 여는지, 통신 실패엔 새로 열지 않는지,
 //            완료된 run도 되살리는지, 코스 전환·동시 호출에서 run이 늘지 않는지 확인.
 // 구현일: 2026-09-12 | 작성: ljs (mission-strategy-routing/ljs/v1)
+// ------------------------------------------------------------
+// [v2] 실패 종류(errorRetryable) — 4xx 조건 미충족은 다시 해도 안 되는 실패, 5xx는 다시 해볼 만한 실패.
+// 구현일: 2026-09-12 | 작성: ljs (mission-strategy-routing/ljs/v1)
 // ============================================================
 import 'dart:convert';
 
@@ -154,6 +157,31 @@ void main() {
 
       expect(results, [true, true]);
       expect(server.calls, ['POST /v1/runs']);
+    });
+  });
+
+  group('실패 종류', () {
+    test('조건 미충족(4xx) 실패는 다시 해도 안 되는 실패로 표시한다', () async {
+      final server = _FakeServer((req) => req.url.path == '/v1/runs'
+          ? _openNewRun(req)
+          : http.Response(jsonEncode({'message': '먼저 그 자리에 당도해야 하느니라.'}), 403,
+              headers: {'content-type': 'application/json; charset=utf-8'}));
+      final session = server.newSession();
+      await session.start(_courseA);
+
+      expect(await session.collect('n1'), isNull);
+      expect(session.errorRetryable, isFalse);
+      expect(session.error, contains('당도'));
+    });
+
+    test('통신 실패·5xx는 다시 해볼 만한 실패로 표시한다', () async {
+      final server = _FakeServer((req) =>
+          req.url.path == '/v1/runs' ? _openNewRun(req) : http.Response('error', 500));
+      final session = server.newSession();
+      await session.start(_courseA);
+
+      expect(await session.collect('n1'), isNull);
+      expect(session.errorRetryable, isTrue);
     });
   });
 }
