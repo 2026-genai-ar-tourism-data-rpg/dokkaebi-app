@@ -413,4 +413,72 @@ void main() {
       expect(find.textContaining('마음이 곧은 자로군'), findsOneWidget);
     });
   });
+
+  // mission-strategy-routing/ljs/v1 4번 작업 — 사냥 화면이 strategy의 defeat 원자에서
+  // 몬스터 이름·마릿수를 가져오는지. 미러링으로 실기기 라이브 확인이 막혀서 대신
+  // 자동화로 검증(원인: iPhone 미러링 세션이 멎어 탭이 실기기에 전달되지 않음).
+  group('사냥 화면 데이터 연동', () {
+    Map<String, dynamic> _huntNode(String id, String name, {bool finale = false}) => {
+          'node_id': id,
+          'name': name,
+          'kind': 'spot',
+          'fragment_id': 'frag_$id',
+          'grants': const [],
+          'requires': const [],
+          'requires_mode': 'none',
+          'is_finale': finale,
+          'map_x': 126.90,
+          'map_y': 37.52,
+          'dist_m': 400,
+          'strategy': const ['S2_HUNT_GATHER'],
+          'actions': const [
+            {'a': 'defeat', 'object': '성난 물귀신', 'count': [0, 4]},
+            {'a': 'tap', 'target': '글씨조각', 'count': [0, 1]},
+          ],
+          'mission': {'type': 'HUNT', 'order': '$name에서 물귀신을 처치하라', 'hints': const []},
+        };
+
+    Scenario _huntCourse() => Scenario.fromJson({
+          'scenario_id': 'yeongdeungpo_hunt_test',
+          'title': '영등포구의 기억석',
+          'region': '영등포구',
+          'node_sequence': [
+            _huntNode('h1', '한강공원'),
+            _huntNode('h2', '여의도', finale: true),
+          ],
+        });
+
+    testWidgets('defeat 원자의 몬스터 이름·마릿수가 뜬다 — 먹그림자/5 하드코딩 아님', (tester) async {
+      final sc = _huntCourse();
+      await ScenarioStore.I.add(sc);
+      await _toMap(tester, sc);
+
+      await tester.tap(find.text('이동 시작 — GPS 추적'));
+      await tester.pump();
+      await tester.tap(find.text('걷기 시작 (GPS 시뮬레이션)'));
+      await tester.pump(const Duration(milliseconds: 1600));
+      await tester.tap(find.text('GPS 도착 인증'));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 1600));
+      await tester.tap(find.text('말 걸기'));
+      await tester.pump();
+
+      // C(바로 진행) — dialogueTurn을 안 타는 선택지라 API 스텁 없이 진행 가능.
+      await tester.tap(find.text('"그냥 빨리 찾겠소."'));
+      await tester.pump();
+      expect(find.text('계속 — 지령 받기'), findsOneWidget);
+      await tester.tap(find.text('계속 — 지령 받기'));
+      await tester.pump();
+
+      expect(find.text('지령 받기 — 사냥 시작'), findsOneWidget);
+      await tester.tap(find.text('지령 받기 — 사냥 시작'));
+      await tester.pump();
+
+      expect(tester.takeException(), isNull);
+      expect(find.text('성난 물귀신 처치'), findsOneWidget);
+      expect(find.text('먹그림자 처치'), findsNothing);
+      expect(find.textContaining('/ 4', findRichText: true), findsOneWidget);
+      expect(find.textContaining('/ 5', findRichText: true), findsNothing);
+    });
+  });
 }

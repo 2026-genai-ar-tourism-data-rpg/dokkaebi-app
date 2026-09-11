@@ -147,13 +147,18 @@ class _QuestJourneyScreenState extends State<QuestJourneyScreen> with TickerProv
     {'id': 4, 'left': .26, 'top': .22, 'size': 58.0, 'dur': 3.3, 'dead': false},
     {'id': 5, 'left': .62, 'top': .20, 'size': 54.0, 'dur': 2.6, 'dead': false},
   ];
+  // 위 초기값은 데모(노드 데이터 없음) 폴백 — 실제 노드에서는 _prepareHuntEnemies()가
+  // defeat/tap 원자의 이름·개수로 다시 채운다.
+  String huntLabel = '먹그림자 처치';
+  // S1(대화→수집)·S6(수집 누적) 전용 — 전투 없는 탭 수집 화면(_gatherScreen).
+  List<Map<String, dynamic>> gatherItems = [];
+  String gatherLabel = '글씨조각 수집';
   String photoState = 'idle';
   int scan = 0;
   int trail = 0;
   bool fragTaken = false, showReward = false;
   bool hintOpen = false;
   bool cafeOrdered = false;
-  String cafeState = 'idle';
   String insaPhase = 'photo';
   int insaScan = 0;
   String insaPick = '';
@@ -257,24 +262,11 @@ class _QuestJourneyScreenState extends State<QuestJourneyScreen> with TickerProv
   /// 예전에는 정확히 4개만 만들었다(`for i < 4`) — 코스가 짧으면 종로 기본 노드로 채우고
   /// 길면 잘라냈다. 탐험 시간 입력이 코스 길이(4·6·8조각)를 바꾸면서 그대로 두면
   /// 6조각 코스가 화면에서 4챕터로 보이고, 있지도 않은 운현궁이 챕터로 끼어든다.
-  /// 미션 타입 → 이 챕터에서 밟을 스테이지. 종로 순서 순환을 대체한다.
-  /// (전에는 2번째 노드가 무조건 '카페', 3번째가 '인사동 붓방'이었다 — 경주에서도.)
-  static String _stageFor(QuestNode n, bool isFinale) {
-    if (isFinale) return 'summon-sejong';          // 마지막은 복원 스테이지
-    switch (n.mission?.type) {
-      case 'QUIZ_FIND':
-      case 'DIALOGUE_FIND':
-        return 'summon-meok';                      // 등장 → 대화 → (퀴즈가 있으면) 시험
-      case 'PHOTO_FIND':
-        return 'photo';
-      case 'PATH_TRACE':
-        return 'trail';
-      case 'HUNT':
-        return 'hunt';
-      default:
-        return 'summon-meok';                      // 등장 → 대화 → 지령
-    }
-  }
+  /// 도착 직후 스테이지 — 항상 도깨비 소환(AR 등장)부터. 실제 미션 갈래(사냥·사진·
+  /// 퀴즈…)는 대화가 끝난 뒤 strategy로 정한다(_missionStageFor 참고) — 백엔드가
+  /// 모든 노드에 goto+listen(대화)을 먼저 컴파일해 넣는 것과 맞춘다. 예전엔 PHOTO_FIND/
+  /// PATH_TRACE/HUNT 노드가 대화 자체를 건너뛰고 바로 미션으로 들어갔었다.
+  static String _stageFor(bool isFinale) => isFinale ? 'summon-sejong' : 'summon-meok';
 
   _Target _targetOf(QuestNode n, int i, int total) {
     final isFinale = i == total - 1;
@@ -299,9 +291,94 @@ class _QuestJourneyScreenState extends State<QuestJourneyScreen> with TickerProv
               // 지령이 없는 노드에 시안 문구를 그대로 쓰면 딴 장소 지령이 뜬다
               // ('운현궁 대문 앞에서…'가 강남 노드에). 장소명으로 만든 기본 지령을 쓴다.
               : (name == base.name ? base.obj : '$name 주변을 살펴 기억석 조각을 찾아라.')),
-      _stageFor(n, isFinale),
+      _stageFor(isFinale),
       node: n,
     );
+  }
+
+  /// 대화 이후 실제로 밟을 미션 화면 — node.strategy(S1~S7) 기준.
+  /// strategy가 없는 노드(시나리오 없는 데모 등)는 예전 mission.type 기준으로 폴백해
+  /// 기존 동작을 그대로 유지한다.
+  String _missionStageFor(QuestNode? node) {
+    final code = node?.strategy.isNotEmpty == true ? strategyCode(node!.strategy.first) : null;
+    switch (code) {
+      case 'S3':
+        return 'quiz';
+      case 'S4':
+      case 'S5':
+        return 'photo';
+      case 'S7':
+        return 'cafe';
+      case 'S2':
+        return 'hunt';
+      case 'S1':
+      case 'S6':
+        return 'gather'; // 전투 없이 tap만(대화→수집/수집 누적) — 전용 화면
+    }
+    // 폴백(strategy 미대응 노드) — 예전 mission.type 분기 그대로.
+    switch (node?.mission?.type) {
+      case 'PHOTO_FIND':
+      case 'PATH_TRACE':
+        return 'photo';
+      case 'HUNT':
+        return 'hunt';
+      default:
+        return node?.quiz == null ? 'hunt' : 'quiz';
+    }
+  }
+
+  /// 현재 챕터 노드의 컴파일된 액션 원자 중 타입이 `type`인 첫 번째 것.
+  ActionAtom? _actionAtom(String type) {
+    for (final a in _curNode?.actions ?? const <ActionAtom>[]) {
+      if (a.a == type) return a;
+    }
+    return null;
+  }
+
+  static const _huntPositions = [
+    (.38, .30), (.12, .48), (.68, .44), (.26, .22), (.62, .20), (.50, .58),
+  ];
+
+  /// 사냥 화면(_huntScreen)을 이 챕터의 실제 데이터로 다시 채운다 — defeat
+  /// 원자가 있으면 몬스터 이름·마릿수(S2), 없으면 tap 원자의 대상·개수(S1/S6,
+  /// 전투 없이 수집만). 둘 다 없으면(데모) 원래 종로 기본값(먹그림자 5마리)로.
+  void _prepareHuntEnemies() {
+    final defeat = _actionAtom('defeat');
+    final tap = _actionAtom('tap');
+    final atom = defeat ?? tap;
+    final count = (atom?.countTarget ?? 5).clamp(1, _huntPositions.length);
+    huntLabel = defeat != null
+        ? '${defeat.object ?? '먹그림자'} 처치'
+        : '${tap?.target ?? '흔적'} 수집';
+    enemies = [
+      for (var i = 0; i < count; i++)
+        {
+          'id': i,
+          'left': _huntPositions[i].$1,
+          'top': _huntPositions[i].$2,
+          'size': 92.0 - i * 6,
+          'dur': 2.6 + (i % 4) * 0.3,
+          'dead': false,
+        },
+    ];
+  }
+
+  /// 수집 화면(_gatherScreen)을 이 챕터의 실제 데이터로 다시 채운다 — S1/S6은
+  /// 전투 없이 tap 원자 대상·개수만 있다(_prepareHuntEnemies와 갈래만 다름).
+  void _prepareGatherItems() {
+    final tap = _actionAtom('tap');
+    final count = (tap?.countTarget ?? 1).clamp(1, _huntPositions.length);
+    gatherLabel = '${tap?.target ?? '글씨조각'} 수집';
+    gatherItems = [
+      for (var i = 0; i < count; i++)
+        {
+          'id': i,
+          'left': _huntPositions[i].$1,
+          'top': _huntPositions[i].$2,
+          'size': 64.0,
+          'collected': false,
+        },
+    ];
   }
 
   /// 현재 챕터의 힌트 사다리 컨트롤러(문구=노드 hint_ladder, 없으면 시안 문구).
@@ -421,18 +498,21 @@ class _QuestJourneyScreenState extends State<QuestJourneyScreen> with TickerProv
       return;
     }
 
-    final after = t.after;
-    if (after == 'summon-meok' || after == 'summon-sejong') {
-      setState(() {
-        screen = 'summon';
-        summonFor = after == 'summon-meok' ? 'meok' : 'sejong';
-        summonPhase = 'scan';
-      });
-      _summonTimer?.cancel();
-      _summonTimer = Timer(const Duration(milliseconds: 1500), () => setState(() => summonPhase = 'appear'));
-    } else {
-      go(after);
+    // 실제 노드(시나리오 있음)는 after가 항상 summon-meok/summon-sejong —
+    // 모든 챕터가 소환(AR 등장) → 대화부터 시작한다(실제 미션 갈래는 대화 뒤
+    // strategy로 정해진다). cafe/insa는 시나리오 없는 데모 전용 고정 스테이지라
+    // 예전처럼 소환 없이 바로 들어간다.
+    if (t.after == 'cafe' || t.after == 'insa') {
+      go(t.after);
+      return;
     }
+    setState(() {
+      screen = 'summon';
+      summonFor = t.after == 'summon-sejong' ? 'sejong' : 'meok';
+      summonPhase = 'scan';
+    });
+    _summonTimer?.cancel();
+    _summonTimer = Timer(const Duration(milliseconds: 1500), () => setState(() => summonPhase = 'appear'));
   }
 
   /// 이 챕터 노드의 requires 판정. 시나리오/노드가 없으면 null(게이팅 없음).
@@ -581,7 +661,8 @@ class _QuestJourneyScreenState extends State<QuestJourneyScreen> with TickerProv
       fragments = _stoneTotal;
       exp += 200;
     });
-    await _grantChapter(3);
+    // 챕터 번호 하드코딩(옛 4챕터 종로 대본) 제거 — 피날레는 늘 마지막 챕터다.
+    await _grantChapter(_stoneTotal - 1);
     final s = widget.scenario;
     if (s != null) await ScenarioStore.I.setEnding(s.scenarioId, resolved);
   }
@@ -622,7 +703,6 @@ class _QuestJourneyScreenState extends State<QuestJourneyScreen> with TickerProv
       showReward = false;
       hintOpen = false;
       cafeOrdered = false;
-      cafeState = 'idle';
       insaPhase = 'photo';
       insaScan = 0;
       insaPick = '';
@@ -861,6 +941,8 @@ class _QuestJourneyScreenState extends State<QuestJourneyScreen> with TickerProv
         return _orderScreen();
       case 'hunt':
         return _huntScreen();
+      case 'gather':
+        return _gatherScreen();
       case 'photo':
         return _photoScreen();
       case 'trail':
@@ -1429,9 +1511,9 @@ class _QuestJourneyScreenState extends State<QuestJourneyScreen> with TickerProv
           Align(alignment: const Alignment(0, 0.35), child: ClipPath(clipper: _RoofClipper(), child: Container(height: 110, color: const Color(0xFF0C0A08)))),
           // left: 58 — 좌상단 뒤로가기 버튼 자리를 비켜준다.
           Positioned(top: 58, left: 58, right: 14, child: Row(children: [
-            _pill('운현궁 · 첫 번째 기억'),
+            _pill('${_target.name} · 제 ${_tIdx + 1} 장'),
             const Spacer(),
-            _pill('조각 $fragments/4', border: _tealDeep, textColor: _teal),
+            _pill('조각 $fragments/$_stoneTotal', border: _tealDeep, textColor: _teal),
           ])),
           Positioned(left: 0, right: 0, top: box.maxHeight * .16, child: Center(child: _Floaty(anim: _float, child: const _Dokkaebi(size: 150)))),
           Positioned(left: 14, right: 14, bottom: 34, child: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.stretch, children: [
@@ -1476,10 +1558,10 @@ class _QuestJourneyScreenState extends State<QuestJourneyScreen> with TickerProv
               const SizedBox(height: 4),
             ] else ...[
               const SizedBox(height: 10),
-              // 퀴즈가 없는 노드(대부분의 미션 타입)는 시험을 건너뛰고 지령으로.
-              _curQuiz == null
-                  ? _cta('계속 — 지령 받기', () => go('order'))
-                  : _cta('계속 — 도깨비의 시험', () => go('quiz')),
+              // strategy가 S3(퀴즈→개봉)인 노드만 시험으로, 나머지는 지령으로.
+              _missionStageFor(_curNode) == 'quiz'
+                  ? _cta('계속 — 도깨비의 시험', () => go('quiz'))
+                  : _cta('계속 — 지령 받기', () => go('order')),
             ],
           ])),
         ]);
@@ -1570,7 +1652,14 @@ class _QuestJourneyScreenState extends State<QuestJourneyScreen> with TickerProv
                         ]),
                       ),
                       const SizedBox(height: 12),
-                      _cta('계속하기', () => go('order')),
+                      // S3(퀴즈→개봉)은 정답 자체가 곧 개봉이다 — 지령 화면을
+                      // 거치지 않고 바로 조각을 지급한다(원래 order→hunt로
+                      // 흘러가던 건 챕터 0 전용 하드코딩 사슬이었다).
+                      _cta('계속하기', () {
+                        final idx = _tIdx;
+                        setState(() { fragments = idx + 1; showReward = true; });
+                        _grantChapter(idx);
+                      }),
                     ],
                   ]),
                 ),
@@ -1632,13 +1721,22 @@ class _QuestJourneyScreenState extends State<QuestJourneyScreen> with TickerProv
   // 7. ORDER — 지령
   // ════════════════════════════════════════════════════
   Widget _orderScreen() {
+    // 지령을 받은 뒤 실제로 갈 미션 화면 — strategy 기반(_missionStageFor).
+    final stage = _missionStageFor(_curNode);
+    final ctaLabel = switch (stage) {
+      'photo' => '지령 받기 — 사진 인증 시작',
+      'cafe' => '지령 받기 — 주문하러 가기',
+      'gather' => '지령 받기 — 수집 시작',
+      _ => '지령 받기 — 사냥 시작',
+    };
+    final code = _curNode?.strategy.isNotEmpty == true ? strategyCode(_curNode!.strategy.first) : null;
     return Container(
       decoration: BoxDecoration(gradient: _dialBg),
       child: LayoutBuilder(builder: (ctx, box) {
         return Stack(children: [
           Align(alignment: const Alignment(0, 0.48), child: ClipPath(clipper: _RoofClipper(), child: Container(height: 120, color: const Color(0xFF0C0A08)))),
           // left: 58 — 좌상단 뒤로가기 버튼 자리를 비켜준다.
-          Positioned(top: 58, left: 58, right: 14, child: Row(children: [_pill('운현궁 · 첫 번째 기억'), const Spacer(), _pill('조각 $fragments/4', border: _tealDeep, textColor: _teal)])),
+          Positioned(top: 58, left: 58, right: 14, child: Row(children: [_pill('${_target.name} · 제 ${_tIdx + 1} 장'), const Spacer(), _pill('조각 $fragments/$_stoneTotal', border: _tealDeep, textColor: _teal)])),
           Positioned(left: 0, right: 0, top: box.maxHeight * .20, child: Center(child: _Floaty(anim: _float, child: const _Dokkaebi(size: 120)))),
           Positioned(left: 14, right: 14, bottom: 34, child: _parchment(
             padding: const EdgeInsets.fromLTRB(18, 18, 18, 16),
@@ -1650,16 +1748,23 @@ class _QuestJourneyScreenState extends State<QuestJourneyScreen> with TickerProv
                   child: Text('지령', style: dokkaebiTitle(size: 18, color: const Color(0xFFF8F1E0))),
                 ),
                 const SizedBox(width: 12),
-                Expanded(child: Text('"처마 그늘에 번진 먹그림자 다섯을 쫓고, 그 아래 숨은 글씨를 찾거라."', style: dokkaebiTitle(size: 16, color: _parchInk, height: 1.55))),
+                // 실제 노드 지령 문구(챕터 카드와 같은 값) — 종로 하드코딩 제거.
+                Expanded(child: Text('"${_target.obj}"', style: dokkaebiTitle(size: 16, color: _parchInk, height: 1.55))),
               ]),
-              const SizedBox(height: 14),
-              _orderItem('먹그림자 처치', '0/5'),
-              const SizedBox(height: 8),
-              _orderItem('대문·처마 사진에 담기', '0/1'),
-              const SizedBox(height: 8),
-              _orderItem('글씨 파편 수집', '0/1'),
+              if (code != null && strategyLabels[code] != null) ...[
+                const SizedBox(height: 12),
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                  decoration: BoxDecoration(borderRadius: BorderRadius.circular(8), border: Border.all(color: const Color(0xFFC9B88F))),
+                  child: Text(strategyLabels[code]!, style: const TextStyle(fontSize: 11.5, color: _bronze, fontWeight: FontWeight.w700)),
+                ),
+              ],
               const SizedBox(height: 16),
-              _cta('지령 받기 — 사냥 시작', () => go('hunt'), fontSize: 15.5),
+              _cta(ctaLabel, () {
+                if (stage == 'hunt') _prepareHuntEnemies();
+                if (stage == 'gather') _prepareGatherItems();
+                go(stage);
+              }, fontSize: 15.5),
             ]),
           )),
         ]);
@@ -1667,19 +1772,13 @@ class _QuestJourneyScreenState extends State<QuestJourneyScreen> with TickerProv
     );
   }
 
-  Widget _orderItem(String label, String count) => Row(children: [
-        Container(width: 20, height: 20, decoration: BoxDecoration(borderRadius: BorderRadius.circular(6), border: Border.all(color: const Color(0xFFB7A374), width: 2))),
-        const SizedBox(width: 10),
-        Expanded(child: Text(label, style: const TextStyle(color: _parchInkSoft, fontSize: 13.5, fontWeight: FontWeight.w500))),
-        Text(count, style: const TextStyle(color: _bronze, fontSize: 13.5, fontWeight: FontWeight.w700)),
-      ]);
-
   // ════════════════════════════════════════════════════
   // 8. HUNT — 먹그림자 사냥
   // ════════════════════════════════════════════════════
   Widget _huntScreen() {
+    final huntTotal = enemies.length;
     final huntCount = enemies.where((e) => e['dead'] == true).length;
-    final done = huntCount >= 5;
+    final done = huntCount >= huntTotal;
     return Container(
       decoration: BoxDecoration(gradient: _dialBg),
       child: LayoutBuilder(builder: (ctx, box) {
@@ -1691,16 +1790,16 @@ class _QuestJourneyScreenState extends State<QuestJourneyScreen> with TickerProv
               padding: const EdgeInsets.symmetric(horizontal: 22, vertical: 10),
               decoration: BoxDecoration(color: _inkDeep.withOpacity(0.8), borderRadius: BorderRadius.circular(16), border: Border.all(color: _verm.withOpacity(0.6))),
               child: Row(mainAxisSize: MainAxisSize.min, children: [
-                const Text('먹그림자 처치', style: TextStyle(fontSize: 13, color: Color(0xFFE8A08D), fontWeight: FontWeight.w700)),
+                Text(huntLabel, style: const TextStyle(fontSize: 13, color: Color(0xFFE8A08D), fontWeight: FontWeight.w700)),
                 const SizedBox(width: 12),
                 RichText(text: TextSpan(children: [
                   TextSpan(text: '$huntCount', style: dokkaebiTitle(size: 26, color: _cream)),
-                  const TextSpan(text: ' / 5', style: TextStyle(fontSize: 16, color: _muted)),
+                  TextSpan(text: ' / $huntTotal', style: const TextStyle(fontSize: 16, color: _muted)),
                 ])),
               ]),
             ),
             const SizedBox(height: 8),
-            SizedBox(width: 220, child: _progress(huntCount / 5, grad: const LinearGradient(colors: [_verm, Color(0xFFE8743A)]), track: const Color(0xBF0D0B09))),
+            SizedBox(width: 220, child: _progress(huntCount / huntTotal, grad: const LinearGradient(colors: [_verm, Color(0xFFE8743A)]), track: const Color(0xBF0D0B09))),
             const SizedBox(height: 6),
             const Text('그림자를 탭하면 붓질로 쫓는다', style: TextStyle(fontSize: 11.5, color: Color(0xFFB3A892))),
           ])),
@@ -1722,10 +1821,17 @@ class _QuestJourneyScreenState extends State<QuestJourneyScreen> with TickerProv
               child: Row(children: [
                 Container(width: 24, height: 24, alignment: Alignment.center, decoration: const BoxDecoration(shape: BoxShape.circle, color: _tealDeep), child: const Text('✓', style: TextStyle(color: Color(0xFFEAFFF9), fontSize: 13, fontWeight: FontWeight.w900))),
                 const SizedBox(width: 10),
-                const Expanded(child: Text('먹그림자를 모두 쫓았다 — 이제 이 집을 마음에 담을 차례', style: TextStyle(fontSize: 13.5, color: Color(0xFFBDEEE1), fontWeight: FontWeight.w700))),
+                const Expanded(child: Text('모두 해치웠다 — 이제 조각을 살필 차례', style: TextStyle(fontSize: 13.5, color: Color(0xFFBDEEE1), fontWeight: FontWeight.w700))),
               ]),
             )),
-            Positioned(left: 14, right: 14, bottom: 34, child: _cta('다음 — 사진 인증', () => go('photo'))),
+            // 예전엔 여기서 photo→trail로 이어졌다 — 챕터 0(운현궁) 전용 3화면
+            // 사슬이었다. 사냥(S1/S2/S6 임시 재사용)은 독립 미션이라 여기서
+            // 바로 조각을 지급한다.
+            Positioned(left: 14, right: 14, bottom: 34, child: _cta('돌아와 조각을 살피다', () {
+              final idx = _tIdx;
+              setState(() { fragments = idx + 1; showReward = true; });
+              _grantChapter(idx);
+            })),
           ] else
             Positioned(right: 18, bottom: 34, child: GestureDetector(
               onTap: () => setState(() => hintOpen = true),
@@ -1737,16 +1843,90 @@ class _QuestJourneyScreenState extends State<QuestJourneyScreen> with TickerProv
   }
 
   // ════════════════════════════════════════════════════
+  // 8-2. GATHER — 전투 없는 탭 수집 (S1 대화→수집 · S6 수집 누적)
+  // ════════════════════════════════════════════════════
+  Widget _gatherScreen() {
+    final gatherTotal = gatherItems.length;
+    final gatherCount = gatherItems.where((e) => e['collected'] == true).length;
+    final done = gatherCount >= gatherTotal;
+    return Container(
+      decoration: BoxDecoration(gradient: _dialBg),
+      child: LayoutBuilder(builder: (ctx, box) {
+        return Stack(children: [
+          Align(alignment: const Alignment(0, 0.52), child: ClipPath(clipper: _RoofClipper(), child: Container(height: 130, color: const Color(0xFF0C0A08)))),
+          // 상단 카운터 — 사냥 화면과 같은 틀이지만 전투 색(주홍) 대신 수집 색(청록).
+          Positioned(top: 58, left: 0, right: 0, child: Column(children: [
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 22, vertical: 10),
+              decoration: BoxDecoration(color: _inkDeep.withOpacity(0.8), borderRadius: BorderRadius.circular(16), border: Border.all(color: _tealDeep.withOpacity(0.6))),
+              child: Row(mainAxisSize: MainAxisSize.min, children: [
+                Text(gatherLabel, style: const TextStyle(fontSize: 13, color: _teal, fontWeight: FontWeight.w700)),
+                const SizedBox(width: 12),
+                RichText(text: TextSpan(children: [
+                  TextSpan(text: '$gatherCount', style: dokkaebiTitle(size: 26, color: _cream)),
+                  TextSpan(text: ' / $gatherTotal', style: const TextStyle(fontSize: 16, color: _muted)),
+                ])),
+              ]),
+            ),
+            const SizedBox(height: 8),
+            SizedBox(width: 220, child: _progress(gatherTotal == 0 ? 0 : gatherCount / gatherTotal, grad: const LinearGradient(colors: [_tealDeep, _teal]), track: const Color(0xBF0D0B09))),
+            const SizedBox(height: 6),
+            const Text('은은한 빛을 따라 손끝으로 거두어라', style: TextStyle(fontSize: 11.5, color: Color(0xFFB3A892))),
+          ])),
+          // 수집물 — 전투 없이 탭 한 번으로 거둔다.
+          for (final it in gatherItems)
+            if (it['collected'] != true)
+              Positioned(
+                left: box.maxWidth * (it['left'] as double) - (it['size'] as double) / 2,
+                top: box.maxHeight * (it['top'] as double) - (it['size'] as double) / 2,
+                child: _Floaty(anim: _float, amplitude: 6, child: GestureDetector(
+                  onTap: () => setState(() => it['collected'] = true),
+                  child: _FragShard(glyph: _target.hanja, size: it['size'] as double),
+                )),
+              ),
+          if (done) ...[
+            Positioned(left: 14, right: 14, bottom: 100, child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 13),
+              decoration: BoxDecoration(color: const Color(0xFF142A26).withOpacity(0.92), borderRadius: BorderRadius.circular(14), border: Border.all(color: _tealDeep.withOpacity(0.7))),
+              child: Row(children: [
+                Container(width: 24, height: 24, alignment: Alignment.center, decoration: const BoxDecoration(shape: BoxShape.circle, color: _tealDeep), child: const Text('✓', style: TextStyle(color: Color(0xFFEAFFF9), fontSize: 13, fontWeight: FontWeight.w900))),
+                const SizedBox(width: 10),
+                const Expanded(child: Text('모두 거두었다 — 이제 조각을 살필 차례', style: TextStyle(fontSize: 13.5, color: Color(0xFFBDEEE1), fontWeight: FontWeight.w700))),
+              ]),
+            )),
+            Positioned(left: 14, right: 14, bottom: 34, child: _cta('돌아와 조각을 살피다', () {
+              final idx = _tIdx;
+              setState(() { fragments = idx + 1; showReward = true; });
+              _grantChapter(idx);
+            })),
+          ] else
+            Positioned(right: 18, bottom: 34, child: GestureDetector(
+              onTap: () => setState(() => hintOpen = true),
+              child: Container(width: 52, height: 52, alignment: Alignment.center, decoration: BoxDecoration(shape: BoxShape.circle, color: _inkDeep.withOpacity(0.75), border: Border.all(color: _tealDeep.withOpacity(0.5))), child: const Text('힌트', style: TextStyle(fontSize: 12, color: _teal, fontWeight: FontWeight.w700))),
+            )),
+        ]);
+      }),
+    );
+  }
+
+  // ════════════════════════════════════════════════════
   // 9. PHOTO — 사진 인증
   // ════════════════════════════════════════════════════
   Widget _photoScreen() {
     final bracket = photoState == 'done' ? _teal : _cream.withOpacity(0.75);
+    // S4(사진→추적→파편)만 발자국으로 이어진다 — S5(사진 인증)나 strategy 없는
+    // 폴백(PATH_TRACE가 아닌 PHOTO_FIND)은 촬영만으로 끝난다.
+    final code = _curNode?.strategy.isNotEmpty == true ? strategyCode(_curNode!.strategy.first) : null;
+    final hasTrail = code == 'S4' || (code == null && _curNode?.mission?.type == 'PATH_TRACE');
+    // capture 원자가 준 실제 촬영 대상(예: "현판·건물 외관") — 없으면 챕터 지령으로.
+    final captureTargets = _actionAtom('capture')?.targets ?? const <String>[];
+    final captureLabel = captureTargets.isNotEmpty ? captureTargets.join('·') : _target.obj;
     return Container(
       decoration: BoxDecoration(gradient: _dialBg),
       child: LayoutBuilder(builder: (ctx, box) {
         return Stack(children: [
           Align(alignment: const Alignment(0, 0.55), child: ClipPath(clipper: _RoofClipper(), child: Container(height: 140, color: const Color(0xFF0C0A08)))),
-          Positioned(top: 58, left: 0, right: 0, child: Center(child: _pill('사진 미션 — 대문·처마를 담아라'))),
+          Positioned(top: 58, left: 0, right: 0, child: Center(child: _pill('사진 미션 — $captureLabel'))),
           // 뷰파인더
           Positioned(
             left: 0, right: 0, top: box.maxHeight * .26,
@@ -1757,9 +1937,9 @@ class _QuestJourneyScreenState extends State<QuestJourneyScreen> with TickerProv
                 _corner(bracket, top: false, left: true), _corner(bracket, top: false, left: false),
                 Positioned(left: 23, right: 23, bottom: 30, child: ClipPath(clipper: _GateClipper(), child: Container(height: 56, color: const Color(0xFF0C0A08)))),
                 if (photoState == 'scanning')
-                  Positioned(bottom: -44, left: 0, right: 0, child: Center(child: _pill('처마 인식 중 · $scan%', border: _teal, textColor: _teal))),
+                  Positioned(bottom: -44, left: 0, right: 0, child: Center(child: _pill('인식 중 · $scan%', border: _teal, textColor: _teal))),
                 if (photoState == 'done')
-                  Positioned(bottom: -44, left: 0, right: 0, child: Center(child: _pill('✓ 인증 완료 — 대문이 마음에 담겼다', border: _tealDeep, textColor: const Color(0xFFBDEEE1)))),
+                  Positioned(bottom: -44, left: 0, right: 0, child: Center(child: _pill('✓ 인증 완료 — 마음에 담겼다', border: _tealDeep, textColor: const Color(0xFFBDEEE1)))),
               ]),
             )),
           ),
@@ -1772,7 +1952,13 @@ class _QuestJourneyScreenState extends State<QuestJourneyScreen> with TickerProv
           if (photoState == 'scanning')
             Positioned(left: 60, right: 60, bottom: 60, child: _progress(scan / 100, grad: const LinearGradient(colors: [_tealDeep, _teal]), track: const Color(0xBF0D0B09))),
           if (photoState == 'done')
-            Positioned(left: 14, right: 14, bottom: 34, child: _cta('길이 열렸다 — 발자국을 따라가라', () => go('trail'))),
+            Positioned(left: 14, right: 14, bottom: 34, child: hasTrail
+                ? _cta('길이 열렸다 — 발자국을 따라가라', () => go('trail'))
+                : _cta('돌아와 조각을 살피다', () {
+                    final idx = _tIdx;
+                    setState(() { fragments = idx + 1; showReward = true; });
+                    _grantChapter(idx);
+                  })),
         ]);
       }),
     );
@@ -1814,19 +2000,21 @@ class _QuestJourneyScreenState extends State<QuestJourneyScreen> with TickerProv
     final fpDefs = [
       (0.20, 0.22, 56.0, -18.0), (0.38, 0.32, 48.0, -24.0), (0.55, 0.42, 40.0, -30.0),
     ];
-    final fragVisible = trail >= 3 && !fragTaken;
+    // follow 원자의 걸음 수 — 화면엔 발자국 3개까지만 배치해뒀으니 그 안으로 클램프.
+    final trailTotal = (_actionAtom('follow')?.steps ?? 3).clamp(1, fpDefs.length);
+    final fragVisible = trail >= trailTotal && !fragTaken;
     return Container(
       decoration: BoxDecoration(gradient: _dialBg),
       child: LayoutBuilder(builder: (ctx, box) {
         return Stack(children: [
           Align(alignment: const Alignment(0, 0.55), child: ClipPath(clipper: _RoofClipper(), child: Container(height: 110, color: const Color(0xFF0C0A08)))),
           Positioned(top: 58, left: 0, right: 0, child: Center(child: Row(mainAxisSize: MainAxisSize.min, children: [
-            _pill('발자국 $trail/3', border: _goldDim, textColor: _gold),
+            _pill('발자국 $trail/$trailTotal', border: _goldDim, textColor: _gold),
             const SizedBox(width: 10),
-            _pill('파편까지 ${12 - trail * 4}m', border: Colors.white, textColor: _soft),
+            _pill('파편까지 ${(trailTotal - trail) * 4}m', border: Colors.white, textColor: _soft),
           ]))),
-          for (var i = 0; i < 3; i++)
-            if (trail >= i && trail < 3)
+          for (var i = 0; i < trailTotal; i++)
+            if (trail >= i && trail < trailTotal)
               Positioned(
                 left: box.maxWidth * fpDefs[i].$1,
                 bottom: box.maxHeight * fpDefs[i].$2,
@@ -1853,14 +2041,18 @@ class _QuestJourneyScreenState extends State<QuestJourneyScreen> with TickerProv
               right: box.maxWidth * .14, bottom: box.maxHeight * .5,
               child: GestureDetector(
                 onTap: () {
-                setState(() { fragTaken = true; showReward = true; fragments = 1; exp += 50; coupon += 500; });
-                _grantChapter(0, extra: [const StateRef(kind: StateKind.coupon, value: '', to: '익선동카페', amount: 500)]);
+                // 챕터 번호 하드코딩(옛 4챕터 종로 대본: 발자국=항상 0번) 제거 —
+                // setState가 fragments를 바꾸면 _tIdx도 같이 바뀌므로, 지금 챕터
+                // 번호를 미리 읽어둔다(먼저 읽어야 옛 값을 잡는다).
+                final idx = _tIdx;
+                setState(() { fragTaken = true; showReward = true; fragments = idx + 1; exp += 50; coupon += 500; });
+                _grantChapter(idx, extra: [const StateRef(kind: StateKind.coupon, value: '', to: '익선동카페', amount: 500)]);
               },
                 child: _Floaty(anim: _float, child: SizedBox(
                   width: 110, height: 110,
                   child: Stack(alignment: Alignment.center, clipBehavior: Clip.none, children: [
                     Container(width: 110, height: 110, decoration: BoxDecoration(shape: BoxShape.circle, gradient: RadialGradient(colors: [_gold.withOpacity(0.45), _gold.withOpacity(0)]))),
-                    _FragShard(glyph: '訓', size: 52),
+                    _FragShard(glyph: _target.hanja, size: 52),
                     Positioned(bottom: -24, child: _pill('탭하여 수집', border: _goldDim, textColor: _gold)),
                   ]),
                 )),
@@ -1897,9 +2089,11 @@ class _QuestJourneyScreenState extends State<QuestJourneyScreen> with TickerProv
   // 11. CAFE — 익선동 카페
   // ════════════════════════════════════════════════════
   Widget _cafeScreen() {
+    // S7(주문 인증) 실제 데이터 — purchase 원자의 메뉴명, 없으면 장소명으로 대체.
+    final menu = _actionAtom('purchase')?.menu ?? '${_target.name} 한 상';
+    final npcLine = _curNode?.npcDialogue.isNotEmpty == true ? _curNode!.npcDialogue : '"${_target.obj}"';
     final cafeCoupon = math.min(coupon, 5000);
     final cafePayN = 5000 - cafeCoupon;
-    final cafeAnswers = [('날개', false), ('더할 익(益)', true), ('물', false)];
     return Container(
       decoration: const BoxDecoration(gradient: LinearGradient(begin: Alignment.topCenter, end: Alignment.bottomCenter, colors: [_ink, Color(0xFF211A14)])),
       child: SafeArea(
@@ -1909,11 +2103,11 @@ class _QuestJourneyScreenState extends State<QuestJourneyScreen> with TickerProv
           child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
             Row(children: [
               Column(crossAxisAlignment: CrossAxisAlignment.start, mainAxisSize: MainAxisSize.min, children: [
-                Text('익선동 한옥 카페', style: dokkaebiTitle(size: 19, color: _cream)),
-                const Text('두 번째 기억 · GPS 인증 완료 ✓', style: TextStyle(fontSize: 11.5, color: _muted)),
+                Text(_target.name, style: dokkaebiTitle(size: 19, color: _cream)),
+                Text('제 ${_tIdx + 1} 장 · GPS 인증 완료 ✓', style: const TextStyle(fontSize: 11.5, color: _muted)),
               ]),
               const Spacer(),
-              _pill('조각 $fragments/4', border: _tealDeep, textColor: _teal),
+              _pill('조각 $fragments/$_stoneTotal', border: _tealDeep, textColor: _teal),
             ]),
             const SizedBox(height: 14),
             // 도깨비 안내
@@ -1927,13 +2121,9 @@ class _QuestJourneyScreenState extends State<QuestJourneyScreen> with TickerProv
                 ])),
                 const SizedBox(width: 12),
                 Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                  const Text('한옥 도깨비 — 단서를 알아본다', style: TextStyle(fontSize: 11, color: _tealDeep, fontWeight: FontWeight.w900)),
+                  Text(_npcName, style: const TextStyle(fontSize: 11, color: _tealDeep, fontWeight: FontWeight.w900)),
                   const SizedBox(height: 4),
-                  RichText(text: TextSpan(style: _gowun(14, _parchInk, height: 1.55), children: const [
-                    TextSpan(text: '"허허, 운현궁에서 '),
-                    TextSpan(text: '申時 단서', style: TextStyle(backgroundColor: Color(0x24C8452C), color: _verm, fontWeight: FontWeight.w700)),
-                    TextSpan(text: '를 얻어 왔구나! 차 한 잔 시키고 둘러보거라."'),
-                  ])),
+                  Text(npcLine, style: _gowun(14, _parchInk, height: 1.55)),
                 ])),
               ]),
             ),
@@ -1946,13 +2136,9 @@ class _QuestJourneyScreenState extends State<QuestJourneyScreen> with TickerProv
                 const Text('주문 인증 미션', style: TextStyle(fontSize: 12, color: _goldDim, fontWeight: FontWeight.w900, letterSpacing: 0.7)),
                 const SizedBox(height: 10),
                 Row(children: [
-                  Container(width: 52, height: 52, alignment: Alignment.center, decoration: BoxDecoration(gradient: const LinearGradient(colors: [Color(0xFF3B332A), Color(0xFF221C15)]), borderRadius: BorderRadius.circular(12)), child: Text('茶', style: dokkaebiTitle(size: 20, color: _gold))),
+                  Container(width: 52, height: 52, alignment: Alignment.center, decoration: BoxDecoration(gradient: const LinearGradient(colors: [Color(0xFF3B332A), Color(0xFF221C15)]), borderRadius: BorderRadius.circular(12)), child: Text(_target.hanja, style: dokkaebiTitle(size: 20, color: _gold))),
                   const SizedBox(width: 12),
-                  Column(crossAxisAlignment: CrossAxisAlignment.start, mainAxisSize: MainAxisSize.min, children: [
-                    const Text('쌍화차', style: TextStyle(fontSize: 15, color: _cream, fontWeight: FontWeight.w700)),
-                    const Text('"쌍화차에 글씨의 온기가 도느니"', style: TextStyle(fontSize: 12, color: _muted)),
-                  ]),
-                  const Spacer(),
+                  Expanded(child: Text(menu, style: const TextStyle(fontSize: 15, color: _cream, fontWeight: FontWeight.w700))),
                   Column(crossAxisAlignment: CrossAxisAlignment.end, mainAxisSize: MainAxisSize.min, children: [
                     const Text('5,000원', style: TextStyle(fontSize: 12, color: _muted, decoration: TextDecoration.lineThrough)),
                     Text(_won(cafePayN), style: const TextStyle(fontSize: 17, color: _gold, fontWeight: FontWeight.w900)),
@@ -1970,7 +2156,17 @@ class _QuestJourneyScreenState extends State<QuestJourneyScreen> with TickerProv
                 ),
                 const SizedBox(height: 12),
                 if (!cafeOrdered)
-                  _cta('영수증 촬영으로 인증하기', () => setState(() { cafeOrdered = true; spent += cafePayN; coupon = 0; }), fontSize: 15)
+                  _cta('영수증 촬영으로 인증하기', () {
+                    final idx = _tIdx;
+                    setState(() {
+                      cafeOrdered = true;
+                      spent += cafePayN;
+                      coupon = 0;
+                      fragments = idx + 1;
+                      showReward = true;
+                    });
+                    _grantChapter(idx);
+                  }, fontSize: 15)
                 else
                   Container(
                     padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
@@ -1983,45 +2179,6 @@ class _QuestJourneyScreenState extends State<QuestJourneyScreen> with TickerProv
                   ),
               ]),
             ),
-            // 퀴즈(주문 후)
-            if (cafeOrdered) ...[
-              const SizedBox(height: 12),
-              Container(
-                padding: const EdgeInsets.all(16),
-                decoration: BoxDecoration(color: _cream.withOpacity(0.05), borderRadius: BorderRadius.circular(16), border: Border.all(color: Colors.white.withOpacity(0.1))),
-                child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                  Text('"이 골목 이름 익선동의 \'익\'은 무엇을 뜻하겠느냐?"', style: dokkaebiTitle(size: 15, color: _cream)),
-                  const SizedBox(height: 11),
-                  Row(children: [
-                    for (var i = 0; i < cafeAnswers.length; i++) ...[
-                      if (i > 0) const SizedBox(width: 8),
-                      Expanded(child: _cafeOption(cafeAnswers[i].$1, cafeAnswers[i].$2)),
-                    ],
-                  ]),
-                  if (cafeState == 'wrong') ...[
-                    const SizedBox(height: 10),
-                    Text('"더할수록 복이 온다는 뜻이니라 — 다시 보거라."', style: dokkaebiTitle(size: 12.5, color: const Color(0xFFE8A08D))),
-                  ],
-                  if (cafeState == 'correct') ...[
-                    const SizedBox(height: 12),
-                    RewardPopIn(
-                      child: Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
-                      decoration: BoxDecoration(color: _goldDim.withOpacity(0.1), borderRadius: BorderRadius.circular(12), border: Border.all(color: _gold.withOpacity(0.5))),
-                      child: Row(children: [
-                        _FragShard(glyph: '民', size: 30, fontSize: 12),
-                        const SizedBox(width: 10),
-                        const Expanded(child: Text('글씨조각 「민(民)」 획득 · 단서 「ㄱ」', style: TextStyle(fontSize: 13, color: _gold, fontWeight: FontWeight.w900))),
-                        const Text('쿠폰 +1,300원', style: TextStyle(fontSize: 10.5, color: Color(0xFFA87F2C), fontWeight: FontWeight.w900)),
-                      ]),
-                      ),
-                    ),
-                    const SizedBox(height: 12),
-                    _cta('지도로 — 다음 기억을 찾아서', () => go('map'), bg: const Color(0xFFC89A3A), fg: const Color(0xFF3A2A08), gradient: _goldGrad),
-                  ],
-                ]),
-              ),
-            ],
             const SizedBox(height: 20),
             // 남은 여비
             Container(
@@ -2043,34 +2200,6 @@ class _QuestJourneyScreenState extends State<QuestJourneyScreen> with TickerProv
     );
   }
 
-  Widget _cafeOption(String label, bool correct) {
-    final picked = cafeState == 'correct' && correct;
-    return GestureDetector(
-      onTap: () {
-        if (cafeState == 'correct') return;
-        if (correct) {
-          setState(() { cafeState = 'correct'; fragments = 2; exp += 40; coupon = 1300; });
-          hint.noteProgress();
-          _grantChapter(1, extra: [const StateRef(kind: StateKind.coupon, value: '', to: '인사동', amount: 1000)]);
-        } else {
-          setState(() => cafeState = 'wrong');
-          hint.noteFailure();
-        }
-      },
-      child: AnimatedContainer(
-        duration: const Duration(milliseconds: 180),
-        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 12),
-        alignment: Alignment.center,
-        decoration: BoxDecoration(
-          color: picked ? _tealDeep.withOpacity(0.16) : _inkDeep.withOpacity(0.5),
-          borderRadius: BorderRadius.circular(11),
-          border: Border.all(color: picked ? _tealDeep : Colors.white.withOpacity(0.12), width: picked ? 1.5 : 1),
-        ),
-        child: Text(picked ? '✓ $label' : label, style: TextStyle(fontSize: 13.5, color: picked ? _teal : const Color(0xFFE8DCC4), fontWeight: FontWeight.w700)),
-      ),
-    );
-  }
-
   // ════════════════════════════════════════════════════
   // 12. INSA — 인사동 붓방
   // ════════════════════════════════════════════════════
@@ -2081,7 +2210,7 @@ class _QuestJourneyScreenState extends State<QuestJourneyScreen> with TickerProv
       child: LayoutBuilder(builder: (ctx, box) {
         return Stack(children: [
           // left: 58 — 좌상단 뒤로가기 버튼 자리를 비켜준다.
-          Positioned(top: 58, left: 58, right: 14, child: Row(children: [_pill('인사동 · 세 번째 기억'), const Spacer(), _pill('조각 $fragments/4', border: _tealDeep, textColor: _teal)])),
+          Positioned(top: 58, left: 58, right: 14, child: Row(children: [_pill('인사동 · 세 번째 기억'), const Spacer(), _pill('조각 $fragments/$_stoneTotal', border: _tealDeep, textColor: _teal)])),
           // 간판
           Positioned(
             left: 0, right: 0, top: box.maxHeight * .27,
@@ -2182,9 +2311,11 @@ class _QuestJourneyScreenState extends State<QuestJourneyScreen> with TickerProv
       onTap: () {
         if (insaState == 'opened') return;
         if (isAnswer) {
-          setState(() { insaPick = t; insaState = 'opened'; fragments = 3; exp += 40; });
+          // 챕터 번호 하드코딩(옛 4챕터 종로 대본: 인사동=항상 2번) 제거.
+          final idx = _tIdx;
+          setState(() { insaPick = t; insaState = 'opened'; fragments = idx + 1; exp += 40; });
           hint.noteProgress();
-          _grantChapter(2);
+          _grantChapter(idx);
         } else {
           setState(() { insaPick = t; insaState = 'wrong'; });
           hint.noteFailure();
