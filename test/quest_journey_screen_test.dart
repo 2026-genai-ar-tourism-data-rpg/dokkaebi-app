@@ -18,10 +18,20 @@
 //            (경주 코스에서도 '운현궁은 누구의 집?' 정답=흥선대원군이 나왔다.)
 //            미션 타입 → 스테이지 매핑과 노드 퀴즈·NPC 사용을 검증한다.
 // 구현일: 2026-08-22 | 작성: kys (play-path-unify/kys/v1)
+// ------------------------------------------------------------
+// [v4] 이동 단계 실제 GPS 도착 인증 — 가짜 위치·가짜 서버로 분기를 잠근다.
+// 구현(요약): 코스가 있으면 걷기 시뮬레이션 대신 서버 판정(verify-location)을 통과해야 소환된다.
+//            통과·반경 밖·권한 영구 거부·서버 연결 실패·좌표 없는 장소(확인 없이 진행)·이미 인증한
+//            장소·개발자 옵션(장소 좌표 전송)·조각 기록 시 재인증 없음·지도 카드 실제 거리를 검증.
+//            코스 없는 데모 모드는 시뮬레이션 그대로라 기존 시뮬레이션 테스트는 데모로 옮겼다.
+// 구현일: 2026-09-12 | 작성: ljs (mission-strategy-routing/ljs/v1)
 // ============================================================
 import 'dart:convert';
 
 import 'package:dokkaebi_app/api/api_client.dart';
+import 'package:dokkaebi_app/debug_flags.dart';
+import 'package:dokkaebi_app/game/location_service.dart';
+import 'package:dokkaebi_app/game/run_session.dart';
 import 'package:dokkaebi_app/models/scenario.dart';
 import 'package:dokkaebi_app/screens/quest_journey_screen.dart';
 import 'package:dokkaebi_app/store.dart';
@@ -33,6 +43,94 @@ import 'package:http/testing.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 const sid = 'jongno_1';
+
+/// 가짜 위치 — 실기기 없이 도착 인증 분기를 검증한다(주입 안 하면 플랫폼 채널을 기다린다).
+class _StubLocation extends LocationService {
+  const _StubLocation(this.result);
+  final LocationResult result;
+
+  @override
+  Future<LocationResult> current({Duration timeout = const Duration(seconds: 15)}) async => result;
+}
+
+/// 노드 좌표(_stone: 37.57, 126.98) 바로 그 자리.
+const _atSpot = _StubLocation(LocationResult.ok(37.57, 126.98, 5.0));
+
+/// 위치를 못 읽는 상태 — 도착 인증까지 가지 않는 테스트의 기본값.
+const _noFix = _StubLocation(LocationResult.fail(LocationFailure.timeout));
+
+/// 서버 도착 판정 응답(verify-location).
+Map<String, dynamic> _verdict({bool verified = true, String? reason}) => {
+      'verified': verified,
+      'distance_m': verified ? 8 : 312,
+      'required_radius_m': 100,
+      'state': verified ? 'GPS_VERIFIED' : 'ARRIVED',
+      'npc_spawned': verified,
+      'reason': reason,
+    };
+
+http.Response _json(Object body) => http.Response(
+      jsonEncode(body),
+      200,
+      headers: {'content-type': 'application/json; charset=utf-8'},
+    );
+
+/// 가짜 게임 서버 — run 열기·조회·도착 판정·조각·완료에 응답하고 받은 요청을 기록한다.
+class _FakeQuestServer {
+  _FakeQuestServer({
+    required this.scenarioId,
+    Map<String, dynamic>? verdict,
+    this.verifiedNodeIds = const [],
+    this.openRunStatus = 200,
+  }) : verdict = verdict ?? _verdict();
+
+  final String scenarioId;
+  final Map<String, dynamic> verdict;
+  final List<String> verifiedNodeIds;
+  final int openRunStatus;
+  final requests = <http.Request>[];
+
+  /// 경로에 [part]가 들어간 요청 수.
+  int count(String part) => requests.where((r) => r.url.path.contains(part)).length;
+
+  RunSession session() =>
+      RunSession(api: ApiClient(baseUrl: 'http://test', client: MockClient(_handle)));
+
+  Future<http.Response> _handle(http.Request req) async {
+    requests.add(req);
+    final path = req.url.path;
+    final run = {
+      'run_id': 'r1',
+      'scenario_id': scenarioId,
+      'state': 'IN_PROGRESS',
+      'verified_node_ids': verifiedNodeIds,
+    };
+    if (path == '/v1/runs') {
+      return openRunStatus == 200 ? _json(run) : http.Response('error', openRunStatus);
+    }
+    if (path == '/v1/runs/r1') return _json(run);
+    if (path.endsWith('/verify-location')) return _json(verdict);
+    if (path.endsWith('/collect')) {
+      return _json({
+        'fragment_id': 'frag',
+        'collected': true,
+        'already_collected': false,
+        'progress': 1,
+        'required': 2,
+      });
+    }
+    if (path.endsWith('/complete')) {
+      return _json({
+        'state': 'REWARDED',
+        'exp_gained': 10,
+        'already_rewarded': false,
+        'progress': 1,
+        'required': 2,
+      });
+    }
+    return http.Response('{}', 404);
+  }
+}
 
 Map<String, dynamic> _stone(
   String id,
@@ -96,17 +194,56 @@ Scenario _jongno() => Scenario.fromJson({
       ],
     });
 
-Future<void> _pump(WidgetTester tester, Scenario? sc, {ApiClient? apiClient}) async {
-  await tester.pumpWidget(MaterialApp(home: QuestJourneyScreen(scenario: sc, apiClient: apiClient)));
+/// 위치는 기본으로 "못 읽음" 스텁을 준다 — 코스가 있으면 화면이 실제 GPS를 읽으려 하기 때문.
+Future<void> _pump(WidgetTester tester, Scenario? sc,
+    {ApiClient? apiClient, RunSession? runSession, LocationService location = _noFix}) async {
+  await tester.pumpWidget(MaterialApp(
+    home: QuestJourneyScreen(
+        scenario: sc, apiClient: apiClient, runSession: runSession, locationService: location),
+  ));
   await tester.pump(const Duration(milliseconds: 400));
 }
 
 /// 챕터 목록이 그려지는 화면(map)까지 진행.
 /// app#26에서 '새 여정 꾸리기(setup)' 화면이 사라지고 map이 첫 화면이 됐다 —
 /// 예전에는 여기서 '도깨비에게 길 묻기'를 눌러 넘어갔다(그 버튼은 이제 없다).
-Future<void> _toMap(WidgetTester tester, Scenario? sc, {ApiClient? apiClient}) async {
-  await _pump(tester, sc, apiClient: apiClient);
+Future<void> _toMap(WidgetTester tester, Scenario? sc,
+    {ApiClient? apiClient, RunSession? runSession, LocationService location = _noFix}) async {
+  await _pump(tester, sc, apiClient: apiClient, runSession: runSession, location: location);
   await tester.pump(const Duration(milliseconds: 500));
+}
+
+/// 코스를 저장하고 지도 → 이동 화면을 연 뒤 "GPS 도착 인증"을 누른다(실제 GPS 모드).
+Future<void> _tapArrival(WidgetTester tester, Scenario sc, _FakeQuestServer server,
+    {ApiClient? apiClient, LocationService location = _atSpot}) async {
+  await ScenarioStore.I.add(sc);
+  await _toMap(tester, sc, apiClient: apiClient, runSession: server.session(), location: location);
+  await tester.tap(find.text('이동 시작 — GPS 추적'));
+  await tester.pump(const Duration(milliseconds: 50)); // 이동 화면 진입 + 거리 갱신
+  await tester.tap(find.text('GPS 도착 인증'));
+  await tester.pump(const Duration(milliseconds: 50)); // 도착 판정 응답
+  await tester.pump();
+}
+
+/// 챕터 지도 → 이동 → 도착 인증 → 소환 → "말 걸기"까지 실제로 눌러서 진행.
+/// 코스가 있으면 실제 GPS 모드(가짜 위치·가짜 서버로 통과), 없으면 데모 시뮬레이션.
+Future<void> _toDialogue(WidgetTester tester, Scenario? sc, {ApiClient? apiClient}) async {
+  if (sc == null) {
+    await _toMap(tester, null, apiClient: apiClient);
+    await tester.tap(find.text('이동 시작 — GPS 추적'));
+    await tester.pump();
+    await tester.tap(find.text('걷기 시작 (GPS 시뮬레이션)'));
+    // gpsDist 550 → 48/tick(130ms)씩 감소, 30 이하까지 넉넉히 펌프.
+    await tester.pump(const Duration(milliseconds: 1600));
+    await tester.tap(find.text('GPS 도착 인증'));
+    await tester.pump(); // screen='summon', summonPhase='scan'
+  } else {
+    await _tapArrival(tester, sc, _FakeQuestServer(scenarioId: sc.scenarioId),
+        apiClient: apiClient);
+  }
+  await tester.pump(const Duration(milliseconds: 1600)); // summonTimer(1500ms) → 'appear'
+  await tester.tap(find.text('말 걸기'));
+  await tester.pump();
 }
 
 void main() {
@@ -293,8 +430,9 @@ void main() {
   // 현상을 재현·격리하기 위한 테스트 — 입력 주입(합성 터치) 문제인지 위젯 자체
   // 버그인지 UI 탐색 없이 가른다.
   group('GPS 시뮬레이션', () {
+    // 코스가 있으면 실제 GPS 모드라 걷기 버튼이 없다 — 시뮬레이션은 데모 모드(코스 없음)에만 남는다.
     testWidgets('이동 시작 → 걷기 시작을 누르면 거리가 줄고 걷는 중으로 바뀐다', (tester) async {
-      await _toMap(tester, _jongno());
+      await _toMap(tester, null);
       expect(tester.takeException(), isNull);
 
       await tester.tap(find.text('이동 시작 — GPS 추적'));
@@ -338,25 +476,6 @@ void main() {
             _dialogueNode('b2', '해운대해수욕장', finale: true),
           ],
         });
-
-    /// 챕터 지도 → GPS 이동 → 도착 인증 → 소환 → "말 걸기"까지 실제로 눌러서 진행.
-    Future<void> _toDialogue(WidgetTester tester, Scenario? sc, {ApiClient? apiClient}) async {
-      if (sc != null) await ScenarioStore.I.add(sc);
-      await _toMap(tester, sc, apiClient: apiClient);
-
-      await tester.tap(find.text('이동 시작 — GPS 추적'));
-      await tester.pump();
-      await tester.tap(find.text('걷기 시작 (GPS 시뮬레이션)'));
-      // gpsDist 550 → 48/tick(130ms)씩 감소, 30 이하까지 넉넉히 펌프.
-      await tester.pump(const Duration(milliseconds: 1600));
-
-      await tester.tap(find.text('GPS 도착 인증'));
-      await tester.pump(); // screen='summon', summonPhase='scan'
-      await tester.pump(const Duration(milliseconds: 1600)); // summonTimer(1500ms) → 'appear'
-
-      await tester.tap(find.text('말 걸기'));
-      await tester.pump();
-    }
 
     testWidgets('실제 코스 노드는 AI가 지은 대사를 보여준다 — 운현궁이 아니다', (tester) async {
       await _toDialogue(tester, _busan());
@@ -449,19 +568,7 @@ void main() {
         });
 
     testWidgets('defeat 원자의 몬스터 이름·마릿수가 뜬다 — 먹그림자/5 하드코딩 아님', (tester) async {
-      final sc = _huntCourse();
-      await ScenarioStore.I.add(sc);
-      await _toMap(tester, sc);
-
-      await tester.tap(find.text('이동 시작 — GPS 추적'));
-      await tester.pump();
-      await tester.tap(find.text('걷기 시작 (GPS 시뮬레이션)'));
-      await tester.pump(const Duration(milliseconds: 1600));
-      await tester.tap(find.text('GPS 도착 인증'));
-      await tester.pump();
-      await tester.pump(const Duration(milliseconds: 1600));
-      await tester.tap(find.text('말 걸기'));
-      await tester.pump();
+      await _toDialogue(tester, _huntCourse());
 
       // C(바로 진행) — dialogueTurn을 안 타는 선택지라 API 스텁 없이 진행 가능.
       await tester.tap(find.text('"그냥 빨리 찾겠소."'));
@@ -479,6 +586,150 @@ void main() {
       expect(find.text('먹그림자 처치'), findsNothing);
       expect(find.textContaining('/ 4', findRichText: true), findsOneWidget);
       expect(find.textContaining('/ 5', findRichText: true), findsNothing);
+    });
+  });
+
+  // mission-strategy-routing/ljs/v1 — 이동 단계를 실제 GPS 도착 인증으로 바꾼 것(계획 0-2).
+  group('실제 GPS 도착 인증', () {
+    Scenario quizCourse() => Scenario.fromJson({
+          'scenario_id': 'gyeongju_arrival',
+          'title': '경주시의 기억석',
+          'region': '경주시',
+          'node_sequence': [
+            _rich('q1', '첨성대', 'QUIZ_FIND', quiz: {
+              'q': '첨성대는 무엇을 살피던 곳이더냐?',
+              'options': ['별', '물', '바람'],
+              'answer': 0,
+              'wrong_hint': '하늘을 보거라',
+            }),
+            _rich('q2', '월성', 'RESTORE_AR'),
+          ],
+        });
+
+    testWidgets('서버 판정을 통과하면 소환으로 넘어간다 — 걷기 시뮬레이션은 없다', (tester) async {
+      final sc = quizCourse();
+      final server = _FakeQuestServer(scenarioId: sc.scenarioId);
+      await ScenarioStore.I.add(sc);
+      await _toMap(tester, sc, runSession: server.session(), location: _atSpot);
+      await tester.tap(find.text('이동 시작 — GPS 추적'));
+      await tester.pump(const Duration(milliseconds: 50));
+      expect(find.text('걷기 시작 (GPS 시뮬레이션)'), findsNothing);
+
+      await tester.tap(find.text('GPS 도착 인증'));
+      await tester.pump(const Duration(milliseconds: 50));
+      await tester.pump(const Duration(milliseconds: 1600));
+
+      expect(tester.takeException(), isNull);
+      expect(server.count('verify-location'), 1);
+      expect(find.text('말 걸기'), findsOneWidget);
+    });
+
+    testWidgets('반경 밖이면 사유와 다시 확인만 보이고 소환되지 않는다', (tester) async {
+      final sc = quizCourse();
+      final server = _FakeQuestServer(
+          scenarioId: sc.scenarioId, verdict: _verdict(verified: false, reason: 'OUT_OF_RANGE'));
+      await _tapArrival(tester, sc, server);
+      await tester.pump(const Duration(milliseconds: 1600));
+
+      expect(find.textContaining('312m 떨어져'), findsOneWidget);
+      expect(find.text('다시 확인'), findsOneWidget);
+      expect(find.text('말 걸기'), findsNothing);
+    });
+
+    testWidgets('위치 권한이 영구 거부면 설정 열기를 보여주고 서버에 묻지 않는다', (tester) async {
+      final sc = quizCourse();
+      final server = _FakeQuestServer(scenarioId: sc.scenarioId);
+      await _tapArrival(tester, sc, server,
+          location: const _StubLocation(LocationResult.fail(LocationFailure.deniedForever)));
+
+      expect(find.text('설정 열기'), findsOneWidget);
+      expect(find.text('다시 확인'), findsOneWidget);
+      expect(server.count('verify-location'), 0);
+    });
+
+    testWidgets('서버에 연결되지 않으면 다시 확인 때 run부터 다시 연다', (tester) async {
+      final sc = quizCourse();
+      final server = _FakeQuestServer(scenarioId: sc.scenarioId, openRunStatus: 500);
+      await _tapArrival(tester, sc, server);
+
+      expect(find.textContaining('플레이 시작에 실패'), findsOneWidget);
+      expect(find.text('다시 확인'), findsOneWidget);
+      expect(server.count('verify-location'), 0);
+      expect(server.count('/v1/runs'), 2, reason: '화면 진입 때 1번 + 도착 인증 때 다시 열기 1번');
+    });
+
+    testWidgets('좌표 없는 장소라고 하면 위치 확인 없이 진행할 수 있다', (tester) async {
+      final sc = quizCourse();
+      final server = _FakeQuestServer(
+          scenarioId: sc.scenarioId,
+          verdict: _verdict(verified: false, reason: 'NODE_HAS_NO_COORDS'));
+      await _tapArrival(tester, sc, server);
+      expect(find.textContaining('서버에 기록되지 않느니라'), findsOneWidget);
+
+      await tester.tap(find.text('위치 확인 없이 진행'));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 1600));
+
+      expect(find.text('말 걸기'), findsOneWidget);
+    });
+
+    testWidgets('이미 도착 인증한 장소는 다시 묻지 않는다 — 서버 run 기록 기준', (tester) async {
+      final sc = quizCourse();
+      await ScenarioStore.I.setRunId(sc.scenarioId, 'r1'); // 앱 재시작 후 같은 run을 되살리는 상황
+      final server = _FakeQuestServer(scenarioId: sc.scenarioId, verifiedNodeIds: const ['q1']);
+      await _tapArrival(tester, sc, server);
+      await tester.pump(const Duration(milliseconds: 1600));
+
+      expect(server.count('verify-location'), 0);
+      expect(find.text('말 걸기'), findsOneWidget);
+    });
+
+    testWidgets('개발자 옵션을 켜면 실제 위치 대신 장소 좌표로 도착 인증을 요청한다', (tester) async {
+      DebugFlags.skipGpsVerify = true;
+      addTearDown(() => DebugFlags.skipGpsVerify = false);
+      final sc = quizCourse();
+      final server = _FakeQuestServer(scenarioId: sc.scenarioId);
+      await _tapArrival(tester, sc, server,
+          location: const _StubLocation(LocationResult.ok(0.0, 0.0, 5.0))); // 실제 위치는 아주 먼 곳
+
+      final verify = server.requests.singleWhere((r) => r.url.path.endsWith('/verify-location'));
+      final body = jsonDecode(verify.body) as Map<String, dynamic>;
+      expect(body['lat'], 37.57);
+      expect(body['lng'], 126.98);
+      expect(body.containsKey('accuracy_m'), isFalse);
+    });
+
+    testWidgets('조각을 기록할 때는 위치 인증을 다시 요청하지 않는다', (tester) async {
+      final sc = quizCourse();
+      final server = _FakeQuestServer(scenarioId: sc.scenarioId);
+      await _tapArrival(tester, sc, server);
+      await tester.pump(const Duration(milliseconds: 1600));
+      await tester.tap(find.text('말 걸기'));
+      await tester.pump();
+      await tester.tap(find.text('"그냥 빨리 찾겠소."'));
+      await tester.pump();
+      await tester.tap(find.text('계속 — 도깨비의 시험'));
+      await tester.pump();
+      await tester.tap(find.text('별'));
+      await tester.pump();
+      await tester.tap(find.text('계속하기'));
+      await tester.pump(const Duration(milliseconds: 100));
+      await tester.pump(const Duration(milliseconds: 100));
+
+      expect(tester.takeException(), isNull);
+      expect(server.count('verify-location'), 1, reason: '도착 때 한 번뿐이어야 한다');
+      expect(server.count('/collect'), 1);
+      expect(server.count('/complete'), 1);
+    });
+
+    testWidgets('지도 카드 거리는 코스 출발점이 아니라 지금 위치 기준이다', (tester) async {
+      // 노드(37.57, 126.98)에서 북쪽으로 위도 0.01° ≈ 1.1km 떨어진 곳.
+      await _toMap(tester, _course(3),
+          location: const _StubLocation(LocationResult.ok(37.58, 126.98, 5.0)));
+
+      expect(find.textContaining('까지 1.1km'), findsOneWidget);
+      expect(find.textContaining('까지 550m'), findsNothing,
+          reason: '코스 출발점 기준 거리(dist_m)가 남아 있다');
     });
   });
 }

@@ -1,4 +1,19 @@
 // ============================================================
+// [v5] 이동 단계를 실제 GPS 도착 인증으로 — 걷기 시뮬레이션·조각 기록 시점 위치 확인 제거.
+// 구현(요약): 이동 화면이 걷기 애니메이션으로 거리를 줄이고 "GPS 도착 인증"은 위치 확인 없이
+//            통과했다. 실제 위치는 미션을 끝내고 조각을 기록할 때만 확인해, 그 자리에 없으면
+//            안내만 뜨고 연출은 계속됐다(서버 기록만 빠짐).
+//            → 지도·이동 화면에 있는 동안 현재 위치를 주기적으로 읽어 목표까지 실제 거리를
+//              보여주고(코스 출발점 기준 거리 대체), 도착 인증은 서버 판정(verify-location)을
+//              통과해야 소환으로 넘어간다. 실패하면 사유 안내 + 다시 확인(권한 영구 거부·위치
+//              서비스 꺼짐이면 설정 열기). 서버가 좌표 없는 장소라고 하면 "위치 확인 없이
+//              진행" 탈출구를 준다(그 장소 조각은 서버에 기록되지 않는다고 안내).
+//            조각 기록(_recordOnServer)은 위치를 다시 보지 않는다 — 도착 때 서버에 방문이 남는다.
+//            개발자 옵션(GPS 인증 건너뛰기)도 도착 인증 시점으로 옮겼다. 이미 인증한 장소는
+//            서버 run 기록으로 판단해 다시 묻지 않는다. 코스 데이터 없는 데모 모드는 시뮬레이션 유지.
+//            테스트가 가짜 서버를 붙이도록 RunSession을 주입받는다(기본 RunSession.I).
+// 구현일: 2026-09-12 | 작성: ljs (mission-strategy-routing/ljs/v1)
+// ------------------------------------------------------------
 // [v4] "기억석 컬렉션" 모달(_collSheet/_collCard)도 v2와 같은 하드코딩 버그가
 //      남아있었다 — collDefs가 종로 훈민정음 4장 고정 텍스트였고 루프도
 //      `i < 4` 고정이라, 다른 지역·5조각 이상 코스에서도 늘 같은 4장이 뜨고
@@ -51,11 +66,26 @@ import '../game/hint_ladder_controller.dart';
 import '../game/player_state.dart';
 import '../game/location_service.dart';
 import '../game/run_session.dart';
+import '../models/run.dart';
 import '../models/scenario.dart';
 import '../store.dart';
 import '../theme.dart';
 import '../widgets/native_ar_view.dart';
 import '../widgets/reward_pop.dart';
+import 'create_scenario_screen.dart' show haversineMeters;
+
+// ── 실제 GPS 도착 인증 ────────────────────────────────
+/// 지도·이동 화면에 있는 동안 현재 위치를 다시 읽는 주기.
+const _gpsPollInterval = Duration(seconds: 5);
+
+/// "걸어서 약 N분" 표시에 쓰는 걷는 속도(m/분).
+const _walkMetersPerMinute = 70;
+
+/// 데모 모드(코스 데이터 없음) 시뮬레이션의 도착 반경(m).
+const _demoArriveRadiusM = 30;
+
+/// 도착 인증 실패 — 안내 문구와 다음 행동(설정 열기·위치 확인 없이 진행)을 고르는 근거.
+typedef _ArrivalFailure = ({String message, bool needsSettings, bool noCoords});
 
 // ── 시안 팔레트(로컬 상수) ──────────────────────────────
 const _ink = Color(0xFF17130F); // 먹빛
@@ -118,11 +148,15 @@ class QuestJourneyScreen extends StatefulWidget {
   /// 대화(A/B 선택지 답변)에 쓸 API 클라이언트. 테스트가 MockClient로 갈아끼운다.
   final ApiClient? apiClient;
 
+  /// 서버 플레이 세션(run·도착 판정·조각 기록). 테스트가 가짜 서버를 붙인 세션으로 갈아끼운다.
+  final RunSession? runSession;
+
   const QuestJourneyScreen({
     super.key,
     this.scenario,
     this.locationService = const LocationService(),
     this.apiClient,
+    this.runSession,
   });
   @override
   State<QuestJourneyScreen> createState() => _QuestJourneyScreenState();
@@ -136,6 +170,24 @@ class _QuestJourneyScreenState extends State<QuestJourneyScreen> with TickerProv
   String? flag;
   int dlgStep = 0;
   late final ApiClient _api = widget.apiClient ?? ApiClient();
+  RunSession get _session => widget.runSession ?? RunSession.I;
+
+  // ── 실제 GPS 도착 인증(코스 데이터가 있을 때) ──
+  /// 마지막으로 읽은 현재 위치 → _liveDistNodeId 장소까지 거리(m).
+  int? _liveDistM;
+  String? _liveDistNodeId;
+  double? _liveAccuracyM;
+
+  /// 현재 위치를 못 읽은 사유(권한·신호). 읽으면 null.
+  String? _locError;
+  bool _locating = false; // 위치 읽기가 겹치지 않게
+  Timer? _gpsPollTimer;
+
+  /// 도착 판정 요청 중 — 버튼 연타 방지.
+  bool _arriving = false;
+
+  /// 도착 인증 실패 안내. null이면 안내 없음.
+  _ArrivalFailure? _arrivalFailure;
   // A/B("사연이오?"/"보상은?")는 dialogueTurn으로 실제 장소 정보를 물어 받는다.
   // C(바로 진행)는 안 물어보므로 대상 없음. 실패하면 _npcLines 고정 문구로 폴백.
   bool _dialogueLoading = false;
@@ -224,6 +276,7 @@ class _QuestJourneyScreenState extends State<QuestJourneyScreen> with TickerProv
       if (mounted) setState(() => _arSupported = ok);
     });
     _ensureRun();
+    _startGpsPolling();
   }
 
   /// 서버 run을 연다(이미 열려 있으면 그대로 쓴다).
@@ -234,7 +287,7 @@ class _QuestJourneyScreenState extends State<QuestJourneyScreen> with TickerProv
   Future<void> _ensureRun() async {
     final s = widget.scenario;
     if (s == null) return;
-    await RunSession.I.start(s.scenarioId);
+    await _session.start(s.scenarioId);
   }
 
   /// 저장된 진행 복원 — 갈림길 선택·인벤토리를 먼저 읽어야 경로가 확정된다.
@@ -415,6 +468,7 @@ class _QuestJourneyScreenState extends State<QuestJourneyScreen> with TickerProv
     _walkTimer?.cancel();
     _scanTimer?.cancel();
     _summonTimer?.cancel();
+    _gpsPollTimer?.cancel();
     _hint?.removeListener(_onHintChanged);
     _hint?.dispose();
     super.dispose();
@@ -476,6 +530,110 @@ class _QuestJourneyScreenState extends State<QuestJourneyScreen> with TickerProv
         }
       });
     });
+  }
+
+  /// 이 챕터를 실제 GPS로 인증하는가 — 코스 노드가 있으면 실제, 없으면(데모) 시뮬레이션.
+  bool _usesRealGps(_Target t) => widget.scenario != null && t.node != null;
+
+  /// 마지막으로 읽은 위치 기준 이 챕터 장소까지 거리. 아직 못 읽었으면 null.
+  int? _liveDistTo(_Target t) =>
+      t.node != null && _liveDistNodeId == t.node!.nodeId ? _liveDistM : null;
+
+  static String _distLabel(int m) =>
+      m >= 1000 ? '${(m / 1000).toStringAsFixed(1)}km' : '${m}m';
+
+  /// 지도·이동 화면에 있는 동안 현재 위치를 주기적으로 읽는다(데모 모드는 시뮬레이션이라 안 읽음).
+  void _startGpsPolling() {
+    if (widget.scenario == null) return;
+    _refreshLiveDistance();
+    _gpsPollTimer = Timer.periodic(_gpsPollInterval, (_) => _refreshLiveDistance());
+  }
+
+  /// 현재 위치 → 지금 목표 장소까지 실제 거리 갱신. 미션 등 다른 화면에서는 읽지 않는다.
+  Future<void> _refreshLiveDistance() async {
+    if (_locating || (screen != 'map' && screen != 'gps')) return;
+    final n = (screen == 'gps' ? targets[gpsIdx] : _target).node;
+    if (n == null || n.mapY == null || n.mapX == null) return;
+    _locating = true;
+    final loc = await widget.locationService.current();
+    _locating = false;
+    if (!mounted) return;
+    setState(() {
+      if (loc.isOk) {
+        _liveDistM = haversineMeters(loc.lat!, loc.lng!, n.mapY!, n.mapX!).round();
+        _liveDistNodeId = n.nodeId;
+        _liveAccuracyM = loc.accuracyM;
+        _locError = null;
+      } else {
+        _locError = loc.message;
+      }
+    });
+  }
+
+  /// 도착 인증(실제 GPS) — 서버 판정을 통과해야 소환(_verifyGps)으로 넘어간다.
+  /// 실패하면 사유와 다음 행동(다시 확인·설정 열기·위치 확인 없이 진행)을 보여준다.
+  Future<void> _arrive() async {
+    if (_arriving) return;
+    final t = targets[gpsIdx];
+    // 피날레 안내 모드는 위치와 무관하다 — 판정 요청 전에 먼저 보여준다.
+    final check = _checkTarget(t);
+    if (check != null && check.needsGuidance) {
+      setState(() => guidance = check);
+      return;
+    }
+    // 이미 도착 인증한 장소(재진입·앱 재시작)는 다시 묻지 않는다 — 서버 run 기록 기준.
+    if (_session.isVerified(t.node!.nodeId)) {
+      _verifyGps();
+      return;
+    }
+    setState(() {
+      _arriving = true;
+      _arrivalFailure = null;
+    });
+    final failure = await _requestArrival(t.node!);
+    if (!mounted) return;
+    setState(() {
+      _arriving = false;
+      _arrivalFailure = failure;
+    });
+    if (failure == null) _verifyGps();
+  }
+
+  /// 서버에 도착 판정을 요청한다. 통과면 null, 아니면 실패 사유.
+  /// 디버그 빌드에서 개발자 옵션을 켜면 실제 위치 대신 장소 좌표를 보낸다(이동 없이 테스트).
+  Future<_ArrivalFailure?> _requestArrival(QuestNode n) async {
+    _ArrivalFailure fail(String message, {bool needsSettings = false, bool noCoords = false}) =>
+        (message: message, needsSettings: needsSettings, noCoords: noCoords);
+
+    // run이 없으면(앞서 서버 연결 실패) 여기서 다시 연다 — 다시 확인이 곧 재시도다.
+    if (!_session.isActive && !await _session.start(widget.scenario!.scenarioId)) {
+      return fail(_session.error ?? '서버에 연결되지 않았느니라.');
+    }
+    final double lat, lng;
+    double? accuracyM;
+    if (kDebugMode && DebugFlags.skipGpsVerify && n.mapY != null && n.mapX != null) {
+      lat = n.mapY!;
+      lng = n.mapX!;
+    } else {
+      final loc = await widget.locationService.current();
+      if (!loc.isOk) return fail(loc.message, needsSettings: loc.needsSettings);
+      lat = loc.lat!;
+      lng = loc.lng!;
+      accuracyM = loc.accuracyM;
+    }
+    final verdict =
+        await _session.verify(nodeId: n.nodeId, lat: lat, lng: lng, accuracyM: accuracyM);
+    if (verdict == null) return fail(_session.error ?? '서버와 통신하지 못했느니라.');
+    if (!verdict.verified) {
+      return fail(verdict.message, noCoords: verdict.reason == VerifyReason.nodeHasNoCoords);
+    }
+    return null;
+  }
+
+  /// 서버가 좌표 없는 장소라 위치를 확인할 수 없을 때의 탈출구 — 진행은 하되 조각은 서버에 남지 않는다.
+  void _skipArrival() {
+    setState(() => _arrivalFailure = null);
+    _verifyGps();
   }
 
   void _verifyGps() {
@@ -580,38 +738,12 @@ class _QuestJourneyScreenState extends State<QuestJourneyScreen> with TickerProv
   ///
   /// 이 화면은 지금까지 서버를 한 번도 부르지 않아, 메인 CTA로 플레이한 사용자는
   /// 진행도가 로컬에만 남고 서버에는 아무것도 쌓이지 않았다(다른 기기·재설치 시 소멸).
+  /// 위치는 다시 확인하지 않는다 — 도착 인증(_arrive)에서 서버에 방문이 이미 남았다.
   /// 실패해도 연출은 막지 않는다 — 서버가 없으면 데모 모드처럼 계속 진행한다.
   Future<void> _recordOnServer(QuestNode n) async {
-    if (!RunSession.I.isActive) return;
-
-    double? lat, lng, accuracyM;
-    // 디버그 빌드에서 개발자 옵션을 켰을 때만 노드 좌표를 그대로 제출한다 —
-    // 이동 없이도 조각 지급까지 테스트하기 위한 임시 우회. 기본은 항상 실제 위치로만
-    // 인증한다(노드 좌표를 그대로 보내면 순간이동으로 판정된다 — 위 헤더 참조).
-    if (kDebugMode && DebugFlags.skipGpsVerify && n.mapY != null && n.mapX != null) {
-      lat = n.mapY;
-      lng = n.mapX;
-    } else {
-      final loc = await widget.locationService.current();
-      if (!loc.isOk) {
-        if (mounted) _snack('${loc.message} 진행은 되지만 조각은 서버에 기록되지 않느니라.');
-        return;
-      }
-      lat = loc.lat;
-      lng = loc.lng;
-      accuracyM = loc.accuracyM;
-    }
-    final verdict = await RunSession.I.verify(
-      nodeId: n.nodeId, lat: lat!, lng: lng!, accuracyM: accuracyM,
-    );
-    if (verdict == null || !verdict.verified) {
-      // 아직 그 자리에 없다 — 연출은 계속하되 서버 보상은 주지 않는다.
-      // 거절 사유별 안내는 LocationVerdict.message가 이미 갖고 있다(문구 중복 금지).
-      if (mounted) _snack('${verdict?.message ?? '위치를 확인하지 못했느니라.'} 연출은 계속되나 조각은 기록되지 않느니.');
-      return;
-    }
-    if (n.fragmentId.isNotEmpty) await RunSession.I.collect(n.nodeId);
-    await RunSession.I.complete(
+    if (!_session.isActive) return;
+    if (n.fragmentId.isNotEmpty) await _session.collect(n.nodeId);
+    await _session.complete(
       n.nodeId,
       choiceId: branchChoices[n.nodeId],   // 갈림길을 골랐으면 그 갈래를 함께 보낸다
     );
@@ -731,6 +863,7 @@ class _QuestJourneyScreenState extends State<QuestJourneyScreen> with TickerProv
       collOpen = false;
       guidance = null;
       branchAt = null;
+      _arrivalFailure = null;
       pstate.clear();
       branchChoices.clear();
       targets = _resolveTargets(widget.scenario);
@@ -1256,7 +1389,10 @@ class _QuestJourneyScreenState extends State<QuestJourneyScreen> with TickerProv
 
   Widget _chapterCard(_Target t, int chapterNum) {
     final collectPct = _stoneTotal == 0 ? 0.0 : fragments / _stoneTotal;
-    final distLabel = t.dist0 >= 1000 ? '${t.dist0 / 1000}km' : '${t.dist0}m';
+    // 실제 GPS 모드는 지금 위치 기준 거리(아직 못 읽었으면 확인 중), 데모는 시안 거리.
+    final int? distM = _usesRealGps(t) ? _liveDistTo(t) : t.dist0;
+    final distText =
+        distM == null ? '📍 ${t.name} · 거리 확인 중' : '📍 ${t.name}까지 ${_distLabel(distM)}';
     return Container(
       padding: const EdgeInsets.fromLTRB(18, 16, 18, 16),
       decoration: BoxDecoration(
@@ -1296,8 +1432,15 @@ class _QuestJourneyScreenState extends State<QuestJourneyScreen> with TickerProv
             TextSpan(text: '$fragments', style: const TextStyle(fontSize: 12.5, color: _verm, fontWeight: FontWeight.w700)),
             TextSpan(text: ' / $_stoneTotal', style: const TextStyle(fontSize: 12.5, color: _parchInkSoft, fontWeight: FontWeight.w700)),
           ])),
-          const Spacer(),
-          Text('📍 ${t.name}까지 $distLabel', style: const TextStyle(fontSize: 12.5, color: _verm, fontWeight: FontWeight.w900)),
+          const SizedBox(width: 8),
+          // Expanded + 말줄임 — "… · 거리 확인 중" 문구나 긴 장소명이 좁은 화면에서 넘치지 않게.
+          Expanded(
+            child: Text(distText,
+                textAlign: TextAlign.right,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(fontSize: 12.5, color: _verm, fontWeight: FontWeight.w900)),
+          ),
         ]),
         const SizedBox(height: 7),
         _progress(collectPct),
@@ -1307,8 +1450,10 @@ class _QuestJourneyScreenState extends State<QuestJourneyScreen> with TickerProv
             gpsIdx = _tIdx;
             gpsDist = _target.dist0;
             gpsWalking = false;
+            _arrivalFailure = null;
             screen = 'gps';
           });
+          _refreshLiveDistance(); // 이동 화면에 들어오자마자 거리 갱신(주기를 기다리지 않음)
         }),
       ]),
     );
@@ -1319,10 +1464,22 @@ class _QuestJourneyScreenState extends State<QuestJourneyScreen> with TickerProv
   // ════════════════════════════════════════════════════
   Widget _gpsScreen() {
     final gpsT = targets[gpsIdx];
-    final gpsNear = gpsDist <= 30;
-    final prog = 1 - gpsDist / gpsT.dist0;
-    final distLabel = gpsDist >= 1000 ? '${(gpsDist / 1000).toStringAsFixed(1)}km' : '${gpsDist}m';
-    final mins = math.max(1, (gpsDist / 70).ceil());
+    final real = _usesRealGps(gpsT);
+    // 실제 GPS 모드: 지금 위치 → 목표 거리, 반경은 서버 판정과 같은 노드 값.
+    // 데모 모드: 시뮬레이션 거리(gpsDist)와 시안 반경.
+    final radiusM = real ? gpsT.node!.triggerRadiusM : _demoArriveRadiusM;
+    final int? dist = real ? _liveDistTo(gpsT) : gpsDist;
+    final gpsNear = dist != null && dist <= radiusM;
+    final double prog = dist == null
+        ? 0
+        : (real ? math.min(1.0, radiusM / math.max(1, dist)) : 1 - dist / gpsT.dist0);
+    final distLabel = dist == null ? '—' : _distLabel(dist);
+    final distNote = dist == null
+        ? (_locError ?? '위치를 확인하는 중')
+        : '남음 · 걸어서 약 ${math.max(1, (dist / _walkMetersPerMinute).ceil())}분';
+    final accuracyLabel = !real
+        ? '정확도 ±8m'
+        : (_liveAccuracyM == null ? '' : '정확도 ±${_liveAccuracyM!.round()}m');
     return Container(
       color: const Color(0xFF14111A),
       child: LayoutBuilder(builder: (ctx, box) {
@@ -1360,7 +1517,7 @@ class _QuestJourneyScreenState extends State<QuestJourneyScreen> with TickerProv
                     child: Container(
                       padding: const EdgeInsets.symmetric(horizontal: 11, vertical: 3),
                       decoration: BoxDecoration(color: _inkDeep.withOpacity(0.85), borderRadius: BorderRadius.circular(999)),
-                      child: const Text('인증 반경 30m', style: TextStyle(fontSize: 10, color: _muted)),
+                      child: Text('인증 반경 ${_distLabel(radiusM)}', style: const TextStyle(fontSize: 10, color: _muted)),
                     ),
                   ),
                 ]),
@@ -1385,27 +1542,26 @@ class _QuestJourneyScreenState extends State<QuestJourneyScreen> with TickerProv
             Row(crossAxisAlignment: CrossAxisAlignment.baseline, textBaseline: TextBaseline.alphabetic, children: [
               Text(distLabel, style: dokkaebiTitle(size: 34, color: _parchInk)),
               const SizedBox(width: 10),
-              Text('남음 · 걸어서 약 $mins분', style: const TextStyle(fontSize: 12.5, color: _bronze, fontWeight: FontWeight.w700)),
-              const Spacer(),
-              const Text('정확도 ±8m', style: TextStyle(fontSize: 11, color: _bronze)),
+              // Expanded + 말줄임 — 위치를 못 읽은 사유 문구가 길어도 정확도 표시를 밀어내지 않게.
+              Expanded(
+                child: Text(distNote,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(fontSize: 12.5, color: _bronze, fontWeight: FontWeight.w700)),
+              ),
+              Text(accuracyLabel, style: const TextStyle(fontSize: 11, color: _bronze)),
             ]),
             const SizedBox(height: 9),
             _progress(math.max(0.03, prog)),
             const SizedBox(height: 13),
-            if (!gpsNear) ...[
+            if (real)
+              ..._arrivalActions(gpsNear)
+            else if (!gpsNear) ...[
               _cta(gpsWalking ? '걷는 중…' : '걷기 시작 (GPS 시뮬레이션)', _walk, bg: _parchInk, fg: _cream),
               const SizedBox(height: 8),
               const Center(child: Text('실제 앱에서는 걷는 동안 자동으로 줄어든다 (GPS)', style: TextStyle(fontSize: 11, color: _bronze))),
             ] else ...[
-              Container(
-                padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 11),
-                decoration: BoxDecoration(color: _tealDeep.withOpacity(0.12), borderRadius: BorderRadius.circular(12), border: Border.all(color: _tealDeep.withOpacity(0.5))),
-                child: Row(children: [
-                  Container(width: 22, height: 22, alignment: Alignment.center, decoration: const BoxDecoration(shape: BoxShape.circle, color: _tealDeep), child: const Text('✓', style: TextStyle(color: Color(0xFFEAFFF9), fontSize: 12, fontWeight: FontWeight.w900))),
-                  const SizedBox(width: 9),
-                  const Expanded(child: Text('인증 반경 진입 — 기운이 느껴진다', style: TextStyle(fontSize: 13, color: Color(0xFF1D4A41), fontWeight: FontWeight.w900))),
-                ]),
-              ),
+              _nearBanner(),
               const SizedBox(height: 10),
               _cta('GPS 도착 인증', _verifyGps, bg: _tealDeep, fg: const Color(0xFFEAFFF9)),
             ],
@@ -1413,6 +1569,59 @@ class _QuestJourneyScreenState extends State<QuestJourneyScreen> with TickerProv
         ]);
       }),
     );
+  }
+
+  /// 인증 반경 안에 들어왔다는 안내 띠.
+  Widget _nearBanner() => Container(
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 11),
+        decoration: BoxDecoration(color: _tealDeep.withOpacity(0.12), borderRadius: BorderRadius.circular(12), border: Border.all(color: _tealDeep.withOpacity(0.5))),
+        child: Row(children: [
+          Container(width: 22, height: 22, alignment: Alignment.center, decoration: const BoxDecoration(shape: BoxShape.circle, color: _tealDeep), child: const Text('✓', style: TextStyle(color: Color(0xFFEAFFF9), fontSize: 12, fontWeight: FontWeight.w900))),
+          const SizedBox(width: 9),
+          const Expanded(child: Text('인증 반경 진입 — 기운이 느껴진다', style: TextStyle(fontSize: 13, color: Color(0xFF1D4A41), fontWeight: FontWeight.w900))),
+        ]),
+      );
+
+  /// 실제 GPS 모드 하단 — 도착 인증 버튼. 실패하면 사유와 다음 행동
+  /// (다시 확인 · 권한 문제면 설정 열기 · 좌표 없는 장소면 위치 확인 없이 진행)을 보여준다.
+  List<Widget> _arrivalActions(bool near) {
+    final failure = _arrivalFailure;
+    return [
+      if (failure != null) ...[
+        Container(
+          width: double.infinity,
+          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 11),
+          decoration: BoxDecoration(color: _verm.withOpacity(0.1), borderRadius: BorderRadius.circular(12), border: Border.all(color: _verm.withOpacity(0.45))),
+          child: Text(
+            failure.noCoords
+                ? '${failure.message} 확인 없이 가면 이 장소 조각은 서버에 기록되지 않느니라.'
+                : failure.message,
+            style: _gowun(13, const Color(0xFF8A3320), height: 1.5),
+          ),
+        ),
+        const SizedBox(height: 10),
+      ] else if (near) ...[
+        _nearBanner(),
+        const SizedBox(height: 10),
+      ] else if (_locError != null) ...[
+        Center(child: Text(_locError!, textAlign: TextAlign.center, style: const TextStyle(fontSize: 11.5, color: _bronze, height: 1.4))),
+        const SizedBox(height: 8),
+      ],
+      _cta(
+        _arriving ? '확인하는 중…' : (failure == null ? 'GPS 도착 인증' : '다시 확인'),
+        _arrive,
+        bg: near ? _tealDeep : _parchInk,
+        fg: near ? const Color(0xFFEAFFF9) : _cream,
+      ),
+      if (failure != null && failure.needsSettings) ...[
+        const SizedBox(height: 8),
+        _cta('설정 열기', () => widget.locationService.openSettings(), bg: _bronze, fg: _cream),
+      ],
+      if (failure != null && failure.noCoords) ...[
+        const SizedBox(height: 8),
+        _cta('위치 확인 없이 진행', _skipArrival, bg: _bronze, fg: _cream),
+      ],
+    ];
   }
 
   // ════════════════════════════════════════════════════
