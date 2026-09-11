@@ -525,7 +525,14 @@ class _ScenarioScreenState extends State<ScenarioScreen> {
                     isDone: done.contains(n.nodeId),
                     isNext: n.nodeId == next?.nodeId,
                     locked: n.requires.isNotEmpty && !scn.checkEntry(n, state).ok && n.isHardGated,
-                    onTap: () => _play(n, carried),
+                    // "다음 목표" 카드와 같은 규칙 — 지금 밟을 차례인 지점(next)만 새 화면으로
+                    // 보낸다. 이미 끝났거나 아직 먼 지점은 그대로 옛날 화면에서 훑어보게 둔다
+                    // (QuestJourneyScreen은 특정 지점을 지정해 열 수 없고 항상 현재 진행
+                    // 지점부터 시작한다 — 다른 지점을 열면 엉뚱한 지점이 뜬다).
+                    onTap: (!n.isFood && n.nodeId == next?.nodeId)
+                        ? () => Navigator.push(context,
+                            MaterialPageRoute(builder: (_) => QuestJourneyScreen(scenario: scn)))
+                        : () => _play(n, carried),
                   )),
             ],
           );
