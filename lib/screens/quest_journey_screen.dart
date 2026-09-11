@@ -42,9 +42,11 @@
 import 'dart:async';
 import 'dart:math' as math;
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 
 import '../api/api_client.dart';
+import '../debug_flags.dart';
 import '../game/hint_ladder_controller.dart';
 import '../game/player_state.dart';
 import '../game/location_service.dart';
@@ -582,14 +584,25 @@ class _QuestJourneyScreenState extends State<QuestJourneyScreen> with TickerProv
   Future<void> _recordOnServer(QuestNode n) async {
     if (!RunSession.I.isActive) return;
 
-    // 실제 위치로만 인증한다. 노드 좌표를 대신 보내면 순간이동으로 판정된다(위 헤더 참조).
-    final loc = await widget.locationService.current();
-    if (!loc.isOk) {
-      if (mounted) _snack('${loc.message} 진행은 되지만 조각은 서버에 기록되지 않느니라.');
-      return;
+    double? lat, lng, accuracyM;
+    // 디버그 빌드에서 개발자 옵션을 켰을 때만 노드 좌표를 그대로 제출한다 —
+    // 이동 없이도 조각 지급까지 테스트하기 위한 임시 우회. 기본은 항상 실제 위치로만
+    // 인증한다(노드 좌표를 그대로 보내면 순간이동으로 판정된다 — 위 헤더 참조).
+    if (kDebugMode && DebugFlags.skipGpsVerify && n.mapY != null && n.mapX != null) {
+      lat = n.mapY;
+      lng = n.mapX;
+    } else {
+      final loc = await widget.locationService.current();
+      if (!loc.isOk) {
+        if (mounted) _snack('${loc.message} 진행은 되지만 조각은 서버에 기록되지 않느니라.');
+        return;
+      }
+      lat = loc.lat;
+      lng = loc.lng;
+      accuracyM = loc.accuracyM;
     }
     final verdict = await RunSession.I.verify(
-      nodeId: n.nodeId, lat: loc.lat!, lng: loc.lng!, accuracyM: loc.accuracyM,
+      nodeId: n.nodeId, lat: lat!, lng: lng!, accuracyM: accuracyM,
     );
     if (verdict == null || !verdict.verified) {
       // 아직 그 자리에 없다 — 연출은 계속하되 서버 보상은 주지 않는다.

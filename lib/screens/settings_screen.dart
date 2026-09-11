@@ -6,9 +6,11 @@
 //            새 페이지로 열리길 원함.
 // 구현일: 2026-09-01 | 작성: ljs (profile-tab/ljs/v1)
 // ============================================================
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:package_info_plus/package_info_plus.dart';
 
+import '../debug_flags.dart';
 import '../game/location_service.dart';
 import '../store.dart';
 import '../theme.dart';
@@ -53,6 +55,10 @@ class SettingsScreen extends StatelessWidget {
                 ),
               ]),
             ),
+            if (kDebugMode) ...[
+              const SizedBox(height: 20),
+              const _DevOptions(),
+            ],
           ],
         ),
       ),
@@ -124,5 +130,40 @@ class SettingsScreen extends StatelessWidget {
     );
     if (confirmed != true) return;
     await ScenarioStore.I.resetAll();
+  }
+}
+
+/// 디버그 빌드에서만 보이는 개발자 옵션 — 릴리즈 빌드에는 이 위젯 자체가 트리에서 빠진다.
+class _DevOptions extends StatefulWidget {
+  const _DevOptions();
+  @override
+  State<_DevOptions> createState() => _DevOptionsState();
+}
+
+class _DevOptionsState extends State<_DevOptions> {
+  @override
+  Widget build(BuildContext context) {
+    return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+      const Padding(
+        padding: EdgeInsets.only(left: 4, bottom: 8),
+        child: Text('개발자 옵션', style: TextStyle(color: AppColors.textMuted, fontSize: 12)),
+      ),
+      GlowCard(
+        padding: EdgeInsets.zero,
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
+          child: Row(children: [
+            const Expanded(
+              child: Text('GPS 인증 건너뛰기 (테스트용)',
+                  style: TextStyle(color: AppColors.textPrimary, fontSize: 14)),
+            ),
+            Switch(
+              value: DebugFlags.skipGpsVerify,
+              onChanged: (v) => setState(() => DebugFlags.skipGpsVerify = v),
+            ),
+          ]),
+        ),
+      ),
+    ]);
   }
 }
