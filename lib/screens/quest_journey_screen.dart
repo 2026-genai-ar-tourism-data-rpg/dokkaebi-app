@@ -1216,7 +1216,9 @@ class _QuestJourneyScreenState extends State<QuestJourneyScreen> with TickerProv
   }
 
   Widget _buildPlayer(BoxConstraints box) {
-    final pos = [const Offset(.22, .24), const Offset(.34, .33), const Offset(.61, .41), const Offset(.41, .51)][_tIdx];
+    // _buildPois와 같은 이유 — 시안 좌표가 4개뿐이라 5번째 조각부터는 마지막 자리에 그대로 둔다.
+    const playerPos = [Offset(.22, .24), Offset(.34, .33), Offset(.61, .41), Offset(.41, .51)];
+    final pos = playerPos[_tIdx.clamp(0, playerPos.length - 1)];
     return Positioned(
       left: box.maxWidth * pos.dx - 8,
       top: box.maxHeight * pos.dy - 8,
