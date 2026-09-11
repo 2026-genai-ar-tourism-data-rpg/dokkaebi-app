@@ -1,4 +1,11 @@
 // ============================================================
+// [v3] 코스별 서버 run_id 영속 — 앱 재시작·코스 전환 후에도 같은 서버 기록을 이어 쓴다.
+// 구현(요약): RunSession이 run을 메모리에 하나만 들고 있어서 앱을 다시 켜거나 코스 A→B→A로
+//            오가면 A의 서버 run이 새로 생겼다(앞서 모은 조각이 새 run엔 없어 피날레에서
+//            서버가 막음). scenarioId→run_id를 유저별 저장 데이터에 함께 남긴다.
+//            코스 삭제·전체 초기화 때 같이 지우고, 처음부터 다시(resetProgress)는 건드리지 않는다.
+// 구현일: 2026-09-12 | 작성: ljs (mission-strategy-routing/ljs/v1)
+// ------------------------------------------------------------
 // [v2] 시나리오 스토어 — 생성 탐험 + 진행상황(유저별 영속) + 상태 그래프
 // pipeline: 모바일 클라이언트 / 상태
 // 구현(요약): v1의 done/inventory에 **상태 그래프 전체**를 얹음 —
@@ -29,6 +36,7 @@ class ScenarioStore extends ChangeNotifier {
   final Map<String, Map<String, String>> _choices = {}; // scenarioId -> {분기노드id: choiceId}
   final Map<String, String> _endings = {}; // scenarioId -> 엔딩 코드
   final Set<String> _prologueSeen = {}; // 프롤로그를 본 scenarioId — 코스별로 최초 1회만.
+  final Map<String, String> _runs = {}; // scenarioId -> 서버 run_id(재시작·코스 전환 후 이어 쓰기)
 
   String get _key => 'store_${Session.userId ?? 'guest'}';
 
@@ -53,6 +61,9 @@ class ScenarioStore extends ChangeNotifier {
 
   /// 도달한 엔딩(없으면 null).
   String? endingOf(String scenarioId) => _endings[scenarioId];
+
+  /// 이 코스에 연결된 서버 run_id(없으면 null) — RunSession이 같은 run을 되살리는 데 쓴다.
+  String? runIdOf(String scenarioId) => _runs[scenarioId];
 
   /// **상태 그래프 스냅샷** — 조각·단서·플래그·친밀도·쿠폰·유물.
   /// requires 게이팅·연계 대사·엔딩 분기는 전부 이걸 기준으로 한다.
@@ -121,6 +132,7 @@ class ScenarioStore extends ChangeNotifier {
     _choices.clear();
     _endings.clear();
     _prologueSeen.clear();
+    _runs.clear();
     final raw = p.getString(_key);
     if (raw != null && raw.isNotEmpty) {
       final d = jsonDecode(raw) as Map<String, dynamic>;
@@ -136,6 +148,7 @@ class ScenarioStore extends ChangeNotifier {
       (d['endings'] as Map<String, dynamic>? ?? {}).forEach((k, v) => _endings[k] = v.toString());
       _prologueSeen.addAll(
           ((d['prologueSeen'] ?? []) as List).map((e) => e.toString()));
+      (d['runs'] as Map<String, dynamic>? ?? {}).forEach((k, v) => _runs[k] = v.toString());
     }
     notifyListeners();
   }
@@ -148,13 +161,14 @@ class ScenarioStore extends ChangeNotifier {
     await _persist();
   }
 
-  /// 코스 삭제 — 시나리오 자체와 진행 상황(완료 노드·인벤토리·갈림길·엔딩)을 함께 지운다.
+  /// 코스 삭제 — 시나리오 자체와 진행 상황(완료 노드·인벤토리·갈림길·엔딩·서버 run_id)을 함께 지운다.
   Future<void> remove(String scenarioId) async {
     scenarios.removeWhere((s) => s.scenarioId == scenarioId);
     _doneNodes.remove(scenarioId);
     _inventory.remove(scenarioId);
     _choices.remove(scenarioId);
     _endings.remove(scenarioId);
+    _runs.remove(scenarioId);
     notifyListeners();
     await _persist();
   }
@@ -215,7 +229,15 @@ class ScenarioStore extends ChangeNotifier {
     await _persist();
   }
 
+  /// 서버 run_id 기록 — 새 run을 열었거나 저장값이 무효라 바꿨을 때.
+  Future<void> setRunId(String scenarioId, String runId) async {
+    _runs[scenarioId] = runId;
+    notifyListeners();
+    await _persist();
+  }
+
   /// 이 코스 진행만 초기화(다시 처음부터). 생성된 시나리오 자체는 유지.
+  /// 서버 run_id는 지우지 않는다 — 같은 서버 기록을 계속 쓴다.
   Future<void> resetProgress(String scenarioId) async {
     _doneNodes.remove(scenarioId);
     _inventory.remove(scenarioId);
@@ -233,6 +255,7 @@ class ScenarioStore extends ChangeNotifier {
     _choices.clear();
     _endings.clear();
     _prologueSeen.clear();
+    _runs.clear();
     notifyListeners();
     await _persist();
   }
@@ -246,6 +269,7 @@ class ScenarioStore extends ChangeNotifier {
       'choices': _choices,
       'endings': _endings,
       'prologueSeen': _prologueSeen.toList(),
+      'runs': _runs,
     }));
   }
 }

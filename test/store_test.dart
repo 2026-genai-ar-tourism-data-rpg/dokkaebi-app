@@ -5,6 +5,9 @@
 //            PlayerState(플래그·친밀도·쿠폰)와 갈림길 선택이 그대로인지 검증.
 //            소유형 중복 지급 차단(재방문 이중 누적 ❌)·누적형 합산도 확인.
 // 구현일: 2026-07-30 | 작성: kys (app-v3-back/kys/v1)
+// ------------------------------------------------------------
+// [v2] 서버 run 번호 영속 — 코스별 저장·재시작 후 유지, 삭제·전체 초기화 때만 지워지는지.
+// 구현일: 2026-09-12 | 작성: ljs (mission-strategy-routing/ljs/v1)
 // ============================================================
 import 'package:dokkaebi_app/models/scenario.dart';
 import 'package:dokkaebi_app/store.dart';
@@ -187,6 +190,35 @@ void main() {
       expect(ScenarioStore.I.progressOf(sc), 2); // 방문 노드 수
       expect(ScenarioStore.I.stoneProgressOf(sc), 1); // 조각은 1개
       expect(sc.stoneTotal, 2);
+    });
+  });
+
+  group('서버 run 번호', () {
+    test('코스별로 저장되고 재시작 후에도 남는다', () async {
+      await ScenarioStore.I.setRunId(sid, 'r1');
+      await ScenarioStore.I.setRunId('other', 'r2');
+
+      await ScenarioStore.I.load();
+      expect(ScenarioStore.I.runIdOf(sid), 'r1');
+      expect(ScenarioStore.I.runIdOf('other'), 'r2');
+    });
+
+    test('코스 삭제·전체 초기화하면 지워지고, 처음부터 다시(resetProgress)는 남긴다', () async {
+      await ScenarioStore.I.add(_scenario());
+      await ScenarioStore.I.setRunId(sid, 'r1');
+      await ScenarioStore.I.setRunId('other', 'r2');
+
+      await ScenarioStore.I.resetProgress(sid);
+      expect(ScenarioStore.I.runIdOf(sid), 'r1');
+
+      await ScenarioStore.I.remove(sid);
+      await ScenarioStore.I.load();
+      expect(ScenarioStore.I.runIdOf(sid), isNull);
+      expect(ScenarioStore.I.runIdOf('other'), 'r2');
+
+      await ScenarioStore.I.resetAll();
+      await ScenarioStore.I.load();
+      expect(ScenarioStore.I.runIdOf('other'), isNull);
     });
   });
 }
