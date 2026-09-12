@@ -34,6 +34,10 @@
 //      좌표 없는 장소는 기록 시도 안 함, 연타해도 요청 1번, 피날레 기록 실패 시 엔딩으로 안 넘어감.
 // 구현일: 2026-09-12 | 작성: ljs (mission-strategy-routing/ljs/v1)
 // ------------------------------------------------------------
+// [v8] 소환 화면 도깨비 이름표(B13) — 노드 npc 이름이 뜨고 '먹 도깨비 · Lv.7' 고정이 아닌지,
+//      npc가 없는 노드는 '먹 도깨비'가 아니라 '도깨비'로 폴백하는지.
+// 구현일: 2026-09-12 | 작성: ljs (mission-strategy-routing/ljs/v1)
+// ------------------------------------------------------------
 // [v7] 조각 획득 팝업(B1·B2) — 종로 시안 고정 문구(「훈(訓)」·1/4·申時·익선동 쿠폰) 대신
 //      실제 장소·지역·조각 번호·단서와 서버가 준 보상(경험치·도감·칭호)이 뜨는지,
 //      서버에 기록하지 못한 조각은 경험치 대신 그 사실을 알리는지 잠근다.
@@ -1018,6 +1022,35 @@ void main() {
       expect(find.text('획 득'), findsOneWidget);
       expect(find.textContaining('서버에 남지 않았'), findsOneWidget);
       expect(find.text('경험치'), findsNothing);
+    });
+
+    // 계획 B13 — 소환 화면 이름표가 '먹 도깨비 · Lv.7' 고정이라, 대화한 도깨비와
+    // 미션 완료 후 도감에 쌓이는 도깨비(노드 npc.name)가 서로 달라 보였다.
+    testWidgets('소환 화면 이름표 — 그 장소 노드의 도깨비 이름이 뜬다', (tester) async {
+      final sc = Scenario.fromJson({
+        'scenario_id': 'gyeongju_npc',
+        'title': '경주시의 기억석',
+        'region': '경주시',
+        'node_sequence': [
+          _rich('q1', '첨성대', 'QUIZ_FIND', npc: '서책 도깨비'),
+          _rich('q2', '월성', 'RESTORE_AR'),
+        ],
+      });
+      await _tapArrival(tester, sc, _FakeQuestServer(scenarioId: sc.scenarioId));
+      await tester.pump(const Duration(milliseconds: 1600)); // 소환 대기 → 등장
+
+      expect(find.text('서책 도깨비'), findsOneWidget);
+      expect(find.text('먹 도깨비 · Lv.7'), findsNothing);
+      expect(find.textContaining('먹 기운'), findsNothing);
+    });
+
+    testWidgets('소환 화면 이름표 — npc가 없는 노드는 먹 도깨비가 아니라 도깨비', (tester) async {
+      final sc = quizCourse(); // npc 없는 코스
+      await _tapArrival(tester, sc, _FakeQuestServer(scenarioId: sc.scenarioId));
+      await tester.pump(const Duration(milliseconds: 1600));
+
+      expect(find.text('도깨비'), findsOneWidget);
+      expect(find.textContaining('먹 도깨비'), findsNothing);
     });
   });
 }

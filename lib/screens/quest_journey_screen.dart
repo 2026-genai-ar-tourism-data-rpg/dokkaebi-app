@@ -1,4 +1,14 @@
 // ============================================================
+// [v9] 소환 화면 도깨비 이름표 고정 제거(계획 B13).
+// 구현(요약): 도깨비 그림 위 이름표가 `'먹 도깨비 · Lv.7'` 고정이라, 어느 지역 어느 장소에서든
+//            먹 도깨비와 이야기하는 것처럼 보였다. 정작 미션을 끝내면 그 장소 노드의 진짜
+//            도깨비(AI가 장소마다 짓는 `npc.name`)가 도감에 쌓여, 대화한 도깨비와 도감에 오른
+//            도깨비가 달랐다(서버 `dex_entry`도 같은 노드 값이다).
+//            → 이름표를 `_npcName`으로. 근거 데이터가 없는 "Lv.7"은 뺀다.
+//              노드에 npc가 없을 때의 폴백도 '먹 도깨비' → '도깨비'(전 지역이 먹 도깨비가 되던 것).
+//              스캔 문구의 '먹 기운'도 종로 전제라 '기운'으로.
+// 구현일: 2026-09-12 | 작성: ljs (mission-strategy-routing/ljs/v1)
+// ------------------------------------------------------------
 // [v8] 조각 획득 팝업을 실제 챕터·서버 보상으로(계획 B1·B2).
 // 구현(요약): 어느 코스·어느 챕터에서 조각을 얻어도 종로 시안 문구가 그대로 떴다
 //            (「훈(訓)」 · 종로의 기억석 1/4 · 경험치 +50 · 단서 「申時」 · 익선동 카페 쿠폰 +500원).
@@ -554,10 +564,11 @@ class _QuestJourneyScreenState extends State<QuestJourneyScreen> with TickerProv
   /// 이 챕터에 낼 시험이 있나 — 없으면 시험 단계를 통째로 건너뛴다.
   Quiz? get _curQuiz => _curNode?.quiz;
 
-  /// 이 장소를 지키는 도깨비 이름(없으면 시안 기본값).
+  /// 이 장소를 지키는 도깨비 이름. 노드에 없으면 어떤 도깨비인지 알 수 없으니 그냥 '도깨비' —
+  /// 종로 시안값('먹 도깨비')을 쓰면 전 지역이 먹 도깨비가 된다.
   String get _npcName {
     final n = _curNode?.npcName ?? '';
-    return n.isEmpty ? '먹 도깨비' : n;
+    return n.isEmpty ? '도깨비' : n;
   }
 
   // ── 스캔 진행(사진·인사동) ──
@@ -1789,7 +1800,7 @@ class _QuestJourneyScreenState extends State<QuestJourneyScreen> with TickerProv
                 markers: [
                   ArMarkerDef(
                     id: 'summon',
-                    label: sejong ? '세종대왕' : (_npcName.isEmpty ? '도깨비' : _npcName),
+                    label: sejong ? '세종대왕' : _npcName,
                     color: sejong ? _gold : AppColors.teal,
                     forward: 1.8,
                     down: 0.1,
@@ -1827,7 +1838,7 @@ class _QuestJourneyScreenState extends State<QuestJourneyScreen> with TickerProv
               ))),
             ),
             Positioned(left: 0, right: 0, top: box.maxHeight * .74, child: Center(child: Text(
-              realAr ? '천천히 주변을 비춰 보거라…' : (sejong ? '거룩한 기운이 모여든다…' : '먹 기운이 모여든다…'),
+              realAr ? '천천히 주변을 비춰 보거라…' : (sejong ? '거룩한 기운이 모여든다…' : '기운이 모여든다…'),
               style: dokkaebiTitle(size: 15, color: const Color(0xFFE8DCC4))))),
           ] else ...[
             // 실제 AR에서는 도깨비가 카메라 공간의 3D 마커로 떠 있으므로 그림을 겹치지 않는다.
@@ -1835,7 +1846,7 @@ class _QuestJourneyScreenState extends State<QuestJourneyScreen> with TickerProv
               Positioned(
                 left: 0, right: 0, top: box.maxHeight * .30,
                 child: Center(child: _Floaty(anim: _float, child: Column(mainAxisSize: MainAxisSize.min, children: [
-                  _pill(sejong ? '세종대왕 · 수호' : '먹 도깨비 · Lv.7', border: _goldDim, textColor: _goldDim),
+                  _pill(sejong ? '세종대왕 · 수호' : _npcName, border: _goldDim, textColor: _goldDim),
                   const SizedBox(height: 10),
                   sejong ? const _Sejong(size: 140) : const _Dokkaebi(size: 140),
                 ]))),
