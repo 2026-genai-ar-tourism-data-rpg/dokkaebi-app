@@ -1,4 +1,59 @@
 // ============================================================
+// [v9] 소환 화면 도깨비 이름표 고정 제거(계획 B13).
+// 구현(요약): 도깨비 그림 위 이름표가 `'먹 도깨비 · Lv.7'` 고정이라, 어느 지역 어느 장소에서든
+//            먹 도깨비와 이야기하는 것처럼 보였다. 정작 미션을 끝내면 그 장소 노드의 진짜
+//            도깨비(AI가 장소마다 짓는 `npc.name`)가 도감에 쌓여, 대화한 도깨비와 도감에 오른
+//            도깨비가 달랐다(서버 `dex_entry`도 같은 노드 값이다).
+//            → 이름표를 `_npcName`으로. 근거 데이터가 없는 "Lv.7"은 뺀다.
+//              노드에 npc가 없을 때의 폴백도 '먹 도깨비' → '도깨비'(전 지역이 먹 도깨비가 되던 것).
+//              스캔 문구의 '먹 기운'도 종로 전제라 '기운'으로.
+// 구현일: 2026-09-12 | 작성: ljs (mission-strategy-routing/ljs/v1)
+// ------------------------------------------------------------
+// [v8] 조각 획득 팝업을 실제 챕터·서버 보상으로(계획 B1·B2).
+// 구현(요약): 어느 코스·어느 챕터에서 조각을 얻어도 종로 시안 문구가 그대로 떴다
+//            (「훈(訓)」 · 종로의 기억석 1/4 · 경험치 +50 · 단서 「申時」 · 익선동 카페 쿠폰 +500원).
+//            서버가 complete 응답으로 준 실제 보상(경험치·도감·칭호)은 읽지도 않고 버렸다.
+//            → 확정된 챕터(_claimed: 챕터·그때 받은 것·서버 보상)를 팝업이 그대로 읽는다.
+//              장소명·지역·조각 번호·단서는 그 챕터 노드에서, 경험치·도감·칭호는 서버 보상에서,
+//              쿠폰은 그 챕터에서 실제로 지급한 것만. 없는 항목은 줄 자체를 빼고,
+//              서버에 기록하지 못한 조각("기록 없이 계속"·좌표 없는 장소)은 경험치 줄 대신 그 사실을 알린다.
+// 구현일: 2026-09-12 | 작성: ljs (mission-strategy-routing/ljs/v1)
+// ------------------------------------------------------------
+// [v7] 조각은 서버 기록이 성공해야 확정 — 실패하면 공통 팝업으로 멈추고 다시 시도(계획 C1).
+// 구현(요약): 미션을 끝내면 조각 수·획득 팝업·로컬 저장을 먼저 하고 서버 기록(collect·complete)은
+//            결과를 보지 않아, 폰에선 완주·서버에선 미완주가 생겼다.
+//            → 미션 버튼 6곳(퀴즈·사냥·수집·사진·발자국·카페)과 피날레가 _claimChapter 한 경로로
+//              서버에 먼저 기록하고, 성공해야 화면(조각 수·획득 팝업·엔딩)과 로컬 진행에 반영한다.
+//              실패하면 공통 팝업(_recordSheet): 통신·5xx는 다시 시도만, 4xx 조건 미충족처럼 다시 해도
+//              안 되는 실패는 "기록 없이 계속"도 준다(RunSession.errorRetryable). 서버 run이 없으면
+//              다시 시도 때 다시 연다. 좌표 없는 장소라 도착 인증을 건너뛴 곳은 기록을 시도하지 않는다.
+// 구현일: 2026-09-12 | 작성: ljs (mission-strategy-routing/ljs/v1)
+// ------------------------------------------------------------
+// [v6] 위치 권한이 꺼져 있으면 이미 도착 인증한 장소도 멈춘다 + 권한 경고에 설정 열기.
+// 구현(요약): 실기기에서 도착 인증 → iOS 설정에서 위치 권한 끔(앱 강제 종료) → 다시 열어 같은 장소
+//            도착 인증을 누르니 그대로 진행됐다. 서버에 인증 기록이 있으면 위치를 전혀 보지 않고
+//            통과시켰기 때문이다. 이제 이미 인증한 장소는 서버 재판정 없이 위치 권한·위치 서비스만
+//            확인한다(LocationService.checkAccess — 좌표는 안 읽어 실내 신호 약함엔 막히지 않음).
+//            거리 갱신 중 권한·서비스 문제가 보이면 도착 인증 전에도 설정 열기를 주고, 지도 카드는
+//            "거리 확인 중"에 머물지 않고 "위치 설정 필요/위치 확인 불가"로 보여준다.
+//            같은 경고가 거리 줄과 안내에 두 번 뜨던 것도 한 번으로 줄였다.
+// 구현일: 2026-09-12 | 작성: ljs (mission-strategy-routing/ljs/v1)
+// ------------------------------------------------------------
+// [v5] 이동 단계를 실제 GPS 도착 인증으로 — 걷기 시뮬레이션·조각 기록 시점 위치 확인 제거.
+// 구현(요약): 이동 화면이 걷기 애니메이션으로 거리를 줄이고 "GPS 도착 인증"은 위치 확인 없이
+//            통과했다. 실제 위치는 미션을 끝내고 조각을 기록할 때만 확인해, 그 자리에 없으면
+//            안내만 뜨고 연출은 계속됐다(서버 기록만 빠짐).
+//            → 지도·이동 화면에 있는 동안 현재 위치를 주기적으로 읽어 목표까지 실제 거리를
+//              보여주고(코스 출발점 기준 거리 대체), 도착 인증은 서버 판정(verify-location)을
+//              통과해야 소환으로 넘어간다. 실패하면 사유 안내 + 다시 확인(권한 영구 거부·위치
+//              서비스 꺼짐이면 설정 열기). 서버가 좌표 없는 장소라고 하면 "위치 확인 없이
+//              진행" 탈출구를 준다(그 장소 조각은 서버에 기록되지 않는다고 안내).
+//            조각 기록(_recordOnServer)은 위치를 다시 보지 않는다 — 도착 때 서버에 방문이 남는다.
+//            개발자 옵션(GPS 인증 건너뛰기)도 도착 인증 시점으로 옮겼다. 이미 인증한 장소는
+//            서버 run 기록으로 판단해 다시 묻지 않는다. 코스 데이터 없는 데모 모드는 시뮬레이션 유지.
+//            테스트가 가짜 서버를 붙이도록 RunSession을 주입받는다(기본 RunSession.I).
+// 구현일: 2026-09-12 | 작성: ljs (mission-strategy-routing/ljs/v1)
+// ------------------------------------------------------------
 // [v4] "기억석 컬렉션" 모달(_collSheet/_collCard)도 v2와 같은 하드코딩 버그가
 //      남아있었다 — collDefs가 종로 훈민정음 4장 고정 텍스트였고 루프도
 //      `i < 4` 고정이라, 다른 지역·5조각 이상 코스에서도 늘 같은 4장이 뜨고
@@ -42,18 +97,49 @@
 import 'dart:async';
 import 'dart:math' as math;
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 
 import '../api/api_client.dart';
+import '../debug_flags.dart';
 import '../game/hint_ladder_controller.dart';
 import '../game/player_state.dart';
 import '../game/location_service.dart';
 import '../game/run_session.dart';
+import '../models/run.dart';
 import '../models/scenario.dart';
 import '../store.dart';
 import '../theme.dart';
 import '../widgets/native_ar_view.dart';
 import '../widgets/reward_pop.dart';
+import 'create_scenario_screen.dart' show haversineMeters;
+
+// ── 실제 GPS 도착 인증 ────────────────────────────────
+/// 지도·이동 화면에 있는 동안 현재 위치를 다시 읽는 주기.
+const _gpsPollInterval = Duration(seconds: 5);
+
+/// "걸어서 약 N분" 표시에 쓰는 걷는 속도(m/분).
+const _walkMetersPerMinute = 70;
+
+/// 데모 모드(코스 데이터 없음) 시뮬레이션의 도착 반경(m).
+const _demoArriveRadiusM = 30;
+
+/// 도착 인증 실패 — 안내 문구와 다음 행동(설정 열기·위치 확인 없이 진행)을 고르는 근거.
+typedef _ArrivalFailure = ({String message, bool needsSettings, bool noCoords});
+
+/// 조각 서버 기록 실패 — 안내 문구와, 다시 해도 안 되는 실패라 "기록 없이 계속"을 줄지.
+typedef _RecordFailure = ({String message, bool canSkip});
+
+/// 서버 기록을 기다리는 챕터 확정 — 다시 시도·기록 없이 계속이 같은 챕터를 이어받는다.
+/// [onClaimed]는 확정된 뒤의 화면 반영(조각 수·획득 팝업·엔딩 등).
+typedef _PendingClaim = ({int chapterIdx, List<StateRef> extra, Future<void> Function() onClaimed});
+
+/// 조각 서버 기록 결과 — 실패 사유(성공이면 null)와 서버가 준 보상(기록하지 않았으면 null).
+typedef _RecordResult = ({_RecordFailure? failure, NodeReward? reward});
+
+/// 방금 확정된 조각 — 획득 팝업이 읽는다. 팝업이 뜰 때는 조각 수가 이미 올라
+/// "지금 챕터"가 다음 장소를 가리키므로, 확정 순간의 챕터·받은 것을 따로 들고 있어야 한다.
+typedef _ClaimedReward = ({int chapterIdx, List<StateRef> extra, NodeReward? reward});
 
 // ── 시안 팔레트(로컬 상수) ──────────────────────────────
 const _ink = Color(0xFF17130F); // 먹빛
@@ -107,6 +193,9 @@ const _defaultTargets = <_Target>[
 /// 시안 기본 단서 체인(申時→ㄱ→ㅏ) — 노드가 clue를 안 주는 데모 모드 폴백.
 const _defaultClues = ['申時', 'ㄱ', 'ㅏ', ''];
 
+/// 코스 데이터 없는 데모 모드의 지역명(시안이 종로 4챕터다).
+const _defaultRegion = '종로';
+
 class QuestJourneyScreen extends StatefulWidget {
   /// 도착 인증에 쓸 위치 서비스. 테스트·데모에서 갈아끼운다.
   final LocationService locationService;
@@ -116,11 +205,15 @@ class QuestJourneyScreen extends StatefulWidget {
   /// 대화(A/B 선택지 답변)에 쓸 API 클라이언트. 테스트가 MockClient로 갈아끼운다.
   final ApiClient? apiClient;
 
+  /// 서버 플레이 세션(run·도착 판정·조각 기록). 테스트가 가짜 서버를 붙인 세션으로 갈아끼운다.
+  final RunSession? runSession;
+
   const QuestJourneyScreen({
     super.key,
     this.scenario,
     this.locationService = const LocationService(),
     this.apiClient,
+    this.runSession,
   });
   @override
   State<QuestJourneyScreen> createState() => _QuestJourneyScreenState();
@@ -134,6 +227,43 @@ class _QuestJourneyScreenState extends State<QuestJourneyScreen> with TickerProv
   String? flag;
   int dlgStep = 0;
   late final ApiClient _api = widget.apiClient ?? ApiClient();
+  RunSession get _session => widget.runSession ?? RunSession.I;
+
+  // ── 실제 GPS 도착 인증(코스 데이터가 있을 때) ──
+  /// 마지막으로 읽은 현재 위치 → _liveDistNodeId 장소까지 거리(m).
+  int? _liveDistM;
+  String? _liveDistNodeId;
+  double? _liveAccuracyM;
+
+  /// 현재 위치를 못 읽은 사유(권한·신호). 읽으면 null.
+  String? _locError;
+
+  /// 위치를 못 읽은 이유가 앱 설정으로 가야 풀리는 것인지(권한 영구 거부·위치 서비스 꺼짐).
+  bool _locNeedsSettings = false;
+  bool _locating = false; // 위치 읽기가 겹치지 않게
+  Timer? _gpsPollTimer;
+
+  /// 도착 판정 요청 중 — 버튼 연타 방지.
+  bool _arriving = false;
+
+  /// 도착 인증 실패 안내. null이면 안내 없음.
+  _ArrivalFailure? _arrivalFailure;
+
+  // ── 조각 서버 기록(확정은 기록 성공 뒤) ──
+  /// 서버에 조각을 기록하는 중 — 공통 팝업을 띄우고 연타를 막는다.
+  bool _recording = false;
+
+  /// 조각 기록 실패. null이면 실패 없음.
+  _RecordFailure? _recordFailure;
+
+  /// 기록을 기다리는(또는 실패한) 챕터 확정 — 다시 시도·기록 없이 계속이 이어받는다.
+  _PendingClaim? _pendingClaim;
+
+  /// 방금 확정된 조각 — 획득 팝업이 읽는다(확정되면 조각 수가 올라 "지금 챕터"는 다음 장소가 된다).
+  _ClaimedReward? _claimed;
+
+  /// 도착 인증을 건너뛴 장소(서버가 좌표 없는 장소라고 함) — 서버가 기록을 거절하니 시도하지 않는다.
+  final Set<String> _unrecordedNodeIds = {};
   // A/B("사연이오?"/"보상은?")는 dialogueTurn으로 실제 장소 정보를 물어 받는다.
   // C(바로 진행)는 안 물어보므로 대상 없음. 실패하면 _npcLines 고정 문구로 폴백.
   bool _dialogueLoading = false;
@@ -147,13 +277,18 @@ class _QuestJourneyScreenState extends State<QuestJourneyScreen> with TickerProv
     {'id': 4, 'left': .26, 'top': .22, 'size': 58.0, 'dur': 3.3, 'dead': false},
     {'id': 5, 'left': .62, 'top': .20, 'size': 54.0, 'dur': 2.6, 'dead': false},
   ];
+  // 위 초기값은 데모(노드 데이터 없음) 폴백 — 실제 노드에서는 _prepareHuntEnemies()가
+  // defeat/tap 원자의 이름·개수로 다시 채운다.
+  String huntLabel = '먹그림자 처치';
+  // S1(대화→수집)·S6(수집 누적) 전용 — 전투 없는 탭 수집 화면(_gatherScreen).
+  List<Map<String, dynamic>> gatherItems = [];
+  String gatherLabel = '글씨조각 수집';
   String photoState = 'idle';
   int scan = 0;
   int trail = 0;
   bool fragTaken = false, showReward = false;
   bool hintOpen = false;
   bool cafeOrdered = false;
-  String cafeState = 'idle';
   String insaPhase = 'photo';
   int insaScan = 0;
   String insaPick = '';
@@ -217,6 +352,7 @@ class _QuestJourneyScreenState extends State<QuestJourneyScreen> with TickerProv
       if (mounted) setState(() => _arSupported = ok);
     });
     _ensureRun();
+    _startGpsPolling();
   }
 
   /// 서버 run을 연다(이미 열려 있으면 그대로 쓴다).
@@ -227,7 +363,7 @@ class _QuestJourneyScreenState extends State<QuestJourneyScreen> with TickerProv
   Future<void> _ensureRun() async {
     final s = widget.scenario;
     if (s == null) return;
-    await RunSession.I.start(s.scenarioId);
+    await _session.start(s.scenarioId);
   }
 
   /// 저장된 진행 복원 — 갈림길 선택·인벤토리를 먼저 읽어야 경로가 확정된다.
@@ -257,24 +393,11 @@ class _QuestJourneyScreenState extends State<QuestJourneyScreen> with TickerProv
   /// 예전에는 정확히 4개만 만들었다(`for i < 4`) — 코스가 짧으면 종로 기본 노드로 채우고
   /// 길면 잘라냈다. 탐험 시간 입력이 코스 길이(4·6·8조각)를 바꾸면서 그대로 두면
   /// 6조각 코스가 화면에서 4챕터로 보이고, 있지도 않은 운현궁이 챕터로 끼어든다.
-  /// 미션 타입 → 이 챕터에서 밟을 스테이지. 종로 순서 순환을 대체한다.
-  /// (전에는 2번째 노드가 무조건 '카페', 3번째가 '인사동 붓방'이었다 — 경주에서도.)
-  static String _stageFor(QuestNode n, bool isFinale) {
-    if (isFinale) return 'summon-sejong';          // 마지막은 복원 스테이지
-    switch (n.mission?.type) {
-      case 'QUIZ_FIND':
-      case 'DIALOGUE_FIND':
-        return 'summon-meok';                      // 등장 → 대화 → (퀴즈가 있으면) 시험
-      case 'PHOTO_FIND':
-        return 'photo';
-      case 'PATH_TRACE':
-        return 'trail';
-      case 'HUNT':
-        return 'hunt';
-      default:
-        return 'summon-meok';                      // 등장 → 대화 → 지령
-    }
-  }
+  /// 도착 직후 스테이지 — 항상 도깨비 소환(AR 등장)부터. 실제 미션 갈래(사냥·사진·
+  /// 퀴즈…)는 대화가 끝난 뒤 strategy로 정한다(_missionStageFor 참고) — 백엔드가
+  /// 모든 노드에 goto+listen(대화)을 먼저 컴파일해 넣는 것과 맞춘다. 예전엔 PHOTO_FIND/
+  /// PATH_TRACE/HUNT 노드가 대화 자체를 건너뛰고 바로 미션으로 들어갔었다.
+  static String _stageFor(bool isFinale) => isFinale ? 'summon-sejong' : 'summon-meok';
 
   _Target _targetOf(QuestNode n, int i, int total) {
     final isFinale = i == total - 1;
@@ -299,9 +422,94 @@ class _QuestJourneyScreenState extends State<QuestJourneyScreen> with TickerProv
               // 지령이 없는 노드에 시안 문구를 그대로 쓰면 딴 장소 지령이 뜬다
               // ('운현궁 대문 앞에서…'가 강남 노드에). 장소명으로 만든 기본 지령을 쓴다.
               : (name == base.name ? base.obj : '$name 주변을 살펴 기억석 조각을 찾아라.')),
-      _stageFor(n, isFinale),
+      _stageFor(isFinale),
       node: n,
     );
+  }
+
+  /// 대화 이후 실제로 밟을 미션 화면 — node.strategy(S1~S7) 기준.
+  /// strategy가 없는 노드(시나리오 없는 데모 등)는 예전 mission.type 기준으로 폴백해
+  /// 기존 동작을 그대로 유지한다.
+  String _missionStageFor(QuestNode? node) {
+    final code = node?.strategy.isNotEmpty == true ? strategyCode(node!.strategy.first) : null;
+    switch (code) {
+      case 'S3':
+        return 'quiz';
+      case 'S4':
+      case 'S5':
+        return 'photo';
+      case 'S7':
+        return 'cafe';
+      case 'S2':
+        return 'hunt';
+      case 'S1':
+      case 'S6':
+        return 'gather'; // 전투 없이 tap만(대화→수집/수집 누적) — 전용 화면
+    }
+    // 폴백(strategy 미대응 노드) — 예전 mission.type 분기 그대로.
+    switch (node?.mission?.type) {
+      case 'PHOTO_FIND':
+      case 'PATH_TRACE':
+        return 'photo';
+      case 'HUNT':
+        return 'hunt';
+      default:
+        return node?.quiz == null ? 'hunt' : 'quiz';
+    }
+  }
+
+  /// 현재 챕터 노드의 컴파일된 액션 원자 중 타입이 `type`인 첫 번째 것.
+  ActionAtom? _actionAtom(String type) {
+    for (final a in _curNode?.actions ?? const <ActionAtom>[]) {
+      if (a.a == type) return a;
+    }
+    return null;
+  }
+
+  static const _huntPositions = [
+    (.38, .30), (.12, .48), (.68, .44), (.26, .22), (.62, .20), (.50, .58),
+  ];
+
+  /// 사냥 화면(_huntScreen)을 이 챕터의 실제 데이터로 다시 채운다 — defeat
+  /// 원자가 있으면 몬스터 이름·마릿수(S2), 없으면 tap 원자의 대상·개수(S1/S6,
+  /// 전투 없이 수집만). 둘 다 없으면(데모) 원래 종로 기본값(먹그림자 5마리)로.
+  void _prepareHuntEnemies() {
+    final defeat = _actionAtom('defeat');
+    final tap = _actionAtom('tap');
+    final atom = defeat ?? tap;
+    final count = (atom?.countTarget ?? 5).clamp(1, _huntPositions.length);
+    huntLabel = defeat != null
+        ? '${defeat.object ?? '먹그림자'} 처치'
+        : '${tap?.target ?? '흔적'} 수집';
+    enemies = [
+      for (var i = 0; i < count; i++)
+        {
+          'id': i,
+          'left': _huntPositions[i].$1,
+          'top': _huntPositions[i].$2,
+          'size': 92.0 - i * 6,
+          'dur': 2.6 + (i % 4) * 0.3,
+          'dead': false,
+        },
+    ];
+  }
+
+  /// 수집 화면(_gatherScreen)을 이 챕터의 실제 데이터로 다시 채운다 — S1/S6은
+  /// 전투 없이 tap 원자 대상·개수만 있다(_prepareHuntEnemies와 갈래만 다름).
+  void _prepareGatherItems() {
+    final tap = _actionAtom('tap');
+    final count = (tap?.countTarget ?? 1).clamp(1, _huntPositions.length);
+    gatherLabel = '${tap?.target ?? '글씨조각'} 수집';
+    gatherItems = [
+      for (var i = 0; i < count; i++)
+        {
+          'id': i,
+          'left': _huntPositions[i].$1,
+          'top': _huntPositions[i].$2,
+          'size': 64.0,
+          'collected': false,
+        },
+    ];
   }
 
   /// 현재 챕터의 힌트 사다리 컨트롤러(문구=노드 hint_ladder, 없으면 시안 문구).
@@ -336,6 +544,7 @@ class _QuestJourneyScreenState extends State<QuestJourneyScreen> with TickerProv
     _walkTimer?.cancel();
     _scanTimer?.cancel();
     _summonTimer?.cancel();
+    _gpsPollTimer?.cancel();
     _hint?.removeListener(_onHintChanged);
     _hint?.dispose();
     super.dispose();
@@ -355,10 +564,11 @@ class _QuestJourneyScreenState extends State<QuestJourneyScreen> with TickerProv
   /// 이 챕터에 낼 시험이 있나 — 없으면 시험 단계를 통째로 건너뛴다.
   Quiz? get _curQuiz => _curNode?.quiz;
 
-  /// 이 장소를 지키는 도깨비 이름(없으면 시안 기본값).
+  /// 이 장소를 지키는 도깨비 이름. 노드에 없으면 어떤 도깨비인지 알 수 없으니 그냥 '도깨비' —
+  /// 종로 시안값('먹 도깨비')을 쓰면 전 지역이 먹 도깨비가 된다.
   String get _npcName {
     final n = _curNode?.npcName ?? '';
-    return n.isEmpty ? '먹 도깨비' : n;
+    return n.isEmpty ? '도깨비' : n;
   }
 
   // ── 스캔 진행(사진·인사동) ──
@@ -399,6 +609,122 @@ class _QuestJourneyScreenState extends State<QuestJourneyScreen> with TickerProv
     });
   }
 
+  /// 이 챕터를 실제 GPS로 인증하는가 — 코스 노드가 있으면 실제, 없으면(데모) 시뮬레이션.
+  bool _usesRealGps(_Target t) => widget.scenario != null && t.node != null;
+
+  /// 마지막으로 읽은 위치 기준 이 챕터 장소까지 거리. 아직 못 읽었으면 null.
+  int? _liveDistTo(_Target t) =>
+      t.node != null && _liveDistNodeId == t.node!.nodeId ? _liveDistM : null;
+
+  static String _distLabel(int m) =>
+      m >= 1000 ? '${(m / 1000).toStringAsFixed(1)}km' : '${m}m';
+
+  /// 지도·이동 화면에 있는 동안 현재 위치를 주기적으로 읽는다(데모 모드는 시뮬레이션이라 안 읽음).
+  void _startGpsPolling() {
+    if (widget.scenario == null) return;
+    _refreshLiveDistance();
+    _gpsPollTimer = Timer.periodic(_gpsPollInterval, (_) => _refreshLiveDistance());
+  }
+
+  /// 현재 위치 → 지금 목표 장소까지 실제 거리 갱신. 미션 등 다른 화면에서는 읽지 않는다.
+  Future<void> _refreshLiveDistance() async {
+    if (_locating || (screen != 'map' && screen != 'gps')) return;
+    final n = (screen == 'gps' ? targets[gpsIdx] : _target).node;
+    if (n == null || n.mapY == null || n.mapX == null) return;
+    _locating = true;
+    final loc = await widget.locationService.current();
+    _locating = false;
+    if (!mounted) return;
+    setState(() {
+      if (loc.isOk) {
+        _liveDistM = haversineMeters(loc.lat!, loc.lng!, n.mapY!, n.mapX!).round();
+        _liveDistNodeId = n.nodeId;
+        _liveAccuracyM = loc.accuracyM;
+        _locError = null;
+        _locNeedsSettings = false;
+      } else {
+        _locError = loc.message;
+        _locNeedsSettings = loc.needsSettings;
+      }
+    });
+  }
+
+  /// 도착 인증(실제 GPS) — 서버 판정을 통과해야 소환(_verifyGps)으로 넘어간다.
+  /// 실패하면 사유와 다음 행동(다시 확인·설정 열기·위치 확인 없이 진행)을 보여준다.
+  Future<void> _arrive() async {
+    if (_arriving) return;
+    final t = targets[gpsIdx];
+    // 피날레 안내 모드는 위치와 무관하다 — 판정 요청 전에 먼저 보여준다.
+    final check = _checkTarget(t);
+    if (check != null && check.needsGuidance) {
+      setState(() => guidance = check);
+      return;
+    }
+    setState(() {
+      _arriving = true;
+      _arrivalFailure = null;
+    });
+    // 이미 도착 인증한 장소(재진입·앱 재시작)는 서버에 다시 묻지 않는다 — 서버 run 기록 기준.
+    // 다만 위치 권한·위치 서비스는 확인한다(좌표는 안 읽어 실내 신호 약함엔 막히지 않는다).
+    final failure = _session.isVerified(t.node!.nodeId)
+        ? await _checkLocationAccess()
+        : await _requestArrival(t.node!);
+    if (!mounted) return;
+    setState(() {
+      _arriving = false;
+      _arrivalFailure = failure;
+    });
+    if (failure == null) _verifyGps();
+  }
+
+  /// 이미 도착 인증한 장소 — 위치 권한·위치 서비스만 확인한다. 쓸 수 있으면 null.
+  /// 디버그 빌드에서 개발자 옵션을 켜면 확인을 건너뛴다(이동 없이 테스트).
+  Future<_ArrivalFailure?> _checkLocationAccess() async {
+    if (kDebugMode && DebugFlags.skipGpsVerify) return null;
+    final denied = await widget.locationService.checkAccess();
+    if (denied == null) return null;
+    final result = LocationResult.fail(denied);
+    return (message: result.message, needsSettings: result.needsSettings, noCoords: false);
+  }
+
+  /// 서버에 도착 판정을 요청한다. 통과면 null, 아니면 실패 사유.
+  /// 디버그 빌드에서 개발자 옵션을 켜면 실제 위치 대신 장소 좌표를 보낸다(이동 없이 테스트).
+  Future<_ArrivalFailure?> _requestArrival(QuestNode n) async {
+    _ArrivalFailure fail(String message, {bool needsSettings = false, bool noCoords = false}) =>
+        (message: message, needsSettings: needsSettings, noCoords: noCoords);
+
+    // run이 없으면(앞서 서버 연결 실패) 여기서 다시 연다 — 다시 확인이 곧 재시도다.
+    if (!_session.isActive && !await _session.start(widget.scenario!.scenarioId)) {
+      return fail(_session.error ?? '서버에 연결되지 않았느니라.');
+    }
+    final double lat, lng;
+    double? accuracyM;
+    if (kDebugMode && DebugFlags.skipGpsVerify && n.mapY != null && n.mapX != null) {
+      lat = n.mapY!;
+      lng = n.mapX!;
+    } else {
+      final loc = await widget.locationService.current();
+      if (!loc.isOk) return fail(loc.message, needsSettings: loc.needsSettings);
+      lat = loc.lat!;
+      lng = loc.lng!;
+      accuracyM = loc.accuracyM;
+    }
+    final verdict =
+        await _session.verify(nodeId: n.nodeId, lat: lat, lng: lng, accuracyM: accuracyM);
+    if (verdict == null) return fail(_session.error ?? '서버와 통신하지 못했느니라.');
+    if (!verdict.verified) {
+      return fail(verdict.message, noCoords: verdict.reason == VerifyReason.nodeHasNoCoords);
+    }
+    return null;
+  }
+
+  /// 서버가 좌표 없는 장소라 위치를 확인할 수 없을 때의 탈출구 — 진행은 하되 조각은 서버에 남지 않는다.
+  void _skipArrival() {
+    setState(() => _arrivalFailure = null);
+    _unrecordedNodeIds.add(targets[gpsIdx].node!.nodeId);
+    _verifyGps();
+  }
+
   void _verifyGps() {
     final t = targets[gpsIdx];
 
@@ -421,18 +747,21 @@ class _QuestJourneyScreenState extends State<QuestJourneyScreen> with TickerProv
       return;
     }
 
-    final after = t.after;
-    if (after == 'summon-meok' || after == 'summon-sejong') {
-      setState(() {
-        screen = 'summon';
-        summonFor = after == 'summon-meok' ? 'meok' : 'sejong';
-        summonPhase = 'scan';
-      });
-      _summonTimer?.cancel();
-      _summonTimer = Timer(const Duration(milliseconds: 1500), () => setState(() => summonPhase = 'appear'));
-    } else {
-      go(after);
+    // 실제 노드(시나리오 있음)는 after가 항상 summon-meok/summon-sejong —
+    // 모든 챕터가 소환(AR 등장) → 대화부터 시작한다(실제 미션 갈래는 대화 뒤
+    // strategy로 정해진다). cafe/insa는 시나리오 없는 데모 전용 고정 스테이지라
+    // 예전처럼 소환 없이 바로 들어간다.
+    if (t.after == 'cafe' || t.after == 'insa') {
+      go(t.after);
+      return;
     }
+    setState(() {
+      screen = 'summon';
+      summonFor = t.after == 'summon-sejong' ? 'sejong' : 'meok';
+      summonPhase = 'scan';
+    });
+    _summonTimer?.cancel();
+    _summonTimer = Timer(const Duration(milliseconds: 1500), () => setState(() => summonPhase = 'appear'));
   }
 
   /// 이 챕터 노드의 requires 판정. 시나리오/노드가 없으면 null(게이팅 없음).
@@ -487,41 +816,83 @@ class _QuestJourneyScreenState extends State<QuestJourneyScreen> with TickerProv
     if (s == null) return;
     if (n != null) {
       await ScenarioStore.I.completeNodeWithGrants(s.scenarioId, n, extra: extra);
-      await _recordOnServer(n);          // [v3] 로컬만 쌓고 끝나던 것을 서버에도 남긴다
     } else {
       await ScenarioStore.I
           .completeNode(s.scenarioId, 'chapter_$chapterIdx', refs.map((r) => r.toStorageString()).toList());
     }
   }
 
-  /// 챕터 완료를 서버 run에 기록한다 — 조각·경험치·도감·칭호가 여기서 나온다.
-  ///
-  /// 이 화면은 지금까지 서버를 한 번도 부르지 않아, 메인 CTA로 플레이한 사용자는
-  /// 진행도가 로컬에만 남고 서버에는 아무것도 쌓이지 않았다(다른 기기·재설치 시 소멸).
-  /// 실패해도 연출은 막지 않는다 — 서버가 없으면 데모 모드처럼 계속 진행한다.
-  Future<void> _recordOnServer(QuestNode n) async {
-    if (!RunSession.I.isActive) return;
+  /// 지금 챕터 조각 확정(일반 챕터) — 서버에 기록되면 조각 수를 올리고 획득 팝업을 띄운다.
+  /// [also]는 그 챕터 고유의 화면 반영(발자국 파편 거두기·카페 주문 완료 등) — 확정될 때 함께 적용한다.
+  void _claimCurrentChapter({List<StateRef> extra = const [], VoidCallback? also}) {
+    final idx = _tIdx; // 확정되면 fragments가 바뀌어 _tIdx도 바뀐다 — 지금 챕터를 먼저 읽어 둔다
+    _claimChapter(idx, extra: extra, onClaimed: () async {
+      setState(() {
+        also?.call();
+        fragments = idx + 1;
+        showReward = true;
+      });
+    });
+  }
 
-    // 실제 위치로만 인증한다. 노드 좌표를 대신 보내면 순간이동으로 판정된다(위 헤더 참조).
-    final loc = await widget.locationService.current();
-    if (!loc.isOk) {
-      if (mounted) _snack('${loc.message} 진행은 되지만 조각은 서버에 기록되지 않느니라.');
-      return;
+  /// 챕터 조각 확정 — 서버 기록(collect·complete)이 성공해야 화면(onClaimed)과 로컬 진행(_grantChapter)에
+  /// 반영한다. 실패하면 공통 팝업(_recordSheet)으로 이유와 다시 시도를 보여준다 — 조각의 주인은 서버다.
+  Future<void> _claimChapter(int idx,
+      {List<StateRef> extra = const [], required Future<void> Function() onClaimed}) async {
+    if (_recording) return;
+    final claim = (chapterIdx: idx, extra: extra, onClaimed: onClaimed);
+    setState(() {
+      _recording = true;
+      _recordFailure = null;
+      _pendingClaim = claim;
+    });
+    final result = await _recordOnServer(targets[idx.clamp(0, targets.length - 1)].node);
+    if (!mounted) return;
+    setState(() {
+      _recording = false;
+      _recordFailure = result.failure;
+    });
+    if (result.failure == null) await _confirmClaim(claim, result.reward);
+  }
+
+  /// 확정 반영 — 서버 기록이 성공했거나, 다시 해도 안 되는 실패에서 "기록 없이 계속"을 골랐을 때.
+  /// [reward]는 서버가 준 보상 — 기록하지 못한 조각이면 null이고, 획득 팝업이 그대로 보여준다.
+  Future<void> _confirmClaim(_PendingClaim claim, NodeReward? reward) async {
+    setState(() {
+      _pendingClaim = null;
+      _recordFailure = null;
+      _claimed = (chapterIdx: claim.chapterIdx, extra: claim.extra, reward: reward);
+    });
+    await claim.onClaimed();
+    await _grantChapter(claim.chapterIdx, extra: claim.extra);
+  }
+
+  /// 챕터 조각을 서버 run에 기록한다(collect → complete) — 조각·경험치·도감·칭호가 여기서 나온다.
+  /// 성공하면 서버가 준 보상을, 서버에 기록할 수 없는 챕터면 둘 다 null을,
+  /// 실패하면 사유(다시 해도 안 되는 실패인지 포함)를 돌려준다.
+  ///
+  /// 위치는 다시 확인하지 않는다 — 도착 인증(_arrive)에서 서버에 방문이 이미 남았다.
+  /// 서버 run이 없으면(앱 재시작 후 복원 실패 등) 여기서 다시 연다 — 다시 시도가 곧 재연결이다.
+  Future<_RecordResult> _recordOnServer(QuestNode? n) async {
+    final s = widget.scenario;
+    // 데모 모드(코스 없음)·노드 없는 챕터·도착 인증을 건너뛴 장소는 서버가 기록할 수 없다 — 로컬만.
+    if (s == null || n == null || _unrecordedNodeIds.contains(n.nodeId)) {
+      return (failure: null, reward: null);
     }
-    final verdict = await RunSession.I.verify(
-      nodeId: n.nodeId, lat: loc.lat!, lng: loc.lng!, accuracyM: loc.accuracyM,
-    );
-    if (verdict == null || !verdict.verified) {
-      // 아직 그 자리에 없다 — 연출은 계속하되 서버 보상은 주지 않는다.
-      // 거절 사유별 안내는 LocationVerdict.message가 이미 갖고 있다(문구 중복 금지).
-      if (mounted) _snack('${verdict?.message ?? '위치를 확인하지 못했느니라.'} 연출은 계속되나 조각은 기록되지 않느니.');
-      return;
-    }
-    if (n.fragmentId.isNotEmpty) await RunSession.I.collect(n.nodeId);
-    await RunSession.I.complete(
+    _RecordResult fail() => (
+          failure: (
+            message: _session.error ?? '조각을 기록하지 못했느니라.',
+            canSkip: !_session.errorRetryable,
+          ),
+          reward: null,
+        );
+    if (!_session.isActive && !await _session.start(s.scenarioId)) return fail();
+    if (n.fragmentId.isNotEmpty && await _session.collect(n.nodeId) == null) return fail();
+    final reward = await _session.complete(
       n.nodeId,
       choiceId: branchChoices[n.nodeId],   // 갈림길을 골랐으면 그 갈래를 함께 보낸다
     );
+    return reward == null ? fail() : (failure: null, reward: reward);
   }
 
   /// 선택지 효과(플래그·친밀도·쿠폰) 즉시 적용 + 영속. 규칙 2조: grants 종류는 안 바뀐다.
@@ -575,15 +946,18 @@ class _QuestJourneyScreenState extends State<QuestJourneyScreen> with TickerProv
   Future<void> _finish(String pick) async {
     final curious = pstate.flags.contains('호기심');
     final resolved = (pick == 'good' && curious) ? 'good' : 'normal';
-    setState(() {
-      ending = resolved;
-      screen = 'ending';
-      fragments = _stoneTotal;
-      exp += 200;
+    // 챕터 번호 하드코딩(옛 4챕터 종로 대본) 제거 — 피날레는 늘 마지막 챕터다.
+    // 피날레 조각도 서버 기록이 성공해야 엔딩으로 넘어간다(_claimChapter).
+    await _claimChapter(_stoneTotal - 1, onClaimed: () async {
+      setState(() {
+        ending = resolved;
+        screen = 'ending';
+        fragments = _stoneTotal;
+        exp += 200;
+      });
+      final s = widget.scenario;
+      if (s != null) await ScenarioStore.I.setEnding(s.scenarioId, resolved);
     });
-    await _grantChapter(3);
-    final s = widget.scenario;
-    if (s != null) await ScenarioStore.I.setEnding(s.scenarioId, resolved);
   }
 
   void _snack(String msg) {
@@ -622,7 +996,6 @@ class _QuestJourneyScreenState extends State<QuestJourneyScreen> with TickerProv
       showReward = false;
       hintOpen = false;
       cafeOrdered = false;
-      cafeState = 'idle';
       insaPhase = 'photo';
       insaScan = 0;
       insaPick = '';
@@ -638,6 +1011,10 @@ class _QuestJourneyScreenState extends State<QuestJourneyScreen> with TickerProv
       collOpen = false;
       guidance = null;
       branchAt = null;
+      _arrivalFailure = null;
+      _recordFailure = null;
+      _pendingClaim = null;
+      _claimed = null;
       pstate.clear();
       branchChoices.clear();
       targets = _resolveTargets(widget.scenario);
@@ -686,7 +1063,8 @@ class _QuestJourneyScreenState extends State<QuestJourneyScreen> with TickerProv
             ),
           ),
         ),
-        if (showReward) _rewardModal(),
+        if (showReward && _claimed != null) _rewardModal(_claimed!),
+        if (_recording || _recordFailure != null) _recordSheet(),
         if (hintOpen) _hintSheet(),
         if (collOpen) _collSheet(),
         if (branchAt != null) _branchSheet(branchAt!),
@@ -861,6 +1239,8 @@ class _QuestJourneyScreenState extends State<QuestJourneyScreen> with TickerProv
         return _orderScreen();
       case 'hunt':
         return _huntScreen();
+      case 'gather':
+        return _gatherScreen();
       case 'photo':
         return _photoScreen();
       case 'trail':
@@ -1134,7 +1514,9 @@ class _QuestJourneyScreenState extends State<QuestJourneyScreen> with TickerProv
   }
 
   Widget _buildPlayer(BoxConstraints box) {
-    final pos = [const Offset(.22, .24), const Offset(.34, .33), const Offset(.61, .41), const Offset(.41, .51)][_tIdx];
+    // _buildPois와 같은 이유 — 시안 좌표가 4개뿐이라 5번째 조각부터는 마지막 자리에 그대로 둔다.
+    const playerPos = [Offset(.22, .24), Offset(.34, .33), Offset(.61, .41), Offset(.41, .51)];
+    final pos = playerPos[_tIdx.clamp(0, playerPos.length - 1)];
     return Positioned(
       left: box.maxWidth * pos.dx - 8,
       top: box.maxHeight * pos.dy - 8,
@@ -1159,7 +1541,12 @@ class _QuestJourneyScreenState extends State<QuestJourneyScreen> with TickerProv
 
   Widget _chapterCard(_Target t, int chapterNum) {
     final collectPct = _stoneTotal == 0 ? 0.0 : fragments / _stoneTotal;
-    final distLabel = t.dist0 >= 1000 ? '${t.dist0 / 1000}km' : '${t.dist0}m';
+    // 실제 GPS 모드는 지금 위치 기준 거리(아직 못 읽었으면 확인 중), 데모는 시안 거리.
+    final int? distM = _usesRealGps(t) ? _liveDistTo(t) : t.dist0;
+    // 위치를 못 읽으면 "거리 확인 중"에 머물지 않고 이유를 짧게 — 설정으로 풀어야 하는지 구분한다.
+    final distText = distM != null
+        ? '📍 ${t.name}까지 ${_distLabel(distM)}'
+        : '📍 ${t.name} · ${_locError == null ? '거리 확인 중' : (_locNeedsSettings ? '위치 설정 필요' : '위치 확인 불가')}';
     return Container(
       padding: const EdgeInsets.fromLTRB(18, 16, 18, 16),
       decoration: BoxDecoration(
@@ -1199,8 +1586,15 @@ class _QuestJourneyScreenState extends State<QuestJourneyScreen> with TickerProv
             TextSpan(text: '$fragments', style: const TextStyle(fontSize: 12.5, color: _verm, fontWeight: FontWeight.w700)),
             TextSpan(text: ' / $_stoneTotal', style: const TextStyle(fontSize: 12.5, color: _parchInkSoft, fontWeight: FontWeight.w700)),
           ])),
-          const Spacer(),
-          Text('📍 ${t.name}까지 $distLabel', style: const TextStyle(fontSize: 12.5, color: _verm, fontWeight: FontWeight.w900)),
+          const SizedBox(width: 8),
+          // Expanded + 말줄임 — "… · 거리 확인 중" 문구나 긴 장소명이 좁은 화면에서 넘치지 않게.
+          Expanded(
+            child: Text(distText,
+                textAlign: TextAlign.right,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(fontSize: 12.5, color: _verm, fontWeight: FontWeight.w900)),
+          ),
         ]),
         const SizedBox(height: 7),
         _progress(collectPct),
@@ -1210,8 +1604,10 @@ class _QuestJourneyScreenState extends State<QuestJourneyScreen> with TickerProv
             gpsIdx = _tIdx;
             gpsDist = _target.dist0;
             gpsWalking = false;
+            _arrivalFailure = null;
             screen = 'gps';
           });
+          _refreshLiveDistance(); // 이동 화면에 들어오자마자 거리 갱신(주기를 기다리지 않음)
         }),
       ]),
     );
@@ -1222,10 +1618,23 @@ class _QuestJourneyScreenState extends State<QuestJourneyScreen> with TickerProv
   // ════════════════════════════════════════════════════
   Widget _gpsScreen() {
     final gpsT = targets[gpsIdx];
-    final gpsNear = gpsDist <= 30;
-    final prog = 1 - gpsDist / gpsT.dist0;
-    final distLabel = gpsDist >= 1000 ? '${(gpsDist / 1000).toStringAsFixed(1)}km' : '${gpsDist}m';
-    final mins = math.max(1, (gpsDist / 70).ceil());
+    final real = _usesRealGps(gpsT);
+    // 실제 GPS 모드: 지금 위치 → 목표 거리, 반경은 서버 판정과 같은 노드 값.
+    // 데모 모드: 시뮬레이션 거리(gpsDist)와 시안 반경.
+    final radiusM = real ? gpsT.node!.triggerRadiusM : _demoArriveRadiusM;
+    final int? dist = real ? _liveDistTo(gpsT) : gpsDist;
+    final gpsNear = dist != null && dist <= radiusM;
+    final double prog = dist == null
+        ? 0
+        : (real ? math.min(1.0, radiusM / math.max(1, dist)) : 1 - dist / gpsT.dist0);
+    final distLabel = dist == null ? '—' : _distLabel(dist);
+    // 위치를 못 읽은 사유 전문은 아래 안내에서 한 번만 보여준다 — 여기엔 짧게.
+    final distNote = dist == null
+        ? (_locError == null ? '위치를 확인하는 중' : '위치 확인 불가')
+        : '남음 · 걸어서 약 ${math.max(1, (dist / _walkMetersPerMinute).ceil())}분';
+    final accuracyLabel = !real
+        ? '정확도 ±8m'
+        : (_liveAccuracyM == null ? '' : '정확도 ±${_liveAccuracyM!.round()}m');
     return Container(
       color: const Color(0xFF14111A),
       child: LayoutBuilder(builder: (ctx, box) {
@@ -1263,7 +1672,7 @@ class _QuestJourneyScreenState extends State<QuestJourneyScreen> with TickerProv
                     child: Container(
                       padding: const EdgeInsets.symmetric(horizontal: 11, vertical: 3),
                       decoration: BoxDecoration(color: _inkDeep.withOpacity(0.85), borderRadius: BorderRadius.circular(999)),
-                      child: const Text('인증 반경 30m', style: TextStyle(fontSize: 10, color: _muted)),
+                      child: Text('인증 반경 ${_distLabel(radiusM)}', style: const TextStyle(fontSize: 10, color: _muted)),
                     ),
                   ),
                 ]),
@@ -1288,27 +1697,26 @@ class _QuestJourneyScreenState extends State<QuestJourneyScreen> with TickerProv
             Row(crossAxisAlignment: CrossAxisAlignment.baseline, textBaseline: TextBaseline.alphabetic, children: [
               Text(distLabel, style: dokkaebiTitle(size: 34, color: _parchInk)),
               const SizedBox(width: 10),
-              Text('남음 · 걸어서 약 $mins분', style: const TextStyle(fontSize: 12.5, color: _bronze, fontWeight: FontWeight.w700)),
-              const Spacer(),
-              const Text('정확도 ±8m', style: TextStyle(fontSize: 11, color: _bronze)),
+              // Expanded + 말줄임 — 위치를 못 읽은 사유 문구가 길어도 정확도 표시를 밀어내지 않게.
+              Expanded(
+                child: Text(distNote,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(fontSize: 12.5, color: _bronze, fontWeight: FontWeight.w700)),
+              ),
+              Text(accuracyLabel, style: const TextStyle(fontSize: 11, color: _bronze)),
             ]),
             const SizedBox(height: 9),
             _progress(math.max(0.03, prog)),
             const SizedBox(height: 13),
-            if (!gpsNear) ...[
+            if (real)
+              ..._arrivalActions(gpsNear)
+            else if (!gpsNear) ...[
               _cta(gpsWalking ? '걷는 중…' : '걷기 시작 (GPS 시뮬레이션)', _walk, bg: _parchInk, fg: _cream),
               const SizedBox(height: 8),
               const Center(child: Text('실제 앱에서는 걷는 동안 자동으로 줄어든다 (GPS)', style: TextStyle(fontSize: 11, color: _bronze))),
             ] else ...[
-              Container(
-                padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 11),
-                decoration: BoxDecoration(color: _tealDeep.withOpacity(0.12), borderRadius: BorderRadius.circular(12), border: Border.all(color: _tealDeep.withOpacity(0.5))),
-                child: Row(children: [
-                  Container(width: 22, height: 22, alignment: Alignment.center, decoration: const BoxDecoration(shape: BoxShape.circle, color: _tealDeep), child: const Text('✓', style: TextStyle(color: Color(0xFFEAFFF9), fontSize: 12, fontWeight: FontWeight.w900))),
-                  const SizedBox(width: 9),
-                  const Expanded(child: Text('인증 반경 진입 — 기운이 느껴진다', style: TextStyle(fontSize: 13, color: Color(0xFF1D4A41), fontWeight: FontWeight.w900))),
-                ]),
-              ),
+              _nearBanner(),
               const SizedBox(height: 10),
               _cta('GPS 도착 인증', _verifyGps, bg: _tealDeep, fg: const Color(0xFFEAFFF9)),
             ],
@@ -1316,6 +1724,60 @@ class _QuestJourneyScreenState extends State<QuestJourneyScreen> with TickerProv
         ]);
       }),
     );
+  }
+
+  /// 인증 반경 안에 들어왔다는 안내 띠.
+  Widget _nearBanner() => Container(
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 11),
+        decoration: BoxDecoration(color: _tealDeep.withOpacity(0.12), borderRadius: BorderRadius.circular(12), border: Border.all(color: _tealDeep.withOpacity(0.5))),
+        child: Row(children: [
+          Container(width: 22, height: 22, alignment: Alignment.center, decoration: const BoxDecoration(shape: BoxShape.circle, color: _tealDeep), child: const Text('✓', style: TextStyle(color: Color(0xFFEAFFF9), fontSize: 12, fontWeight: FontWeight.w900))),
+          const SizedBox(width: 9),
+          const Expanded(child: Text('인증 반경 진입 — 기운이 느껴진다', style: TextStyle(fontSize: 13, color: Color(0xFF1D4A41), fontWeight: FontWeight.w900))),
+        ]),
+      );
+
+  /// 실제 GPS 모드 하단 — 도착 인증 버튼. 실패하면 사유와 다음 행동
+  /// (다시 확인 · 권한 문제면 설정 열기 · 좌표 없는 장소면 위치 확인 없이 진행)을 보여준다.
+  List<Widget> _arrivalActions(bool near) {
+    final failure = _arrivalFailure;
+    return [
+      if (failure != null) ...[
+        Container(
+          width: double.infinity,
+          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 11),
+          decoration: BoxDecoration(color: _verm.withOpacity(0.1), borderRadius: BorderRadius.circular(12), border: Border.all(color: _verm.withOpacity(0.45))),
+          child: Text(
+            failure.noCoords
+                ? '${failure.message} 확인 없이 가면 이 장소 조각은 서버에 기록되지 않느니라.'
+                : failure.message,
+            style: _gowun(13, const Color(0xFF8A3320), height: 1.5),
+          ),
+        ),
+        const SizedBox(height: 10),
+      ] else if (near) ...[
+        _nearBanner(),
+        const SizedBox(height: 10),
+      ] else if (_locError != null) ...[
+        Center(child: Text(_locError!, textAlign: TextAlign.center, style: const TextStyle(fontSize: 11.5, color: _bronze, height: 1.4))),
+        const SizedBox(height: 8),
+      ],
+      _cta(
+        _arriving ? '확인하는 중…' : (failure == null ? 'GPS 도착 인증' : '다시 확인'),
+        _arrive,
+        bg: near ? _tealDeep : _parchInk,
+        fg: near ? const Color(0xFFEAFFF9) : _cream,
+      ),
+      // 설정 열기 — 도착 인증 실패뿐 아니라, 거리 갱신 중 권한·위치 서비스 문제가 보일 때도 준다.
+      if ((failure?.needsSettings ?? false) || (_locError != null && _locNeedsSettings)) ...[
+        const SizedBox(height: 8),
+        _cta('설정 열기', () => widget.locationService.openSettings(), bg: _bronze, fg: _cream),
+      ],
+      if (failure != null && failure.noCoords) ...[
+        const SizedBox(height: 8),
+        _cta('위치 확인 없이 진행', _skipArrival, bg: _bronze, fg: _cream),
+      ],
+    ];
   }
 
   // ════════════════════════════════════════════════════
@@ -1338,7 +1800,7 @@ class _QuestJourneyScreenState extends State<QuestJourneyScreen> with TickerProv
                 markers: [
                   ArMarkerDef(
                     id: 'summon',
-                    label: sejong ? '세종대왕' : (_npcName.isEmpty ? '도깨비' : _npcName),
+                    label: sejong ? '세종대왕' : _npcName,
                     color: sejong ? _gold : AppColors.teal,
                     forward: 1.8,
                     down: 0.1,
@@ -1376,7 +1838,7 @@ class _QuestJourneyScreenState extends State<QuestJourneyScreen> with TickerProv
               ))),
             ),
             Positioned(left: 0, right: 0, top: box.maxHeight * .74, child: Center(child: Text(
-              realAr ? '천천히 주변을 비춰 보거라…' : (sejong ? '거룩한 기운이 모여든다…' : '먹 기운이 모여든다…'),
+              realAr ? '천천히 주변을 비춰 보거라…' : (sejong ? '거룩한 기운이 모여든다…' : '기운이 모여든다…'),
               style: dokkaebiTitle(size: 15, color: const Color(0xFFE8DCC4))))),
           ] else ...[
             // 실제 AR에서는 도깨비가 카메라 공간의 3D 마커로 떠 있으므로 그림을 겹치지 않는다.
@@ -1384,7 +1846,7 @@ class _QuestJourneyScreenState extends State<QuestJourneyScreen> with TickerProv
               Positioned(
                 left: 0, right: 0, top: box.maxHeight * .30,
                 child: Center(child: _Floaty(anim: _float, child: Column(mainAxisSize: MainAxisSize.min, children: [
-                  _pill(sejong ? '세종대왕 · 수호' : '먹 도깨비 · Lv.7', border: _goldDim, textColor: _goldDim),
+                  _pill(sejong ? '세종대왕 · 수호' : _npcName, border: _goldDim, textColor: _goldDim),
                   const SizedBox(height: 10),
                   sejong ? const _Sejong(size: 140) : const _Dokkaebi(size: 140),
                 ]))),
@@ -1429,9 +1891,9 @@ class _QuestJourneyScreenState extends State<QuestJourneyScreen> with TickerProv
           Align(alignment: const Alignment(0, 0.35), child: ClipPath(clipper: _RoofClipper(), child: Container(height: 110, color: const Color(0xFF0C0A08)))),
           // left: 58 — 좌상단 뒤로가기 버튼 자리를 비켜준다.
           Positioned(top: 58, left: 58, right: 14, child: Row(children: [
-            _pill('운현궁 · 첫 번째 기억'),
+            _pill('${_target.name} · 제 ${_tIdx + 1} 장'),
             const Spacer(),
-            _pill('조각 $fragments/4', border: _tealDeep, textColor: _teal),
+            _pill('조각 $fragments/$_stoneTotal', border: _tealDeep, textColor: _teal),
           ])),
           Positioned(left: 0, right: 0, top: box.maxHeight * .16, child: Center(child: _Floaty(anim: _float, child: const _Dokkaebi(size: 150)))),
           Positioned(left: 14, right: 14, bottom: 34, child: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.stretch, children: [
@@ -1476,10 +1938,10 @@ class _QuestJourneyScreenState extends State<QuestJourneyScreen> with TickerProv
               const SizedBox(height: 4),
             ] else ...[
               const SizedBox(height: 10),
-              // 퀴즈가 없는 노드(대부분의 미션 타입)는 시험을 건너뛰고 지령으로.
-              _curQuiz == null
-                  ? _cta('계속 — 지령 받기', () => go('order'))
-                  : _cta('계속 — 도깨비의 시험', () => go('quiz')),
+              // strategy가 S3(퀴즈→개봉)인 노드만 시험으로, 나머지는 지령으로.
+              _missionStageFor(_curNode) == 'quiz'
+                  ? _cta('계속 — 도깨비의 시험', () => go('quiz'))
+                  : _cta('계속 — 지령 받기', () => go('order')),
             ],
           ])),
         ]);
@@ -1570,7 +2032,10 @@ class _QuestJourneyScreenState extends State<QuestJourneyScreen> with TickerProv
                         ]),
                       ),
                       const SizedBox(height: 12),
-                      _cta('계속하기', () => go('order')),
+                      // S3(퀴즈→개봉)은 정답 자체가 곧 개봉이다 — 지령 화면을
+                      // 거치지 않고 바로 조각을 지급한다(원래 order→hunt로
+                      // 흘러가던 건 챕터 0 전용 하드코딩 사슬이었다).
+                      _cta('계속하기', () => _claimCurrentChapter()),
                     ],
                   ]),
                 ),
@@ -1632,13 +2097,22 @@ class _QuestJourneyScreenState extends State<QuestJourneyScreen> with TickerProv
   // 7. ORDER — 지령
   // ════════════════════════════════════════════════════
   Widget _orderScreen() {
+    // 지령을 받은 뒤 실제로 갈 미션 화면 — strategy 기반(_missionStageFor).
+    final stage = _missionStageFor(_curNode);
+    final ctaLabel = switch (stage) {
+      'photo' => '지령 받기 — 사진 인증 시작',
+      'cafe' => '지령 받기 — 주문하러 가기',
+      'gather' => '지령 받기 — 수집 시작',
+      _ => '지령 받기 — 사냥 시작',
+    };
+    final code = _curNode?.strategy.isNotEmpty == true ? strategyCode(_curNode!.strategy.first) : null;
     return Container(
       decoration: BoxDecoration(gradient: _dialBg),
       child: LayoutBuilder(builder: (ctx, box) {
         return Stack(children: [
           Align(alignment: const Alignment(0, 0.48), child: ClipPath(clipper: _RoofClipper(), child: Container(height: 120, color: const Color(0xFF0C0A08)))),
           // left: 58 — 좌상단 뒤로가기 버튼 자리를 비켜준다.
-          Positioned(top: 58, left: 58, right: 14, child: Row(children: [_pill('운현궁 · 첫 번째 기억'), const Spacer(), _pill('조각 $fragments/4', border: _tealDeep, textColor: _teal)])),
+          Positioned(top: 58, left: 58, right: 14, child: Row(children: [_pill('${_target.name} · 제 ${_tIdx + 1} 장'), const Spacer(), _pill('조각 $fragments/$_stoneTotal', border: _tealDeep, textColor: _teal)])),
           Positioned(left: 0, right: 0, top: box.maxHeight * .20, child: Center(child: _Floaty(anim: _float, child: const _Dokkaebi(size: 120)))),
           Positioned(left: 14, right: 14, bottom: 34, child: _parchment(
             padding: const EdgeInsets.fromLTRB(18, 18, 18, 16),
@@ -1650,16 +2124,23 @@ class _QuestJourneyScreenState extends State<QuestJourneyScreen> with TickerProv
                   child: Text('지령', style: dokkaebiTitle(size: 18, color: const Color(0xFFF8F1E0))),
                 ),
                 const SizedBox(width: 12),
-                Expanded(child: Text('"처마 그늘에 번진 먹그림자 다섯을 쫓고, 그 아래 숨은 글씨를 찾거라."', style: dokkaebiTitle(size: 16, color: _parchInk, height: 1.55))),
+                // 실제 노드 지령 문구(챕터 카드와 같은 값) — 종로 하드코딩 제거.
+                Expanded(child: Text('"${_target.obj}"', style: dokkaebiTitle(size: 16, color: _parchInk, height: 1.55))),
               ]),
-              const SizedBox(height: 14),
-              _orderItem('먹그림자 처치', '0/5'),
-              const SizedBox(height: 8),
-              _orderItem('대문·처마 사진에 담기', '0/1'),
-              const SizedBox(height: 8),
-              _orderItem('글씨 파편 수집', '0/1'),
+              if (code != null && strategyLabels[code] != null) ...[
+                const SizedBox(height: 12),
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                  decoration: BoxDecoration(borderRadius: BorderRadius.circular(8), border: Border.all(color: const Color(0xFFC9B88F))),
+                  child: Text(strategyLabels[code]!, style: const TextStyle(fontSize: 11.5, color: _bronze, fontWeight: FontWeight.w700)),
+                ),
+              ],
               const SizedBox(height: 16),
-              _cta('지령 받기 — 사냥 시작', () => go('hunt'), fontSize: 15.5),
+              _cta(ctaLabel, () {
+                if (stage == 'hunt') _prepareHuntEnemies();
+                if (stage == 'gather') _prepareGatherItems();
+                go(stage);
+              }, fontSize: 15.5),
             ]),
           )),
         ]);
@@ -1667,19 +2148,13 @@ class _QuestJourneyScreenState extends State<QuestJourneyScreen> with TickerProv
     );
   }
 
-  Widget _orderItem(String label, String count) => Row(children: [
-        Container(width: 20, height: 20, decoration: BoxDecoration(borderRadius: BorderRadius.circular(6), border: Border.all(color: const Color(0xFFB7A374), width: 2))),
-        const SizedBox(width: 10),
-        Expanded(child: Text(label, style: const TextStyle(color: _parchInkSoft, fontSize: 13.5, fontWeight: FontWeight.w500))),
-        Text(count, style: const TextStyle(color: _bronze, fontSize: 13.5, fontWeight: FontWeight.w700)),
-      ]);
-
   // ════════════════════════════════════════════════════
   // 8. HUNT — 먹그림자 사냥
   // ════════════════════════════════════════════════════
   Widget _huntScreen() {
+    final huntTotal = enemies.length;
     final huntCount = enemies.where((e) => e['dead'] == true).length;
-    final done = huntCount >= 5;
+    final done = huntCount >= huntTotal;
     return Container(
       decoration: BoxDecoration(gradient: _dialBg),
       child: LayoutBuilder(builder: (ctx, box) {
@@ -1691,16 +2166,16 @@ class _QuestJourneyScreenState extends State<QuestJourneyScreen> with TickerProv
               padding: const EdgeInsets.symmetric(horizontal: 22, vertical: 10),
               decoration: BoxDecoration(color: _inkDeep.withOpacity(0.8), borderRadius: BorderRadius.circular(16), border: Border.all(color: _verm.withOpacity(0.6))),
               child: Row(mainAxisSize: MainAxisSize.min, children: [
-                const Text('먹그림자 처치', style: TextStyle(fontSize: 13, color: Color(0xFFE8A08D), fontWeight: FontWeight.w700)),
+                Text(huntLabel, style: const TextStyle(fontSize: 13, color: Color(0xFFE8A08D), fontWeight: FontWeight.w700)),
                 const SizedBox(width: 12),
                 RichText(text: TextSpan(children: [
                   TextSpan(text: '$huntCount', style: dokkaebiTitle(size: 26, color: _cream)),
-                  const TextSpan(text: ' / 5', style: TextStyle(fontSize: 16, color: _muted)),
+                  TextSpan(text: ' / $huntTotal', style: const TextStyle(fontSize: 16, color: _muted)),
                 ])),
               ]),
             ),
             const SizedBox(height: 8),
-            SizedBox(width: 220, child: _progress(huntCount / 5, grad: const LinearGradient(colors: [_verm, Color(0xFFE8743A)]), track: const Color(0xBF0D0B09))),
+            SizedBox(width: 220, child: _progress(huntCount / huntTotal, grad: const LinearGradient(colors: [_verm, Color(0xFFE8743A)]), track: const Color(0xBF0D0B09))),
             const SizedBox(height: 6),
             const Text('그림자를 탭하면 붓질로 쫓는다', style: TextStyle(fontSize: 11.5, color: Color(0xFFB3A892))),
           ])),
@@ -1722,10 +2197,13 @@ class _QuestJourneyScreenState extends State<QuestJourneyScreen> with TickerProv
               child: Row(children: [
                 Container(width: 24, height: 24, alignment: Alignment.center, decoration: const BoxDecoration(shape: BoxShape.circle, color: _tealDeep), child: const Text('✓', style: TextStyle(color: Color(0xFFEAFFF9), fontSize: 13, fontWeight: FontWeight.w900))),
                 const SizedBox(width: 10),
-                const Expanded(child: Text('먹그림자를 모두 쫓았다 — 이제 이 집을 마음에 담을 차례', style: TextStyle(fontSize: 13.5, color: Color(0xFFBDEEE1), fontWeight: FontWeight.w700))),
+                const Expanded(child: Text('모두 해치웠다 — 이제 조각을 살필 차례', style: TextStyle(fontSize: 13.5, color: Color(0xFFBDEEE1), fontWeight: FontWeight.w700))),
               ]),
             )),
-            Positioned(left: 14, right: 14, bottom: 34, child: _cta('다음 — 사진 인증', () => go('photo'))),
+            // 예전엔 여기서 photo→trail로 이어졌다 — 챕터 0(운현궁) 전용 3화면
+            // 사슬이었다. 사냥(S1/S2/S6 임시 재사용)은 독립 미션이라 여기서
+            // 바로 조각을 지급한다(서버 기록이 성공해야 확정).
+            Positioned(left: 14, right: 14, bottom: 34, child: _cta('돌아와 조각을 살피다', () => _claimCurrentChapter())),
           ] else
             Positioned(right: 18, bottom: 34, child: GestureDetector(
               onTap: () => setState(() => hintOpen = true),
@@ -1737,16 +2215,86 @@ class _QuestJourneyScreenState extends State<QuestJourneyScreen> with TickerProv
   }
 
   // ════════════════════════════════════════════════════
+  // 8-2. GATHER — 전투 없는 탭 수집 (S1 대화→수집 · S6 수집 누적)
+  // ════════════════════════════════════════════════════
+  Widget _gatherScreen() {
+    final gatherTotal = gatherItems.length;
+    final gatherCount = gatherItems.where((e) => e['collected'] == true).length;
+    final done = gatherCount >= gatherTotal;
+    return Container(
+      decoration: BoxDecoration(gradient: _dialBg),
+      child: LayoutBuilder(builder: (ctx, box) {
+        return Stack(children: [
+          Align(alignment: const Alignment(0, 0.52), child: ClipPath(clipper: _RoofClipper(), child: Container(height: 130, color: const Color(0xFF0C0A08)))),
+          // 상단 카운터 — 사냥 화면과 같은 틀이지만 전투 색(주홍) 대신 수집 색(청록).
+          Positioned(top: 58, left: 0, right: 0, child: Column(children: [
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 22, vertical: 10),
+              decoration: BoxDecoration(color: _inkDeep.withOpacity(0.8), borderRadius: BorderRadius.circular(16), border: Border.all(color: _tealDeep.withOpacity(0.6))),
+              child: Row(mainAxisSize: MainAxisSize.min, children: [
+                Text(gatherLabel, style: const TextStyle(fontSize: 13, color: _teal, fontWeight: FontWeight.w700)),
+                const SizedBox(width: 12),
+                RichText(text: TextSpan(children: [
+                  TextSpan(text: '$gatherCount', style: dokkaebiTitle(size: 26, color: _cream)),
+                  TextSpan(text: ' / $gatherTotal', style: const TextStyle(fontSize: 16, color: _muted)),
+                ])),
+              ]),
+            ),
+            const SizedBox(height: 8),
+            SizedBox(width: 220, child: _progress(gatherTotal == 0 ? 0 : gatherCount / gatherTotal, grad: const LinearGradient(colors: [_tealDeep, _teal]), track: const Color(0xBF0D0B09))),
+            const SizedBox(height: 6),
+            const Text('은은한 빛을 따라 손끝으로 거두어라', style: TextStyle(fontSize: 11.5, color: Color(0xFFB3A892))),
+          ])),
+          // 수집물 — 전투 없이 탭 한 번으로 거둔다.
+          for (final it in gatherItems)
+            if (it['collected'] != true)
+              Positioned(
+                left: box.maxWidth * (it['left'] as double) - (it['size'] as double) / 2,
+                top: box.maxHeight * (it['top'] as double) - (it['size'] as double) / 2,
+                child: _Floaty(anim: _float, amplitude: 6, child: GestureDetector(
+                  onTap: () => setState(() => it['collected'] = true),
+                  child: _FragShard(glyph: _target.hanja, size: it['size'] as double),
+                )),
+              ),
+          if (done) ...[
+            Positioned(left: 14, right: 14, bottom: 100, child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 13),
+              decoration: BoxDecoration(color: const Color(0xFF142A26).withOpacity(0.92), borderRadius: BorderRadius.circular(14), border: Border.all(color: _tealDeep.withOpacity(0.7))),
+              child: Row(children: [
+                Container(width: 24, height: 24, alignment: Alignment.center, decoration: const BoxDecoration(shape: BoxShape.circle, color: _tealDeep), child: const Text('✓', style: TextStyle(color: Color(0xFFEAFFF9), fontSize: 13, fontWeight: FontWeight.w900))),
+                const SizedBox(width: 10),
+                const Expanded(child: Text('모두 거두었다 — 이제 조각을 살필 차례', style: TextStyle(fontSize: 13.5, color: Color(0xFFBDEEE1), fontWeight: FontWeight.w700))),
+              ]),
+            )),
+            Positioned(left: 14, right: 14, bottom: 34, child: _cta('돌아와 조각을 살피다', () => _claimCurrentChapter())),
+          ] else
+            Positioned(right: 18, bottom: 34, child: GestureDetector(
+              onTap: () => setState(() => hintOpen = true),
+              child: Container(width: 52, height: 52, alignment: Alignment.center, decoration: BoxDecoration(shape: BoxShape.circle, color: _inkDeep.withOpacity(0.75), border: Border.all(color: _tealDeep.withOpacity(0.5))), child: const Text('힌트', style: TextStyle(fontSize: 12, color: _teal, fontWeight: FontWeight.w700))),
+            )),
+        ]);
+      }),
+    );
+  }
+
+  // ════════════════════════════════════════════════════
   // 9. PHOTO — 사진 인증
   // ════════════════════════════════════════════════════
   Widget _photoScreen() {
     final bracket = photoState == 'done' ? _teal : _cream.withOpacity(0.75);
+    // S4(사진→추적→파편)만 발자국으로 이어진다 — S5(사진 인증)나 strategy 없는
+    // 폴백(PATH_TRACE가 아닌 PHOTO_FIND)은 촬영만으로 끝난다.
+    final code = _curNode?.strategy.isNotEmpty == true ? strategyCode(_curNode!.strategy.first) : null;
+    final hasTrail = code == 'S4' || (code == null && _curNode?.mission?.type == 'PATH_TRACE');
+    // capture 원자가 준 실제 촬영 대상(예: "현판·건물 외관") — 없으면 챕터 지령으로.
+    final captureTargets = _actionAtom('capture')?.targets ?? const <String>[];
+    final captureLabel = captureTargets.isNotEmpty ? captureTargets.join('·') : _target.obj;
     return Container(
       decoration: BoxDecoration(gradient: _dialBg),
       child: LayoutBuilder(builder: (ctx, box) {
         return Stack(children: [
           Align(alignment: const Alignment(0, 0.55), child: ClipPath(clipper: _RoofClipper(), child: Container(height: 140, color: const Color(0xFF0C0A08)))),
-          Positioned(top: 58, left: 0, right: 0, child: Center(child: _pill('사진 미션 — 대문·처마를 담아라'))),
+          Positioned(top: 58, left: 0, right: 0, child: Center(child: _pill('사진 미션 — $captureLabel'))),
           // 뷰파인더
           Positioned(
             left: 0, right: 0, top: box.maxHeight * .26,
@@ -1757,9 +2305,9 @@ class _QuestJourneyScreenState extends State<QuestJourneyScreen> with TickerProv
                 _corner(bracket, top: false, left: true), _corner(bracket, top: false, left: false),
                 Positioned(left: 23, right: 23, bottom: 30, child: ClipPath(clipper: _GateClipper(), child: Container(height: 56, color: const Color(0xFF0C0A08)))),
                 if (photoState == 'scanning')
-                  Positioned(bottom: -44, left: 0, right: 0, child: Center(child: _pill('처마 인식 중 · $scan%', border: _teal, textColor: _teal))),
+                  Positioned(bottom: -44, left: 0, right: 0, child: Center(child: _pill('인식 중 · $scan%', border: _teal, textColor: _teal))),
                 if (photoState == 'done')
-                  Positioned(bottom: -44, left: 0, right: 0, child: Center(child: _pill('✓ 인증 완료 — 대문이 마음에 담겼다', border: _tealDeep, textColor: const Color(0xFFBDEEE1)))),
+                  Positioned(bottom: -44, left: 0, right: 0, child: Center(child: _pill('✓ 인증 완료 — 마음에 담겼다', border: _tealDeep, textColor: const Color(0xFFBDEEE1)))),
               ]),
             )),
           ),
@@ -1772,7 +2320,9 @@ class _QuestJourneyScreenState extends State<QuestJourneyScreen> with TickerProv
           if (photoState == 'scanning')
             Positioned(left: 60, right: 60, bottom: 60, child: _progress(scan / 100, grad: const LinearGradient(colors: [_tealDeep, _teal]), track: const Color(0xBF0D0B09))),
           if (photoState == 'done')
-            Positioned(left: 14, right: 14, bottom: 34, child: _cta('길이 열렸다 — 발자국을 따라가라', () => go('trail'))),
+            Positioned(left: 14, right: 14, bottom: 34, child: hasTrail
+                ? _cta('길이 열렸다 — 발자국을 따라가라', () => go('trail'))
+                : _cta('돌아와 조각을 살피다', () => _claimCurrentChapter())),
         ]);
       }),
     );
@@ -1814,19 +2364,21 @@ class _QuestJourneyScreenState extends State<QuestJourneyScreen> with TickerProv
     final fpDefs = [
       (0.20, 0.22, 56.0, -18.0), (0.38, 0.32, 48.0, -24.0), (0.55, 0.42, 40.0, -30.0),
     ];
-    final fragVisible = trail >= 3 && !fragTaken;
+    // follow 원자의 걸음 수 — 화면엔 발자국 3개까지만 배치해뒀으니 그 안으로 클램프.
+    final trailTotal = (_actionAtom('follow')?.steps ?? 3).clamp(1, fpDefs.length);
+    final fragVisible = trail >= trailTotal && !fragTaken;
     return Container(
       decoration: BoxDecoration(gradient: _dialBg),
       child: LayoutBuilder(builder: (ctx, box) {
         return Stack(children: [
           Align(alignment: const Alignment(0, 0.55), child: ClipPath(clipper: _RoofClipper(), child: Container(height: 110, color: const Color(0xFF0C0A08)))),
           Positioned(top: 58, left: 0, right: 0, child: Center(child: Row(mainAxisSize: MainAxisSize.min, children: [
-            _pill('발자국 $trail/3', border: _goldDim, textColor: _gold),
+            _pill('발자국 $trail/$trailTotal', border: _goldDim, textColor: _gold),
             const SizedBox(width: 10),
-            _pill('파편까지 ${12 - trail * 4}m', border: Colors.white, textColor: _soft),
+            _pill('파편까지 ${(trailTotal - trail) * 4}m', border: Colors.white, textColor: _soft),
           ]))),
-          for (var i = 0; i < 3; i++)
-            if (trail >= i && trail < 3)
+          for (var i = 0; i < trailTotal; i++)
+            if (trail >= i && trail < trailTotal)
               Positioned(
                 left: box.maxWidth * fpDefs[i].$1,
                 bottom: box.maxHeight * fpDefs[i].$2,
@@ -1852,15 +2404,20 @@ class _QuestJourneyScreenState extends State<QuestJourneyScreen> with TickerProv
             Positioned(
               right: box.maxWidth * .14, bottom: box.maxHeight * .5,
               child: GestureDetector(
-                onTap: () {
-                setState(() { fragTaken = true; showReward = true; fragments = 1; exp += 50; coupon += 500; });
-                _grantChapter(0, extra: [const StateRef(kind: StateKind.coupon, value: '', to: '익선동카페', amount: 500)]);
-              },
+                // 서버 기록이 성공해야 파편을 거둔다 — 지금 챕터 번호는 _claimCurrentChapter가 먼저 읽어 둔다.
+                onTap: () => _claimCurrentChapter(
+                  extra: [const StateRef(kind: StateKind.coupon, value: '', to: '익선동카페', amount: 500)],
+                  also: () {
+                    fragTaken = true;
+                    exp += 50;
+                    coupon += 500;
+                  },
+                ),
                 child: _Floaty(anim: _float, child: SizedBox(
                   width: 110, height: 110,
                   child: Stack(alignment: Alignment.center, clipBehavior: Clip.none, children: [
                     Container(width: 110, height: 110, decoration: BoxDecoration(shape: BoxShape.circle, gradient: RadialGradient(colors: [_gold.withOpacity(0.45), _gold.withOpacity(0)]))),
-                    _FragShard(glyph: '訓', size: 52),
+                    _FragShard(glyph: _target.hanja, size: 52),
                     Positioned(bottom: -24, child: _pill('탭하여 수집', border: _goldDim, textColor: _gold)),
                   ]),
                 )),
@@ -1897,9 +2454,11 @@ class _QuestJourneyScreenState extends State<QuestJourneyScreen> with TickerProv
   // 11. CAFE — 익선동 카페
   // ════════════════════════════════════════════════════
   Widget _cafeScreen() {
+    // S7(주문 인증) 실제 데이터 — purchase 원자의 메뉴명, 없으면 장소명으로 대체.
+    final menu = _actionAtom('purchase')?.menu ?? '${_target.name} 한 상';
+    final npcLine = _curNode?.npcDialogue.isNotEmpty == true ? _curNode!.npcDialogue : '"${_target.obj}"';
     final cafeCoupon = math.min(coupon, 5000);
     final cafePayN = 5000 - cafeCoupon;
-    final cafeAnswers = [('날개', false), ('더할 익(益)', true), ('물', false)];
     return Container(
       decoration: const BoxDecoration(gradient: LinearGradient(begin: Alignment.topCenter, end: Alignment.bottomCenter, colors: [_ink, Color(0xFF211A14)])),
       child: SafeArea(
@@ -1909,11 +2468,11 @@ class _QuestJourneyScreenState extends State<QuestJourneyScreen> with TickerProv
           child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
             Row(children: [
               Column(crossAxisAlignment: CrossAxisAlignment.start, mainAxisSize: MainAxisSize.min, children: [
-                Text('익선동 한옥 카페', style: dokkaebiTitle(size: 19, color: _cream)),
-                const Text('두 번째 기억 · GPS 인증 완료 ✓', style: TextStyle(fontSize: 11.5, color: _muted)),
+                Text(_target.name, style: dokkaebiTitle(size: 19, color: _cream)),
+                Text('제 ${_tIdx + 1} 장 · GPS 인증 완료 ✓', style: const TextStyle(fontSize: 11.5, color: _muted)),
               ]),
               const Spacer(),
-              _pill('조각 $fragments/4', border: _tealDeep, textColor: _teal),
+              _pill('조각 $fragments/$_stoneTotal', border: _tealDeep, textColor: _teal),
             ]),
             const SizedBox(height: 14),
             // 도깨비 안내
@@ -1927,13 +2486,9 @@ class _QuestJourneyScreenState extends State<QuestJourneyScreen> with TickerProv
                 ])),
                 const SizedBox(width: 12),
                 Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                  const Text('한옥 도깨비 — 단서를 알아본다', style: TextStyle(fontSize: 11, color: _tealDeep, fontWeight: FontWeight.w900)),
+                  Text(_npcName, style: const TextStyle(fontSize: 11, color: _tealDeep, fontWeight: FontWeight.w900)),
                   const SizedBox(height: 4),
-                  RichText(text: TextSpan(style: _gowun(14, _parchInk, height: 1.55), children: const [
-                    TextSpan(text: '"허허, 운현궁에서 '),
-                    TextSpan(text: '申時 단서', style: TextStyle(backgroundColor: Color(0x24C8452C), color: _verm, fontWeight: FontWeight.w700)),
-                    TextSpan(text: '를 얻어 왔구나! 차 한 잔 시키고 둘러보거라."'),
-                  ])),
+                  Text(npcLine, style: _gowun(14, _parchInk, height: 1.55)),
                 ])),
               ]),
             ),
@@ -1946,13 +2501,9 @@ class _QuestJourneyScreenState extends State<QuestJourneyScreen> with TickerProv
                 const Text('주문 인증 미션', style: TextStyle(fontSize: 12, color: _goldDim, fontWeight: FontWeight.w900, letterSpacing: 0.7)),
                 const SizedBox(height: 10),
                 Row(children: [
-                  Container(width: 52, height: 52, alignment: Alignment.center, decoration: BoxDecoration(gradient: const LinearGradient(colors: [Color(0xFF3B332A), Color(0xFF221C15)]), borderRadius: BorderRadius.circular(12)), child: Text('茶', style: dokkaebiTitle(size: 20, color: _gold))),
+                  Container(width: 52, height: 52, alignment: Alignment.center, decoration: BoxDecoration(gradient: const LinearGradient(colors: [Color(0xFF3B332A), Color(0xFF221C15)]), borderRadius: BorderRadius.circular(12)), child: Text(_target.hanja, style: dokkaebiTitle(size: 20, color: _gold))),
                   const SizedBox(width: 12),
-                  Column(crossAxisAlignment: CrossAxisAlignment.start, mainAxisSize: MainAxisSize.min, children: [
-                    const Text('쌍화차', style: TextStyle(fontSize: 15, color: _cream, fontWeight: FontWeight.w700)),
-                    const Text('"쌍화차에 글씨의 온기가 도느니"', style: TextStyle(fontSize: 12, color: _muted)),
-                  ]),
-                  const Spacer(),
+                  Expanded(child: Text(menu, style: const TextStyle(fontSize: 15, color: _cream, fontWeight: FontWeight.w700))),
                   Column(crossAxisAlignment: CrossAxisAlignment.end, mainAxisSize: MainAxisSize.min, children: [
                     const Text('5,000원', style: TextStyle(fontSize: 12, color: _muted, decoration: TextDecoration.lineThrough)),
                     Text(_won(cafePayN), style: const TextStyle(fontSize: 17, color: _gold, fontWeight: FontWeight.w900)),
@@ -1970,7 +2521,11 @@ class _QuestJourneyScreenState extends State<QuestJourneyScreen> with TickerProv
                 ),
                 const SizedBox(height: 12),
                 if (!cafeOrdered)
-                  _cta('영수증 촬영으로 인증하기', () => setState(() { cafeOrdered = true; spent += cafePayN; coupon = 0; }), fontSize: 15)
+                  _cta('영수증 촬영으로 인증하기', () => _claimCurrentChapter(also: () {
+                    cafeOrdered = true;
+                    spent += cafePayN;
+                    coupon = 0;
+                  }), fontSize: 15)
                 else
                   Container(
                     padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
@@ -1983,45 +2538,6 @@ class _QuestJourneyScreenState extends State<QuestJourneyScreen> with TickerProv
                   ),
               ]),
             ),
-            // 퀴즈(주문 후)
-            if (cafeOrdered) ...[
-              const SizedBox(height: 12),
-              Container(
-                padding: const EdgeInsets.all(16),
-                decoration: BoxDecoration(color: _cream.withOpacity(0.05), borderRadius: BorderRadius.circular(16), border: Border.all(color: Colors.white.withOpacity(0.1))),
-                child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                  Text('"이 골목 이름 익선동의 \'익\'은 무엇을 뜻하겠느냐?"', style: dokkaebiTitle(size: 15, color: _cream)),
-                  const SizedBox(height: 11),
-                  Row(children: [
-                    for (var i = 0; i < cafeAnswers.length; i++) ...[
-                      if (i > 0) const SizedBox(width: 8),
-                      Expanded(child: _cafeOption(cafeAnswers[i].$1, cafeAnswers[i].$2)),
-                    ],
-                  ]),
-                  if (cafeState == 'wrong') ...[
-                    const SizedBox(height: 10),
-                    Text('"더할수록 복이 온다는 뜻이니라 — 다시 보거라."', style: dokkaebiTitle(size: 12.5, color: const Color(0xFFE8A08D))),
-                  ],
-                  if (cafeState == 'correct') ...[
-                    const SizedBox(height: 12),
-                    RewardPopIn(
-                      child: Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
-                      decoration: BoxDecoration(color: _goldDim.withOpacity(0.1), borderRadius: BorderRadius.circular(12), border: Border.all(color: _gold.withOpacity(0.5))),
-                      child: Row(children: [
-                        _FragShard(glyph: '民', size: 30, fontSize: 12),
-                        const SizedBox(width: 10),
-                        const Expanded(child: Text('글씨조각 「민(民)」 획득 · 단서 「ㄱ」', style: TextStyle(fontSize: 13, color: _gold, fontWeight: FontWeight.w900))),
-                        const Text('쿠폰 +1,300원', style: TextStyle(fontSize: 10.5, color: Color(0xFFA87F2C), fontWeight: FontWeight.w900)),
-                      ]),
-                      ),
-                    ),
-                    const SizedBox(height: 12),
-                    _cta('지도로 — 다음 기억을 찾아서', () => go('map'), bg: const Color(0xFFC89A3A), fg: const Color(0xFF3A2A08), gradient: _goldGrad),
-                  ],
-                ]),
-              ),
-            ],
             const SizedBox(height: 20),
             // 남은 여비
             Container(
@@ -2043,34 +2559,6 @@ class _QuestJourneyScreenState extends State<QuestJourneyScreen> with TickerProv
     );
   }
 
-  Widget _cafeOption(String label, bool correct) {
-    final picked = cafeState == 'correct' && correct;
-    return GestureDetector(
-      onTap: () {
-        if (cafeState == 'correct') return;
-        if (correct) {
-          setState(() { cafeState = 'correct'; fragments = 2; exp += 40; coupon = 1300; });
-          hint.noteProgress();
-          _grantChapter(1, extra: [const StateRef(kind: StateKind.coupon, value: '', to: '인사동', amount: 1000)]);
-        } else {
-          setState(() => cafeState = 'wrong');
-          hint.noteFailure();
-        }
-      },
-      child: AnimatedContainer(
-        duration: const Duration(milliseconds: 180),
-        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 12),
-        alignment: Alignment.center,
-        decoration: BoxDecoration(
-          color: picked ? _tealDeep.withOpacity(0.16) : _inkDeep.withOpacity(0.5),
-          borderRadius: BorderRadius.circular(11),
-          border: Border.all(color: picked ? _tealDeep : Colors.white.withOpacity(0.12), width: picked ? 1.5 : 1),
-        ),
-        child: Text(picked ? '✓ $label' : label, style: TextStyle(fontSize: 13.5, color: picked ? _teal : const Color(0xFFE8DCC4), fontWeight: FontWeight.w700)),
-      ),
-    );
-  }
-
   // ════════════════════════════════════════════════════
   // 12. INSA — 인사동 붓방
   // ════════════════════════════════════════════════════
@@ -2081,7 +2569,7 @@ class _QuestJourneyScreenState extends State<QuestJourneyScreen> with TickerProv
       child: LayoutBuilder(builder: (ctx, box) {
         return Stack(children: [
           // left: 58 — 좌상단 뒤로가기 버튼 자리를 비켜준다.
-          Positioned(top: 58, left: 58, right: 14, child: Row(children: [_pill('인사동 · 세 번째 기억'), const Spacer(), _pill('조각 $fragments/4', border: _tealDeep, textColor: _teal)])),
+          Positioned(top: 58, left: 58, right: 14, child: Row(children: [_pill('인사동 · 세 번째 기억'), const Spacer(), _pill('조각 $fragments/$_stoneTotal', border: _tealDeep, textColor: _teal)])),
           // 간판
           Positioned(
             left: 0, right: 0, top: box.maxHeight * .27,
@@ -2182,9 +2670,11 @@ class _QuestJourneyScreenState extends State<QuestJourneyScreen> with TickerProv
       onTap: () {
         if (insaState == 'opened') return;
         if (isAnswer) {
-          setState(() { insaPick = t; insaState = 'opened'; fragments = 3; exp += 40; });
+          // 챕터 번호 하드코딩(옛 4챕터 종로 대본: 인사동=항상 2번) 제거.
+          final idx = _tIdx;
+          setState(() { insaPick = t; insaState = 'opened'; fragments = idx + 1; exp += 40; });
           hint.noteProgress();
-          _grantChapter(2);
+          _grantChapter(idx);
         } else {
           setState(() { insaPick = t; insaState = 'wrong'; });
           hint.noteFailure();
@@ -2391,7 +2881,62 @@ class _QuestJourneyScreenState extends State<QuestJourneyScreen> with TickerProv
   // ════════════════════════════════════════════════════
   // 모달: 보상 / 힌트 / 컬렉션
   // ════════════════════════════════════════════════════
-  Widget _rewardModal() => Positioned.fill(child: Container(
+  /// 조각 기록 공통 팝업 — 기록 중 안내, 실패하면 이유와 다시 시도.
+  /// 다시 해도 안 되는 실패면 "기록 없이 계속"도 준다. 닫으면 미션 화면에 남아 버튼으로 다시 시도할 수 있다.
+  Widget _recordSheet() {
+    final failure = _recordFailure;
+    final claim = _pendingClaim;
+    return Positioned.fill(child: Container(
+      color: Colors.black.withOpacity(0.72),
+      alignment: Alignment.center,
+      padding: const EdgeInsets.symmetric(horizontal: 26),
+      child: _parchment(
+        padding: const EdgeInsets.fromLTRB(20, 20, 20, 16),
+        child: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+          Text(failure == null ? '조각을 기록하는 중…' : '조각을 기록하지 못했느니라',
+              textAlign: TextAlign.center, style: dokkaebiTitle(size: 18, color: _parchInk)),
+          const SizedBox(height: 14),
+          if (failure == null)
+            const Center(child: SizedBox(width: 26, height: 26, child: CircularProgressIndicator(strokeWidth: 2.6, color: _verm)))
+          else ...[
+            Text(
+              failure.canSkip ? '${failure.message} 기록 없이 가면 이 조각은 서버에 남지 않느니라.' : failure.message,
+              textAlign: TextAlign.center,
+              style: _gowun(13.5, _parchInkSoft, height: 1.55),
+            ),
+            const SizedBox(height: 16),
+            if (claim != null) ...[
+              _cta('다시 시도', () => _claimChapter(claim.chapterIdx, extra: claim.extra, onClaimed: claim.onClaimed)),
+              if (failure.canSkip) ...[
+                const SizedBox(height: 8),
+                _cta('기록 없이 계속', () => _confirmClaim(claim, null), bg: _bronze, fg: _cream),
+              ],
+            ],
+            const SizedBox(height: 6),
+            Center(child: TextButton(
+              onPressed: () => setState(() {
+                _recordFailure = null;
+                _pendingClaim = null;
+              }),
+              child: const Text('닫기', style: TextStyle(color: _bronze, fontWeight: FontWeight.w700)),
+            )),
+          ],
+        ]),
+      ),
+    ));
+  }
+
+  /// 조각 획득 팝업 — 방금 확정된 챕터([c])의 실제 장소·단서·쿠폰과 서버가 준 보상을 보여준다.
+  Widget _rewardModal(_ClaimedReward c) {
+    final t = targets[c.chapterIdx.clamp(0, targets.length - 1)];
+    final reward = c.reward;
+    final region = widget.scenario?.region ?? _defaultRegion;
+    // 단서는 노드가 준 것 우선 — 코스 없는 데모 모드만 시안 기본 체인(申時→ㄱ→ㅏ).
+    final clue = t.clue ?? (widget.scenario == null ? _defaultClues[c.chapterIdx.clamp(0, 3)] : '');
+    // 이 챕터에서 실제로 지급한 쿠폰만(발자국 미션 등) — 없으면 줄 자체를 빼고 보여주지 않는다.
+    final coupons = c.extra.where((r) => r.kind == StateKind.coupon && (r.amount ?? 0) > 0).toList();
+    final couponAmount = coupons.fold<int>(0, (sum, r) => sum + (r.amount ?? 0));
+    return Positioned.fill(child: Container(
         color: Colors.black.withOpacity(0.8),
         alignment: Alignment.center,
         child: Padding(
@@ -2403,17 +2948,39 @@ class _QuestJourneyScreenState extends State<QuestJourneyScreen> with TickerProv
               decoration: BoxDecoration(gradient: const LinearGradient(begin: Alignment.topCenter, end: Alignment.bottomCenter, colors: [Color(0xFFF4EDDA), Color(0xFFEADFC4)]), borderRadius: BorderRadius.circular(22), border: Border.all(color: const Color(0xFFD8C9A4)), boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.7), blurRadius: 70)]),
               child: Column(mainAxisSize: MainAxisSize.min, children: [
                 const SizedBox(height: 8),
-                _FragShard(glyph: '訓', size: 104, fontSize: 48),
+                _FragShard(glyph: t.hanja, size: 104, fontSize: 48),
                 const SizedBox(height: 14),
-                Text('글씨조각 「훈(訓)」', style: dokkaebiTitle(size: 20, color: _parchInk)),
+                Text('「${t.name}」의 기억석 조각',
+                    textAlign: TextAlign.center,
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                    style: dokkaebiTitle(size: 20, color: _parchInk)),
                 const SizedBox(height: 4),
-                const Text('종로의 기억석 · 1/4 조각', style: TextStyle(fontSize: 13, color: _bronze, fontWeight: FontWeight.w700)),
+                Text('${region.isEmpty ? '' : '$region의 '}기억석 · ${c.chapterIdx + 1}/$_stoneTotal 조각',
+                    style: const TextStyle(fontSize: 13, color: _bronze, fontWeight: FontWeight.w700)),
                 const SizedBox(height: 14),
-                _rewardRow('경험치', '+50', _tealDeep),
-                const SizedBox(height: 7),
-                _rewardRow('단서 「申時」', '신규', _verm),
-                const SizedBox(height: 7),
-                _rewardRow('익선동 카페 쿠폰', '+500원', _goldDim),
+                // 경험치·도감·칭호는 서버가 계산해 실제로 지급한 값 — 로컬 추정이 아니다.
+                if (reward != null)
+                  _rewardRow('경험치', reward.alreadyRewarded ? '이미 받은 보상' : '+${reward.expGained}', _tealDeep)
+                else if (widget.scenario != null)
+                  Text('이 조각은 서버에 남지 않았느니라.',
+                      textAlign: TextAlign.center, style: _gowun(12.5, _bronze)),
+                if (clue.isNotEmpty) ...[
+                  const SizedBox(height: 7),
+                  _rewardRow('단서 「$clue」', '신규', _verm),
+                ],
+                if (couponAmount > 0) ...[
+                  const SizedBox(height: 7),
+                  _rewardRow('${coupons.first.to ?? ''} 쿠폰'.trim(), '+${_won(couponAmount)}', _goldDim),
+                ],
+                if (reward?.dexEntry != null) ...[
+                  const SizedBox(height: 7),
+                  _rewardRow('도감', '«${reward!.dexEntry}»', _blue),
+                ],
+                for (final title in reward?.titles ?? const <String>[]) ...[
+                  const SizedBox(height: 7),
+                  _rewardRow('칭호', title, _goldDim),
+                ],
                 const SizedBox(height: 16),
                 _cta('가방에 넣기 — 지도로', () => setState(() { showReward = false; screen = 'map'; }), bg: _parchInk, fg: _cream),
               ]),
@@ -2422,6 +2989,7 @@ class _QuestJourneyScreenState extends State<QuestJourneyScreen> with TickerProv
           ]),
         ),
       ));
+  }
 
   Widget _rewardRow(String label, String value, Color c) => Container(
         padding: const EdgeInsets.symmetric(horizontal: 13, vertical: 9),
@@ -2429,9 +2997,19 @@ class _QuestJourneyScreenState extends State<QuestJourneyScreen> with TickerProv
         child: Row(children: [
           Text('✦', style: TextStyle(color: c, fontWeight: FontWeight.w900)),
           const SizedBox(width: 10),
-          Text(label, style: const TextStyle(fontSize: 13, color: _parchInkSoft)),
-          const Spacer(),
-          Text(value, style: TextStyle(fontSize: 13, color: c, fontWeight: FontWeight.w900)),
+          // 장소·도깨비·칭호 이름이 들어오면서 길이가 데이터에 따라 달라진다 — 넘치면 줄임표.
+          Expanded(
+              child: Text(label,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(fontSize: 13, color: _parchInkSoft))),
+          const SizedBox(width: 10),
+          Flexible(
+              child: Text(value,
+                  textAlign: TextAlign.right,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(fontSize: 13, color: c, fontWeight: FontWeight.w900))),
         ]),
       );
 
