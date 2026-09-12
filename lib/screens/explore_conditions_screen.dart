@@ -13,31 +13,41 @@
 //            draft 필드는 그대로 두고(includeMeals=false·budget=null 고정) 화면만 숨겨서
 //            스위치를 켜는 날 이 블록만 되살리면 되게 한다.
 // 구현일: 2026-08-22 | 작성: kys (play-path-unify/kys/v1)
+// ------------------------------------------------------------
+// [v3] 마법사 1단계로 승격 — 반경을 먼저 고르고 그다음 장소를 고른다 (QA 1).
+// 구현(요약): 장소를 먼저 고르는 순서라 반경을 나중에 바꿔도 이미 고른 장소에 아무 영향이
+//            없었다(반경이 사실상 장식). 이 화면이 1단계가 되어 입력(ExploreDraft)을 만들고,
+//            다음 단계인 장소 화면이 그 반경으로 검색 결과를 걸러낸다.
+// 구현일: 2026-09-12 | 작성: ljs (explore-radius-first/ljs/v1)
 // ============================================================
 import 'package:flutter/material.dart';
 
 import '../models/explore_draft.dart';
 import '../theme.dart';
 import '../widgets/ui.dart';
-import 'explore_confirm_screen.dart';
+import 'explore_place_screen.dart';
 
 class ExploreConditionsScreen extends StatefulWidget {
-  final ExploreDraft draft;
-  const ExploreConditionsScreen({super.key, required this.draft});
+  /// 이어받을 입력. 마법사 1단계라 보통 null이고, 그때 이 화면이 새로 만든다.
+  final ExploreDraft? draft;
+  const ExploreConditionsScreen({super.key, this.draft});
   @override
   State<ExploreConditionsScreen> createState() => _ExploreConditionsScreenState();
 }
 
 class _ExploreConditionsScreenState extends State<ExploreConditionsScreen> {
+  /// 마법사 3화면이 함께 쓰는 입력 — 1단계인 이 화면이 만들어 다음 화면에 넘긴다.
+  late final ExploreDraft _d = widget.draft ?? ExploreDraft();
+
   static const _durations = ['2시간', '반나절', '하루'];
   static const _transports = ['도보', '대중교통'];
   static const _companions = ['혼자', '친구', '가족', '연인'];
   static const _difficulties = ['쉬움', '보통', '어려움'];
   static const _budgetLabels = ['0원', '10,000', '50,000', '100,000', '무제한'];
 
-  late double _budgetIndex = widget.draft.budget == null
+  late double _budgetIndex = _d.budget == null
       ? 11
-      : (widget.draft.budget! / 10000).clamp(0, 11).toDouble();
+      : (_d.budget! / 10000).clamp(0, 11).toDouble();
 
   String _fmtWon(int v) {
     final s = v.toString();
@@ -52,13 +62,13 @@ class _ExploreConditionsScreenState extends State<ExploreConditionsScreen> {
   void _next() {
     Navigator.push(
       context,
-      MaterialPageRoute(builder: (_) => ExploreConfirmScreen(draft: widget.draft)),
+      MaterialPageRoute(builder: (_) => ExplorePlaceScreen(draft: _d)),
     );
   }
 
   @override
   Widget build(BuildContext context) {
-    final d = widget.draft;
+    final d = _d;
     return Scaffold(
       appBar: AppBar(title: const Text('여행 조건')),
       body: SafeArea(
@@ -90,7 +100,7 @@ class _ExploreConditionsScreenState extends State<ExploreConditionsScreen> {
               padding: const EdgeInsets.fromLTRB(20, 0, 20, 4),
               child: Align(
                 alignment: Alignment.centerRight,
-                child: Text('STEP 2 / 3', style: TextStyle(color: AppColors.textMuted, fontSize: 11)),
+                child: Text('STEP 1 / 3', style: TextStyle(color: AppColors.textMuted, fontSize: 11)),
               ),
             ),
             Padding(
@@ -120,7 +130,7 @@ class _ExploreConditionsScreenState extends State<ExploreConditionsScreen> {
                   style: const TextStyle(color: AppColors.teal, fontWeight: FontWeight.bold)),
             ],
           ),
-          Text('현재 위치에서 반경 몇 km 안의 장소로 코스를 만들지 골라주세요.',
+          Text('현재 위치에서 반경 몇 km 안의 장소로 코스를 만들지 골라주세요. 다음 단계의 장소 검색에도 적용돼요.',
               style: const TextStyle(color: AppColors.textSecondary, fontSize: 12)),
           Slider(
             value: d.radiusKm.toDouble(),
