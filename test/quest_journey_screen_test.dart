@@ -33,6 +33,11 @@
 // [v6] 조각 기록(C1) — 서버 기록이 성공해야 확정·획득 팝업, 5xx는 다시 시도만, 403은 기록 없이 계속,
 //      좌표 없는 장소는 기록 시도 안 함, 연타해도 요청 1번, 피날레 기록 실패 시 엔딩으로 안 넘어감.
 // 구현일: 2026-09-12 | 작성: ljs (mission-strategy-routing/ljs/v1)
+// ------------------------------------------------------------
+// [v7] 조각 획득 팝업(B1·B2) — 종로 시안 고정 문구(「훈(訓)」·1/4·申時·익선동 쿠폰) 대신
+//      실제 장소·지역·조각 번호·단서와 서버가 준 보상(경험치·도감·칭호)이 뜨는지,
+//      서버에 기록하지 못한 조각은 경험치 대신 그 사실을 알리는지 잠근다.
+// 구현일: 2026-09-12 | 작성: ljs (mission-strategy-routing/ljs/v1)
 // ============================================================
 import 'dart:convert';
 
@@ -95,12 +100,20 @@ class _FakeQuestServer {
     Map<String, dynamic>? verdict,
     this.verifiedNodeIds = const [],
     this.openRunStatus = 200,
+    this.expGained = 10,
+    this.dexEntry,
+    this.titles = const [],
   }) : verdict = verdict ?? _verdict();
 
   final String scenarioId;
   final Map<String, dynamic> verdict;
   final List<String> verifiedNodeIds;
   final int openRunStatus;
+
+  /// 노드 완료(complete)가 돌려줄 보상 — 획득 팝업이 이 값을 그대로 보여줘야 한다.
+  final int expGained;
+  final String? dexEntry;
+  final List<String> titles;
   final requests = <http.Request>[];
 
   /// 조각 기록(collect) 응답 코드 — 테스트 도중 바꿔 "다시 시도" 성공을 흉내낸다.
@@ -143,8 +156,10 @@ class _FakeQuestServer {
     if (path.endsWith('/complete')) {
       return _json({
         'state': 'REWARDED',
-        'exp_gained': 10,
+        'exp_gained': expGained,
         'already_rewarded': false,
+        if (dexEntry != null) 'dex_entry': dexEntry,
+        'titles': titles,
         'progress': 1,
         'required': 2,
       });
@@ -936,6 +951,73 @@ void main() {
       expect(find.text('조각을 기록하지 못했느니라'), findsOneWidget);
       expect(find.text('처음부터 다시'), findsNothing, reason: '엔딩 화면으로 넘어가면 안 된다');
       expect(ScenarioStore.I.endingOf(sc.scenarioId), isNull);
+    });
+
+    // 계획 B1·B2 — 획득 팝업은 종로 시안 고정 문구가 아니라 그 챕터·서버 보상을 보여준다.
+    Scenario clueCourse() => Scenario.fromJson({
+          'scenario_id': 'gyeongju_reward',
+          'title': '경주시의 기억석',
+          'region': '경주시',
+          'node_sequence': [
+            {
+              ..._rich('q1', '첨성대', 'QUIZ_FIND', quiz: {
+                'q': '첨성대는 무엇을 살피던 곳이더냐?',
+                'options': ['별', '물', '바람'],
+                'answer': 0,
+                'wrong_hint': '하늘을 보거라',
+              }),
+              'clue': '별빛',
+            },
+            _rich('q2', '월성', 'RESTORE_AR'),
+          ],
+        });
+
+    testWidgets('획득 팝업 — 종로 고정 문구 대신 실제 장소·지역·조각 번호·단서가 뜬다', (tester) async {
+      final sc = clueCourse();
+      await toQuizContinue(tester, sc, _FakeQuestServer(scenarioId: sc.scenarioId));
+
+      await tester.tap(find.text('계속하기'));
+      await tester.pump(const Duration(milliseconds: 100));
+      await tester.pump(const Duration(milliseconds: 100));
+
+      expect(find.text('「첨성대」의 기억석 조각'), findsOneWidget);
+      expect(find.text('경주시의 기억석 · 1/2 조각'), findsOneWidget);
+      expect(find.text('단서 「별빛」'), findsOneWidget);
+      expect(find.text('글씨조각 「훈(訓)」'), findsNothing);
+      expect(find.textContaining('申時'), findsNothing);
+      expect(find.textContaining('익선동'), findsNothing);
+    });
+
+    testWidgets('획득 팝업 — 경험치·도감·칭호는 서버가 준 값을 보여준다', (tester) async {
+      final sc = clueCourse();
+      final server = _FakeQuestServer(
+          scenarioId: sc.scenarioId, expGained: 25, dexEntry: '별빛 도깨비', titles: const ['첫 조각']);
+      await toQuizContinue(tester, sc, server);
+
+      await tester.tap(find.text('계속하기'));
+      await tester.pump(const Duration(milliseconds: 100));
+      await tester.pump(const Duration(milliseconds: 100));
+
+      expect(find.text('+25'), findsOneWidget);
+      expect(find.text('+50'), findsNothing, reason: '시안 고정 경험치');
+      expect(find.text('«별빛 도깨비»'), findsOneWidget);
+      expect(find.text('첫 조각'), findsOneWidget);
+    });
+
+    testWidgets('획득 팝업 — 기록 없이 계속한 조각은 경험치 대신 서버에 안 남았다고 알린다', (tester) async {
+      final sc = clueCourse();
+      final server = _FakeQuestServer(scenarioId: sc.scenarioId)..collectStatus = 403;
+      await toQuizContinue(tester, sc, server);
+
+      await tester.tap(find.text('계속하기'));
+      await tester.pump(const Duration(milliseconds: 100));
+      await tester.pump(const Duration(milliseconds: 100));
+      await tester.tap(find.text('기록 없이 계속'));
+      await tester.pump(const Duration(milliseconds: 100));
+
+      expect(find.text('획 득'), findsOneWidget);
+      expect(find.textContaining('서버에 남지 않았'), findsOneWidget);
+      expect(find.text('경험치'), findsNothing);
     });
   });
 }

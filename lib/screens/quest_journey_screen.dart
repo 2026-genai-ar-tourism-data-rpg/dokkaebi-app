@@ -1,4 +1,14 @@
 // ============================================================
+// [v8] 조각 획득 팝업을 실제 챕터·서버 보상으로(계획 B1·B2).
+// 구현(요약): 어느 코스·어느 챕터에서 조각을 얻어도 종로 시안 문구가 그대로 떴다
+//            (「훈(訓)」 · 종로의 기억석 1/4 · 경험치 +50 · 단서 「申時」 · 익선동 카페 쿠폰 +500원).
+//            서버가 complete 응답으로 준 실제 보상(경험치·도감·칭호)은 읽지도 않고 버렸다.
+//            → 확정된 챕터(_claimed: 챕터·그때 받은 것·서버 보상)를 팝업이 그대로 읽는다.
+//              장소명·지역·조각 번호·단서는 그 챕터 노드에서, 경험치·도감·칭호는 서버 보상에서,
+//              쿠폰은 그 챕터에서 실제로 지급한 것만. 없는 항목은 줄 자체를 빼고,
+//              서버에 기록하지 못한 조각("기록 없이 계속"·좌표 없는 장소)은 경험치 줄 대신 그 사실을 알린다.
+// 구현일: 2026-09-12 | 작성: ljs (mission-strategy-routing/ljs/v1)
+// ------------------------------------------------------------
 // [v7] 조각은 서버 기록이 성공해야 확정 — 실패하면 공통 팝업으로 멈추고 다시 시도(계획 C1).
 // 구현(요약): 미션을 끝내면 조각 수·획득 팝업·로컬 저장을 먼저 하고 서버 기록(collect·complete)은
 //            결과를 보지 않아, 폰에선 완주·서버에선 미완주가 생겼다.
@@ -114,6 +124,13 @@ typedef _RecordFailure = ({String message, bool canSkip});
 /// [onClaimed]는 확정된 뒤의 화면 반영(조각 수·획득 팝업·엔딩 등).
 typedef _PendingClaim = ({int chapterIdx, List<StateRef> extra, Future<void> Function() onClaimed});
 
+/// 조각 서버 기록 결과 — 실패 사유(성공이면 null)와 서버가 준 보상(기록하지 않았으면 null).
+typedef _RecordResult = ({_RecordFailure? failure, NodeReward? reward});
+
+/// 방금 확정된 조각 — 획득 팝업이 읽는다. 팝업이 뜰 때는 조각 수가 이미 올라
+/// "지금 챕터"가 다음 장소를 가리키므로, 확정 순간의 챕터·받은 것을 따로 들고 있어야 한다.
+typedef _ClaimedReward = ({int chapterIdx, List<StateRef> extra, NodeReward? reward});
+
 // ── 시안 팔레트(로컬 상수) ──────────────────────────────
 const _ink = Color(0xFF17130F); // 먹빛
 const _inkDeep = Color(0xFF0D0B09);
@@ -165,6 +182,9 @@ const _defaultTargets = <_Target>[
 
 /// 시안 기본 단서 체인(申時→ㄱ→ㅏ) — 노드가 clue를 안 주는 데모 모드 폴백.
 const _defaultClues = ['申時', 'ㄱ', 'ㅏ', ''];
+
+/// 코스 데이터 없는 데모 모드의 지역명(시안이 종로 4챕터다).
+const _defaultRegion = '종로';
 
 class QuestJourneyScreen extends StatefulWidget {
   /// 도착 인증에 쓸 위치 서비스. 테스트·데모에서 갈아끼운다.
@@ -228,6 +248,9 @@ class _QuestJourneyScreenState extends State<QuestJourneyScreen> with TickerProv
 
   /// 기록을 기다리는(또는 실패한) 챕터 확정 — 다시 시도·기록 없이 계속이 이어받는다.
   _PendingClaim? _pendingClaim;
+
+  /// 방금 확정된 조각 — 획득 팝업이 읽는다(확정되면 조각 수가 올라 "지금 챕터"는 다음 장소가 된다).
+  _ClaimedReward? _claimed;
 
   /// 도착 인증을 건너뛴 장소(서버가 좌표 없는 장소라고 함) — 서버가 기록을 거절하니 시도하지 않는다.
   final Set<String> _unrecordedNodeIds = {};
@@ -812,37 +835,45 @@ class _QuestJourneyScreenState extends State<QuestJourneyScreen> with TickerProv
       _recordFailure = null;
       _pendingClaim = claim;
     });
-    final failure = await _recordOnServer(targets[idx.clamp(0, targets.length - 1)].node);
+    final result = await _recordOnServer(targets[idx.clamp(0, targets.length - 1)].node);
     if (!mounted) return;
     setState(() {
       _recording = false;
-      _recordFailure = failure;
+      _recordFailure = result.failure;
     });
-    if (failure == null) await _confirmClaim(claim);
+    if (result.failure == null) await _confirmClaim(claim, result.reward);
   }
 
   /// 확정 반영 — 서버 기록이 성공했거나, 다시 해도 안 되는 실패에서 "기록 없이 계속"을 골랐을 때.
-  Future<void> _confirmClaim(_PendingClaim claim) async {
+  /// [reward]는 서버가 준 보상 — 기록하지 못한 조각이면 null이고, 획득 팝업이 그대로 보여준다.
+  Future<void> _confirmClaim(_PendingClaim claim, NodeReward? reward) async {
     setState(() {
       _pendingClaim = null;
       _recordFailure = null;
+      _claimed = (chapterIdx: claim.chapterIdx, extra: claim.extra, reward: reward);
     });
     await claim.onClaimed();
     await _grantChapter(claim.chapterIdx, extra: claim.extra);
   }
 
   /// 챕터 조각을 서버 run에 기록한다(collect → complete) — 조각·경험치·도감·칭호가 여기서 나온다.
-  /// 성공했거나 서버에 기록할 수 없는 챕터면 null, 실패하면 사유(다시 해도 안 되는 실패인지 포함).
+  /// 성공하면 서버가 준 보상을, 서버에 기록할 수 없는 챕터면 둘 다 null을,
+  /// 실패하면 사유(다시 해도 안 되는 실패인지 포함)를 돌려준다.
   ///
   /// 위치는 다시 확인하지 않는다 — 도착 인증(_arrive)에서 서버에 방문이 이미 남았다.
   /// 서버 run이 없으면(앱 재시작 후 복원 실패 등) 여기서 다시 연다 — 다시 시도가 곧 재연결이다.
-  Future<_RecordFailure?> _recordOnServer(QuestNode? n) async {
+  Future<_RecordResult> _recordOnServer(QuestNode? n) async {
     final s = widget.scenario;
     // 데모 모드(코스 없음)·노드 없는 챕터·도착 인증을 건너뛴 장소는 서버가 기록할 수 없다 — 로컬만.
-    if (s == null || n == null || _unrecordedNodeIds.contains(n.nodeId)) return null;
-    _RecordFailure fail() => (
-          message: _session.error ?? '조각을 기록하지 못했느니라.',
-          canSkip: !_session.errorRetryable,
+    if (s == null || n == null || _unrecordedNodeIds.contains(n.nodeId)) {
+      return (failure: null, reward: null);
+    }
+    _RecordResult fail() => (
+          failure: (
+            message: _session.error ?? '조각을 기록하지 못했느니라.',
+            canSkip: !_session.errorRetryable,
+          ),
+          reward: null,
         );
     if (!_session.isActive && !await _session.start(s.scenarioId)) return fail();
     if (n.fragmentId.isNotEmpty && await _session.collect(n.nodeId) == null) return fail();
@@ -850,7 +881,7 @@ class _QuestJourneyScreenState extends State<QuestJourneyScreen> with TickerProv
       n.nodeId,
       choiceId: branchChoices[n.nodeId],   // 갈림길을 골랐으면 그 갈래를 함께 보낸다
     );
-    return reward == null ? fail() : null;
+    return reward == null ? fail() : (failure: null, reward: reward);
   }
 
   /// 선택지 효과(플래그·친밀도·쿠폰) 즉시 적용 + 영속. 규칙 2조: grants 종류는 안 바뀐다.
@@ -972,6 +1003,7 @@ class _QuestJourneyScreenState extends State<QuestJourneyScreen> with TickerProv
       _arrivalFailure = null;
       _recordFailure = null;
       _pendingClaim = null;
+      _claimed = null;
       pstate.clear();
       branchChoices.clear();
       targets = _resolveTargets(widget.scenario);
@@ -1020,7 +1052,7 @@ class _QuestJourneyScreenState extends State<QuestJourneyScreen> with TickerProv
             ),
           ),
         ),
-        if (showReward) _rewardModal(),
+        if (showReward && _claimed != null) _rewardModal(_claimed!),
         if (_recording || _recordFailure != null) _recordSheet(),
         if (hintOpen) _hintSheet(),
         if (collOpen) _collSheet(),
@@ -2866,7 +2898,7 @@ class _QuestJourneyScreenState extends State<QuestJourneyScreen> with TickerProv
               _cta('다시 시도', () => _claimChapter(claim.chapterIdx, extra: claim.extra, onClaimed: claim.onClaimed)),
               if (failure.canSkip) ...[
                 const SizedBox(height: 8),
-                _cta('기록 없이 계속', () => _confirmClaim(claim), bg: _bronze, fg: _cream),
+                _cta('기록 없이 계속', () => _confirmClaim(claim, null), bg: _bronze, fg: _cream),
               ],
             ],
             const SizedBox(height: 6),
@@ -2883,7 +2915,17 @@ class _QuestJourneyScreenState extends State<QuestJourneyScreen> with TickerProv
     ));
   }
 
-  Widget _rewardModal() => Positioned.fill(child: Container(
+  /// 조각 획득 팝업 — 방금 확정된 챕터([c])의 실제 장소·단서·쿠폰과 서버가 준 보상을 보여준다.
+  Widget _rewardModal(_ClaimedReward c) {
+    final t = targets[c.chapterIdx.clamp(0, targets.length - 1)];
+    final reward = c.reward;
+    final region = widget.scenario?.region ?? _defaultRegion;
+    // 단서는 노드가 준 것 우선 — 코스 없는 데모 모드만 시안 기본 체인(申時→ㄱ→ㅏ).
+    final clue = t.clue ?? (widget.scenario == null ? _defaultClues[c.chapterIdx.clamp(0, 3)] : '');
+    // 이 챕터에서 실제로 지급한 쿠폰만(발자국 미션 등) — 없으면 줄 자체를 빼고 보여주지 않는다.
+    final coupons = c.extra.where((r) => r.kind == StateKind.coupon && (r.amount ?? 0) > 0).toList();
+    final couponAmount = coupons.fold<int>(0, (sum, r) => sum + (r.amount ?? 0));
+    return Positioned.fill(child: Container(
         color: Colors.black.withOpacity(0.8),
         alignment: Alignment.center,
         child: Padding(
@@ -2895,17 +2937,39 @@ class _QuestJourneyScreenState extends State<QuestJourneyScreen> with TickerProv
               decoration: BoxDecoration(gradient: const LinearGradient(begin: Alignment.topCenter, end: Alignment.bottomCenter, colors: [Color(0xFFF4EDDA), Color(0xFFEADFC4)]), borderRadius: BorderRadius.circular(22), border: Border.all(color: const Color(0xFFD8C9A4)), boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.7), blurRadius: 70)]),
               child: Column(mainAxisSize: MainAxisSize.min, children: [
                 const SizedBox(height: 8),
-                _FragShard(glyph: '訓', size: 104, fontSize: 48),
+                _FragShard(glyph: t.hanja, size: 104, fontSize: 48),
                 const SizedBox(height: 14),
-                Text('글씨조각 「훈(訓)」', style: dokkaebiTitle(size: 20, color: _parchInk)),
+                Text('「${t.name}」의 기억석 조각',
+                    textAlign: TextAlign.center,
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                    style: dokkaebiTitle(size: 20, color: _parchInk)),
                 const SizedBox(height: 4),
-                const Text('종로의 기억석 · 1/4 조각', style: TextStyle(fontSize: 13, color: _bronze, fontWeight: FontWeight.w700)),
+                Text('${region.isEmpty ? '' : '$region의 '}기억석 · ${c.chapterIdx + 1}/$_stoneTotal 조각',
+                    style: const TextStyle(fontSize: 13, color: _bronze, fontWeight: FontWeight.w700)),
                 const SizedBox(height: 14),
-                _rewardRow('경험치', '+50', _tealDeep),
-                const SizedBox(height: 7),
-                _rewardRow('단서 「申時」', '신규', _verm),
-                const SizedBox(height: 7),
-                _rewardRow('익선동 카페 쿠폰', '+500원', _goldDim),
+                // 경험치·도감·칭호는 서버가 계산해 실제로 지급한 값 — 로컬 추정이 아니다.
+                if (reward != null)
+                  _rewardRow('경험치', reward.alreadyRewarded ? '이미 받은 보상' : '+${reward.expGained}', _tealDeep)
+                else if (widget.scenario != null)
+                  Text('이 조각은 서버에 남지 않았느니라.',
+                      textAlign: TextAlign.center, style: _gowun(12.5, _bronze)),
+                if (clue.isNotEmpty) ...[
+                  const SizedBox(height: 7),
+                  _rewardRow('단서 「$clue」', '신규', _verm),
+                ],
+                if (couponAmount > 0) ...[
+                  const SizedBox(height: 7),
+                  _rewardRow('${coupons.first.to ?? ''} 쿠폰'.trim(), '+${_won(couponAmount)}', _goldDim),
+                ],
+                if (reward?.dexEntry != null) ...[
+                  const SizedBox(height: 7),
+                  _rewardRow('도감', '«${reward!.dexEntry}»', _blue),
+                ],
+                for (final title in reward?.titles ?? const <String>[]) ...[
+                  const SizedBox(height: 7),
+                  _rewardRow('칭호', title, _goldDim),
+                ],
                 const SizedBox(height: 16),
                 _cta('가방에 넣기 — 지도로', () => setState(() { showReward = false; screen = 'map'; }), bg: _parchInk, fg: _cream),
               ]),
@@ -2914,6 +2978,7 @@ class _QuestJourneyScreenState extends State<QuestJourneyScreen> with TickerProv
           ]),
         ),
       ));
+  }
 
   Widget _rewardRow(String label, String value, Color c) => Container(
         padding: const EdgeInsets.symmetric(horizontal: 13, vertical: 9),
@@ -2921,9 +2986,19 @@ class _QuestJourneyScreenState extends State<QuestJourneyScreen> with TickerProv
         child: Row(children: [
           Text('✦', style: TextStyle(color: c, fontWeight: FontWeight.w900)),
           const SizedBox(width: 10),
-          Text(label, style: const TextStyle(fontSize: 13, color: _parchInkSoft)),
-          const Spacer(),
-          Text(value, style: TextStyle(fontSize: 13, color: c, fontWeight: FontWeight.w900)),
+          // 장소·도깨비·칭호 이름이 들어오면서 길이가 데이터에 따라 달라진다 — 넘치면 줄임표.
+          Expanded(
+              child: Text(label,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(fontSize: 13, color: _parchInkSoft))),
+          const SizedBox(width: 10),
+          Flexible(
+              child: Text(value,
+                  textAlign: TextAlign.right,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(fontSize: 13, color: c, fontWeight: FontWeight.w900))),
         ]),
       );
 
