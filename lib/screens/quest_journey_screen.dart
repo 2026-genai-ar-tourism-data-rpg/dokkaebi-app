@@ -1,4 +1,21 @@
 // ============================================================
+// [v10] 챕터 진행판(_mapScreen)의 배경이 실좌표와 무관한 가짜 격자였다.
+//      POI는 화면 비율 하드코딩(Offset(.30,.29) 등)이라 실제 지리와 전혀
+//      안 맞았는데, QuestNode에는 이미 실좌표(mapX/mapY)가 있고 홈 지도
+//      (map_screen.dart)에 카카오맵 SDK가 이미 붙어있었다.
+// 구현(요약): 배경을 KakaoMap으로 교체 — 카메라는 활성 챕터 좌표 중심,
+//            챕터 마커는 홈 지도가 쓰는 region_pin.png를 재사용(상태별
+//            원형+한자 아이콘을 dart:ui 캔버스로 직접 그려 넣으려 했으나,
+//            iOS 네이티브 SDK가 그 PNG 바이트를 `invalid image data pixel
+//            format`로 거부하며 앱이 죽어서 검증된 에셋으로 되돌림 — 완료·
+//            진행중·잠김 구분은 HUD·챕터카드 텍스트로만 표시). 내 위치는
+//            홈 지도와 동일하게 Geolocator.getPositionStream으로 실시간
+//            갱신. 좌표 없는 노드(시나리오 없는 데모 모드)는 기존 격자+비율
+//            좌표 그대로 폴백. 지도는 이 화면(screen=='map')에 있을 때만
+//            마운트되므로 챕터를 깨고 돌아올 때마다 새로 만들어진다 —
+//            이동 단계의 실제 GPS 도착 인증은 최신 main 구현을 유지한다.
+// 구현일: 2026-09-10 | 작성: ljs (quest-map-kakao/ljs/v1)
+// ------------------------------------------------------------
 // [v9] 소환 화면 도깨비 이름표 고정 제거(계획 B13).
 // 구현(요약): 도깨비 그림 위 이름표가 `'먹 도깨비 · Lv.7'` 고정이라, 어느 지역 어느 장소에서든
 //            먹 도깨비와 이야기하는 것처럼 보였다. 정작 미션을 끝내면 그 장소 노드의 진짜
@@ -96,9 +113,14 @@
 // ============================================================
 import 'dart:async';
 import 'dart:math' as math;
+import 'dart:typed_data';
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart' show rootBundle;
+import 'package:geolocator/geolocator.dart'
+    show Geolocator, LocationAccuracy, LocationSettings, Position;
+import 'package:kakao_maps_flutter/kakao_maps_flutter.dart';
 
 import '../api/api_client.dart';
 import '../debug_flags.dart';
@@ -337,6 +359,14 @@ class _QuestJourneyScreenState extends State<QuestJourneyScreen> with TickerProv
 
   Timer? _walkTimer, _scanTimer, _summonTimer;
 
+  // ── 챕터 진행판(_mapScreen)의 실지도 상태 ──
+  // 지도는 screen=='map'일 때만 마운트되므로(다른 스테이지로 가면 unmount),
+  // 이 컨트롤러·구독도 그때만 살아있다 — "이동 시작" 버튼(map 이탈 지점)에서
+  // 직접 정리한다(_teardownQuestMap).
+  KakaoMapController? _questMapController;
+  StreamSubscription<Position>? _questMapPositionSub;
+  bool _hasPlayerMarker = false;
+
   @override
   void initState() {
     super.initState();
@@ -544,6 +574,7 @@ class _QuestJourneyScreenState extends State<QuestJourneyScreen> with TickerProv
     _walkTimer?.cancel();
     _scanTimer?.cancel();
     _summonTimer?.cancel();
+    _questMapPositionSub?.cancel();
     _gpsPollTimer?.cancel();
     _hint?.removeListener(_onHintChanged);
     _hint?.dispose();
@@ -1320,30 +1351,149 @@ class _QuestJourneyScreenState extends State<QuestJourneyScreen> with TickerProv
   // ════════════════════════════════════════════════════
   // 2. MAP — 챕터 지도
   // ════════════════════════════════════════════════════
+  /// 챕터 노드에 실좌표가 다 있나 — 있으면 실지도, 없으면(시나리오 없는
+  /// 데모 모드) 기존 격자+비율 좌표 폴백.
+  bool get _hasRealMapCoords => targets.isNotEmpty &&
+      targets.every((t) => t.node?.mapX != null && t.node?.mapY != null);
+
   Widget _mapScreen() {
     final t = _target;
     final chapterNum = _tIdx + 1;
+    final realMap = _hasRealMapCoords;
     return Container(
       color: const Color(0xFF14111A),
       child: LayoutBuilder(builder: (ctx, box) {
         return Stack(children: [
-          const Positioned.fill(child: CustomPaint(painter: _GridPainter())),
-          // 길
-          Positioned(left: -box.maxWidth * .1, top: box.maxHeight * .47, child: Transform.rotate(angle: 6 * math.pi / 180, child: Container(width: box.maxWidth * 1.2, height: 16, decoration: BoxDecoration(color: _cream.withOpacity(0.07), borderRadius: BorderRadius.circular(999))))),
+          if (realMap)
+            Positioned.fill(
+              child: KakaoMap(
+                onMapCreated: _onQuestMapCreated,
+                initialPosition:
+                    LatLng(latitude: t.node!.mapY!, longitude: t.node!.mapX!),
+                initialLevel: 14,
+              ),
+            )
+          else
+            const Positioned.fill(child: CustomPaint(painter: _GridPainter())),
+          // 길 — 가짜 지도 전용 장식(실지도는 실제 도로가 보이니 불필요).
+          if (!realMap)
+            Positioned(left: -box.maxWidth * .1, top: box.maxHeight * .47, child: Transform.rotate(angle: 6 * math.pi / 180, child: Container(width: box.maxWidth * 1.2, height: 16, decoration: BoxDecoration(color: _cream.withOpacity(0.07), borderRadius: BorderRadius.circular(999))))),
           // 상단 HUD
           // left: 58 — 좌상단 뒤로가기 버튼(top:58,left:14,36폭) 자리를 비켜준다.
           Positioned(top: 54, left: 58, right: 14, child: _mapHud(chapterNum)),
           // 조각 패널
           Positioned(top: 118, left: 14, right: 14, child: _fragPanel()),
-          // POI
-          ..._buildPois(box),
-          // 플레이어
-          _buildPlayer(box),
+          // POI·플레이어 — 실지도에선 네이티브 마커로 대체한다(_onQuestMapCreated).
+          if (!realMap) ..._buildPois(box),
+          if (!realMap) _buildPlayer(box),
           // 챕터 카드
           Positioned(left: 12, right: 12, bottom: 18, child: _chapterCard(t, chapterNum)),
         ]);
       }),
     );
+  }
+
+  static const _questPlayerStyleId = 'quest_my_location_style';
+  static const _questPlayerMarkerId = 'quest_my_location';
+
+  /// 실지도 준비 완료 — 챕터 마커를 찍고 내 위치 실시간 갱신을 시작한다.
+  Future<void> _onQuestMapCreated(KakaoMapController controller) async {
+    _questMapController = controller;
+    await controller.addMarkerLayer(
+        layerId: KakaoMapController.defaultLabelLayerId);
+    final myLocationBytes = await _loadAssetBytes('assets/images/my_location.png');
+    await controller.registerMarkerStyles(styles: [
+      MarkerStyle(
+        styleId: _questPlayerStyleId,
+        perLevels: [
+          MarkerPerLevelStyle.fromBytes(bytes: myLocationBytes, level: 1),
+          MarkerPerLevelStyle.fromBytes(bytes: myLocationBytes, level: 21),
+        ],
+      ),
+    ]);
+    await _placeChapterMarkers(controller);
+    _startPlayerLocationStream();
+  }
+
+  Future<Uint8List> _loadAssetBytes(String path) async {
+    final data = await rootBundle.load(path);
+    return data.buffer.asUint8List(data.offsetInBytes, data.lengthInBytes);
+  }
+
+  static const _chapterPinStyleId = 'chapter_pin_style';
+
+  /// 챕터 마커를 실좌표에 찍는다 — 홈 지도(map_screen.dart)가 쓰는 것과
+  /// 같은 `region_pin.png` 에셋을 그대로 재사용한다.
+  ///
+  /// 원래는 완료·진행중·잠김을 원형+한자 아이콘으로 구분하려고 dart:ui
+  /// 캔버스로 PNG를 직접 그려 넣었는데, iOS 네이티브 SDK가 그 바이트를
+  /// `std::logic_error: invalid image data pixel format`로 거부하며 앱이
+  /// 죽었다(에셋 파일 PNG는 되고 Skia가 인코딩한 PNG는 안 되는 것으로 보아
+  /// 색공간/메타데이터 차이로 추정 — 원인 특정엔 네이티브 쪽 추가 조사 필요).
+  /// 그래서 검증된 에셋 하나로 되돌리고, 상태 구분은 HUD·챕터카드 텍스트에
+  /// 맡긴다. 상태별 아이콘이 꼭 필요하면 실제 이미지 파일을 받아 붙이는 쪽이
+  /// 더 안전하다.
+  Future<void> _placeChapterMarkers(KakaoMapController controller) async {
+    final pinBytes = await _loadAssetBytes('assets/images/region_pin.png');
+    await controller.registerMarkerStyles(styles: [
+      MarkerStyle(
+        styleId: _chapterPinStyleId,
+        perLevels: [
+          MarkerPerLevelStyle.fromBytes(bytes: pinBytes, level: 1),
+          MarkerPerLevelStyle.fromBytes(bytes: pinBytes, level: 21),
+        ],
+      ),
+    ]);
+    final options = <MarkerOption>[];
+    for (var i = 0; i < targets.length; i++) {
+      final node = targets[i].node;
+      if (node?.mapX == null || node?.mapY == null) continue;
+      options.add(MarkerOption(
+        id: 'chapter_$i',
+        latLng: LatLng(latitude: node!.mapY!, longitude: node.mapX!),
+        text: targets[i].name,
+        styleId: _chapterPinStyleId,
+      ));
+    }
+    if (options.isNotEmpty) {
+      await controller.addMarkers(
+          markerOptions: options,
+          layerId: KakaoMapController.defaultLabelLayerId);
+    }
+  }
+
+  /// 내 위치 — 홈 지도(map_screen.dart)와 동일한 스트리밍 방식으로 실시간 갱신.
+  /// 이 화면은 이미 실제 걸음 인증(GPS 도착 인증)을 하는 화면이라 홈보다
+  /// 오히려 실시간 위치가 더 맞는다(일회성 조회로는 포켓몬고 느낌이 안 남).
+  void _startPlayerLocationStream() {
+    _questMapPositionSub ??= Geolocator.getPositionStream(
+      locationSettings: const LocationSettings(
+          accuracy: LocationAccuracy.best, distanceFilter: 5),
+    ).listen((pos) => _placePlayerMarker(
+        LatLng(latitude: pos.latitude, longitude: pos.longitude)));
+  }
+
+  /// "내 위치" 마커 갱신 — 명령형 API라 지우고 새로 찍는다(홈 지도와 동일 패턴).
+  Future<void> _placePlayerMarker(LatLng point) async {
+    final controller = _questMapController;
+    if (controller == null) return;
+    if (_hasPlayerMarker) {
+      await controller.removeMarker(id: _questPlayerMarkerId);
+    }
+    _hasPlayerMarker = true;
+    await controller.addMarker(
+      markerOption: MarkerOption(
+          id: _questPlayerMarkerId, latLng: point, styleId: _questPlayerStyleId),
+    );
+  }
+
+  /// map 화면을 벗어날 때(="이동 시작" 클릭) 지도 리소스를 정리한다 — 다음에
+  /// 챕터로 돌아오면 KakaoMap이 새로 마운트되며 _onQuestMapCreated가 다시 돈다.
+  void _teardownQuestMap() {
+    _questMapPositionSub?.cancel();
+    _questMapPositionSub = null;
+    _questMapController = null;
+    _hasPlayerMarker = false;
   }
 
   Widget _mapHud(int chapterNum) => Row(children: [
@@ -1600,6 +1750,7 @@ class _QuestJourneyScreenState extends State<QuestJourneyScreen> with TickerProv
         _progress(collectPct),
         const SizedBox(height: 13),
         _cta('이동 시작 — GPS 추적', () {
+          _teardownQuestMap();
           setState(() {
             gpsIdx = _tIdx;
             gpsDist = _target.dist0;

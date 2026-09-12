@@ -378,6 +378,9 @@ void main() {
       final sc = branching();
       await ScenarioStore.I.add(sc);
       await ScenarioStore.I.chooseBranch(sid, 'n1', 'b1');
+      // 첫 챕터 완료 후, 복원된 분기의 다음 장소를 챕터 카드로 확인한다.
+      // 지도 장소명은 이제 네이티브 카카오맵 마커라 Flutter Text가 아니다.
+      await ScenarioStore.I.completeNodeWithGrants(sid, sc.nodeSequence[0]);
 
       await _toMap(tester, sc);
       expect(tester.takeException(), isNull);
@@ -390,6 +393,9 @@ void main() {
       final sc = branching();
       await ScenarioStore.I.add(sc);
       await ScenarioStore.I.chooseBranch(sid, 'n1', 'main');
+      // 첫 챕터 완료 후, 복원된 분기의 다음 장소를 챕터 카드로 확인한다.
+      // 지도 장소명은 이제 네이티브 카카오맵 마커라 Flutter Text가 아니다.
+      await ScenarioStore.I.completeNodeWithGrants(sid, sc.nodeSequence[0]);
 
       await _toMap(tester, sc);
       expect(tester.takeException(), isNull);
