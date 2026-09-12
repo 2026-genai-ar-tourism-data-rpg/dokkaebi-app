@@ -16,6 +16,15 @@
 //            어긋나므로 제스처를 막고(IgnorePointer) 카메라는 코드로만 움직인다.
 //            좌표 변환이 두 번 다 실패하면 실지도를 접고 기존 정규화 배치로 돌아간다.
 // 구현일: 2026-09-12 | 작성: ljs (explore-radius-first/ljs/v1)
+// ------------------------------------------------------------
+// [v4] 실기기 확인 결과 v3가 항상 실패해 지도에 핀이 하나도 안 찍혔다. 원인은
+//      kakao_maps_flutter 0.2.2의 iOS 네이티브 구현 자체 — toScreenPoint는 항상
+//      {dx:null, dy:null}만 반환하는 스텁이고, CameraUpdate.fromBounds는 네이티브
+//      디코더가 position+zoomLevel만 읽어 항상 E004로 실패한다(재시도로 못 고치는
+//      구조적 버그). → 둘 다 버리고 카메라 중심·줌을 표준 Web Mercator로 직접
+//      계산해([../utils/web_mercator.dart]) moveCamera(position+zoomLevel)로 맞추고,
+//      화면 좌표도 그 중심·줌으로 매 build마다 직접 계산한다.
+// 구현일: 2026-09-12 | 작성: ljs (explore-radius-first/ljs/v1)
 // ============================================================
 import 'dart:math' as math;
 
@@ -27,6 +36,7 @@ import '../models/scenario.dart';
 import '../game/run_session.dart';
 import '../store.dart';
 import '../theme.dart';
+import '../utils/web_mercator.dart';
 import '../widgets/honbul_style.dart';
 import '../widgets/ui.dart';
 import 'quest_journey_screen.dart';
@@ -49,14 +59,18 @@ class _RouteMapState extends State<_RouteMap> with SingleTickerProviderStateMixi
   //    비활성 element에서 TickerMode를 조회하다 터진다.
   late final AnimationController _pulse;
 
-  /// 실지도 배경 — 카메라를 코드로 맞춘 뒤 각 노드의 화면 좌표를 받아 핀·동선을 얹는다.
+  /// 실지도 배경 — 카메라를 코드로 맞춘다.
   KakaoMapController? _controller;
 
-  /// 노드 순서대로의 화면 좌표. null이면 아직 못 받았다(그동안 핀을 그리지 않는다 —
-  /// 정규화 좌표로 먼저 그리면 지도와 어긋난 자리에 잠깐 찍힌다).
-  List<Offset>? _mapPoints;
+  /// 마지막으로 맞춘 카메라 중심·줌 — 화면 좌표는 매 build마다 이 값으로 직접 계산한다
+  /// (toScreenPoint는 iOS 플러그인 미구현이라 항상 null이라 쓸 수 없다).
+  LatLng? _mapCenter;
+  int? _mapZoom;
 
-  /// 좌표 변환이 두 번 다 실패 — 실지도를 접고 기존 정규화 배치로 돌아간다.
+  /// build()에서 매번 갱신 — didUpdateWidget에서 재계산할 때 필요하다.
+  Size? _viewportSize;
+
+  /// moveCamera 자체가 실패 — 실지도를 접고 기존 정규화 배치로 돌아간다.
   bool _projectionFailed = false;
 
   @override
@@ -68,11 +82,12 @@ class _RouteMapState extends State<_RouteMap> with SingleTickerProviderStateMixi
   @override
   void didUpdateWidget(covariant _RouteMap old) {
     super.didUpdateWidget(old);
-    // 갈림길을 고르면 밟는 노드가 바뀐다 — 좌표를 다시 받아야 동선이 맞는다.
-    if (old.nodes.length != widget.nodes.length && _controller != null) {
-      _mapPoints = null;
+    // 갈림길을 고르면 밟는 노드가 바뀐다 — 카메라를 다시 맞춰야 동선이 맞는다.
+    final controller = _controller;
+    final size = _viewportSize;
+    if (old.nodes.length != widget.nodes.length && controller != null && size != null) {
       final pts = _placeable;
-      if (pts.length >= 2) _fitAndProject(_controller!, pts);
+      if (pts.length >= 2) _fitCamera(controller, pts, size);
     }
   }
 
@@ -86,46 +101,33 @@ class _RouteMapState extends State<_RouteMap> with SingleTickerProviderStateMixi
   List<QuestNode> get _placeable =>
       widget.nodes.where((n) => n.mapX != null && n.mapY != null).toList();
 
-  /// 전체 노드가 담기게 카메라를 맞추고, 맞춘 뒤 화면 좌표를 받아 온다.
-  Future<void> _fitAndProject(KakaoMapController controller, List<QuestNode> pts) async {
+  /// 전체 노드가 담기게 중심·줌을 직접 계산해 카메라를 맞춘다.
+  /// CameraUpdate.fromBounds는 iOS 플러그인에서 항상 E004로 실패해 쓸 수 없다
+  /// (네이티브 디코더가 position+zoomLevel만 읽는데 fromBounds는 그 필드를 안 채운다).
+  /// onMapCreated 콜백에서 await 없이 호출되므로, 여기서 잡지 않은 예외는 조용히
+  /// 사라진다 — 그래서 try/catch로 감싼다.
+  Future<void> _fitCamera(KakaoMapController controller, List<QuestNode> pts, Size viewportSize) async {
     _controller = controller;
-    final lats = pts.map((n) => n.mapY!);
-    final lngs = pts.map((n) => n.mapX!);
-    await controller.moveCamera(
-      cameraUpdate: CameraUpdate.fromBounds(
-        LatLngBounds(
-          southwest: LatLng(
-              latitude: lats.reduce(math.min), longitude: lngs.reduce(math.min)),
-          northeast: LatLng(
-              latitude: lats.reduce(math.max), longitude: lngs.reduce(math.max)),
-        ),
-        padding: 60,
-      ),
+    final fit = fitBounds(
+      points: pts.map((n) => LatLng(latitude: n.mapY!, longitude: n.mapX!)).toList(),
+      viewportSize: viewportSize,
+      paddingPx: 60,
     );
-    await _project(pts);
-  }
-
-  /// 각 노드의 화면 좌표를 받아 온다. 한 번 실패하면 다시 시도하고(뷰포트가 아직 준비
-  /// 안 됐을 수 있다), 그래도 안 되면 실지도를 접는다.
-  Future<void> _project(List<QuestNode> pts, {bool retry = true}) async {
-    final controller = _controller;
-    if (controller == null) return;
-    final points = <Offset>[];
-    for (final n in pts) {
-      final p = await controller.toScreenPoint(
-          position: LatLng(latitude: n.mapY!, longitude: n.mapX!));
-      if (p == null) {
-        if (retry) {
-          await Future<void>.delayed(const Duration(milliseconds: 300));
-          if (mounted) await _project(pts, retry: false);
-          return;
-        }
-        if (mounted) setState(() => _projectionFailed = true);
-        return;
-      }
-      points.add(p);
+    try {
+      await controller.moveCamera(
+        cameraUpdate: CameraUpdate(position: fit.center, zoomLevel: fit.zoom),
+      );
+    } catch (e, st) {
+      debugPrint('[map-debug] scenario moveCamera 예외: $e\n$st');
+      if (mounted) setState(() => _projectionFailed = true);
+      return;
     }
-    if (mounted) setState(() => _mapPoints = points);
+    if (mounted) {
+      setState(() {
+        _mapCenter = fit.center;
+        _mapZoom = fit.zoom;
+      });
+    }
   }
 
   @override
@@ -154,16 +156,28 @@ class _RouteMapState extends State<_RouteMap> with SingleTickerProviderStateMixi
           border: Border.all(color: hbTealD.withOpacity(0.28)),
         ),
         child: LayoutBuilder(builder: (context, box) {
+          final viewportSize = Size(box.maxWidth, box.maxHeight);
+          _viewportSize = viewportSize;
           const pad = 30.0;
           Offset posOf(QuestNode n) => Offset(
                 pad + nx(n.mapX!) * (box.maxWidth - pad * 2),
                 pad + (1 - ny(n.mapY!)) * (box.maxHeight - pad * 2),
               );
-          final mapPoints = _mapPoints;
-          // 지도를 쓰는 중이면 받아온 화면 좌표로, 아니면 기존 정규화 좌표로 그린다.
-          final useMap =
-              !_projectionFailed && mapPoints != null && mapPoints.length == pts.length;
-          final line = useMap ? mapPoints : pts.map(posOf).toList();
+          final center = _mapCenter;
+          final zoom = _mapZoom;
+          // 카메라를 맞췄으면 그 중심·줌으로 직접 계산한 화면 좌표로, 아니면 기존
+          // 정규화 좌표로 그린다.
+          final useMap = !_projectionFailed && center != null && zoom != null;
+          final line = useMap
+              ? pts
+                  .map((n) => projectToScreen(
+                        point: LatLng(latitude: n.mapY!, longitude: n.mapX!),
+                        center: center,
+                        zoom: zoom,
+                        viewportSize: viewportSize,
+                      ))
+                  .toList()
+              : pts.map(posOf).toList();
           final doneFlags = pts.map((n) => widget.done.contains(n.nodeId)).toList();
           return Stack(children: [
             if (!_projectionFailed)
@@ -172,7 +186,7 @@ class _RouteMapState extends State<_RouteMap> with SingleTickerProviderStateMixi
               Positioned.fill(
                 child: IgnorePointer(
                   child: KakaoMap(
-                    onMapCreated: (c) => _fitAndProject(c, pts),
+                    onMapCreated: (c) => _fitCamera(c, pts, viewportSize),
                     initialPosition:
                         LatLng(latitude: pts.first.mapY!, longitude: pts.first.mapX!),
                     initialLevel: 14,

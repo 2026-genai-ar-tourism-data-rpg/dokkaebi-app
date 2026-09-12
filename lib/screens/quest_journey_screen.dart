@@ -14,6 +14,17 @@
 //              5초 폴링보다 촘촘하게 줄어든다. 좌표 없는 데모 모드는 기존 격자 연출 그대로.
 // 구현일: 2026-09-12 | 작성: ljs (explore-radius-first/ljs/v1)
 // ------------------------------------------------------------
+// [v12] 실기기 확인 결과 v11이 항상 실패해 지도가 아예 안 뜨거나 목표 핀이
+//      안 찍혔다. 원인은 kakao_maps_flutter 0.2.2의 iOS 네이티브 구현 자체 —
+//      toScreenPoint는 항상 {dx:null, dy:null}만 반환하는 스텁이고,
+//      CameraUpdate.fromBounds는 네이티브 디코더가 position+zoomLevel만 읽어
+//      항상 E004로 실패한다(재시도로 못 고치는 구조적 버그). → 둘 다 버리고
+//      카메라 중심·줌을 표준 Web Mercator로 직접 계산해([../utils/web_mercator.dart])
+//      moveCamera(position+zoomLevel)로 맞추고, 화면 좌표·반경 픽셀도 그 중심·줌으로
+//      매 build마다 직접 계산한다(반경은 위도별 미터/픽셀 닫힌 형태 — 두 점을 찍어
+//      차분하던 방식 대신).
+// 구현일: 2026-09-12 | 작성: ljs (explore-radius-first/ljs/v1)
+// ------------------------------------------------------------
 // [v10] 챕터 진행판(_mapScreen)의 배경이 실좌표와 무관한 가짜 격자였다.
 //      POI는 화면 비율 하드코딩(Offset(.30,.29) 등)이라 실제 지리와 전혀
 //      안 맞았는데, QuestNode에는 이미 실좌표(mapX/mapY)가 있고 홈 지도
@@ -147,6 +158,7 @@ import '../models/run.dart';
 import '../models/scenario.dart';
 import '../store.dart';
 import '../theme.dart';
+import '../utils/web_mercator.dart';
 import '../widgets/native_ar_view.dart';
 import '../widgets/reward_pop.dart';
 import 'create_scenario_screen.dart' show haversineMeters;
@@ -160,10 +172,6 @@ const _walkMetersPerMinute = 70;
 
 /// 데모 모드(코스 데이터 없음) 시뮬레이션의 도착 반경(m).
 const _demoArriveRadiusM = 30;
-
-/// 위도 1도의 거리(m). 인증 반경을 화면 픽셀로 환산할 때 "북쪽으로 반경만큼" 떨어진
-/// 점을 만드는 데만 쓴다(경도는 위도에 따라 줄어들어 쓰지 않는다).
-const _metersPerLatDegree = 111320.0;
 
 /// 도착 인증 실패 — 안내 문구와 다음 행동(설정 열기·위치 확인 없이 진행)을 고르는 근거.
 typedef _ArrivalFailure = ({String message, bool needsSettings, bool noCoords});
@@ -393,15 +401,19 @@ class _QuestJourneyScreenState extends State<QuestJourneyScreen> with TickerProv
   StreamSubscription<Position>? _gpsMapPositionSub;
   bool _hasGpsPlayerMarker = false;
 
-  /// 목표의 화면 좌표(px)와 인증 반경의 화면 반지름(px). null이면 오버레이를 숨긴다.
-  Offset? _gpsTargetPoint;
-  double? _gpsRadiusPx;
+  /// 마지막으로 맞춘 카메라 중심·줌 — 화면 좌표는 이 값으로 직접 계산한다
+  /// (toScreenPoint는 iOS 플러그인 미구현이라 항상 null이라 쓸 수 없다).
+  LatLng? _gpsMapCenter;
+  int? _gpsMapZoom;
+
+  /// build()에서 매번 갱신 — onMapCreated·_fitGpsCamera에서 카메라를 맞출 때 필요하다.
+  Size? _gpsViewportSize;
 
   /// 마지막으로 카메라를 맞춘 지점 — 여기서 [_gpsRefitMoveM] 이상 움직이면 다시 맞춘다.
   Position? _gpsLastFitAt;
   static const _gpsRefitMoveM = 30.0;
 
-  /// 좌표 변환(toScreenPoint)이 두 번 다 실패 — 목표를 지도 위에 얹을 수 없으니
+  /// 카메라 맞춤(moveCamera) 자체가 실패 — 목표를 지도 위에 얹을 수 없으니
   /// 실지도를 접고 기존 연출로 돌아간다(지도만 있고 목표 표시가 없는 상태를 만들지 않는다).
   bool _gpsProjectionFailed = false;
 
@@ -1547,15 +1559,17 @@ class _QuestJourneyScreenState extends State<QuestJourneyScreen> with TickerProv
   /// 인증 반경 링의 화면 지름(px) — **실제 축척 그대로**. 핀(62px)보다 작으면 그리지 않는다:
   /// 멀리서는 반경이 몇 px라 보여줄 수가 없고, 다가가면 카메라가 좁혀지며 링이 커져
   /// "거의 다 왔다"는 신호가 된다. 정확한 값은 링 아래 라벨이 늘 들고 있다.
-  double? get _gpsRingPx {
-    final r = _gpsRadiusPx;
-    if (r == null) return null;
-    final d = r * 2;
+  /// toScreenPoint로 두 점을 찍어 차분하던 이전 방식(iOS 플러그인 미구현이라 항상 null)
+  /// 대신, 줌 레벨에서 바로 나오는 미터/픽셀로 닫힌 형태로 구한다.
+  double? _gpsRingPxFor(int radiusM, double latitude) {
+    final zoom = _gpsMapZoom;
+    if (zoom == null) return null;
+    final d = (radiusM / metersPerPixel(latitude: latitude, zoom: zoom)) * 2;
     return d >= 70 ? d : null;
   }
 
   /// 목표 오버레이가 차지하는 정사각 변(px) — 링이 없을 때도 핀은 들어가야 한다.
-  double get _gpsOverlaySide => math.max(_gpsRingPx ?? 0, 76);
+  double _gpsOverlaySideFor(double? ringPx) => math.max(ringPx ?? 0, 76);
 
   /// 목표 지점 표시 — 인증 반경 링(그릴 수 있을 때) + 한자 핀 + 반경 라벨.
   /// 실지도에서는 이 위젯을 목표의 화면 좌표에 얹고, 데모에서는 화면 중앙에 둔다.
@@ -1601,23 +1615,38 @@ class _QuestJourneyScreenState extends State<QuestJourneyScreen> with TickerProv
         ]),
       );
 
-  /// 실지도 준비 완료 — 내 위치 마커 스타일을 등록하고 목표 오버레이 좌표를 맞춘 뒤
+  /// 실지도 준비 완료 — 내 위치 마커 스타일을 등록하고 카메라를 목표에 맞춘 뒤
   /// 위치 스트림을 시작한다.
-  Future<void> _onGpsMapCreated(KakaoMapController controller) async {
+  /// onMapCreated 콜백에서 await 없이 호출되므로, 여기서 잡지 않은 예외는 조용히
+  /// 사라진다 — 그래서 try/catch로 감싼다.
+  Future<void> _onGpsMapCreated(KakaoMapController controller, Size viewportSize) async {
     _gpsMapController = controller;
-    await controller.addMarkerLayer(
-        layerId: KakaoMapController.defaultLabelLayerId);
-    final myLocationBytes = await _loadAssetBytes('assets/images/my_location.png');
-    await controller.registerMarkerStyles(styles: [
-      MarkerStyle(
-        styleId: _gpsPlayerStyleId,
-        perLevels: [
-          MarkerPerLevelStyle.fromBytes(bytes: myLocationBytes, level: 1),
-          MarkerPerLevelStyle.fromBytes(bytes: myLocationBytes, level: 21),
-        ],
-      ),
-    ]);
-    await _syncGpsOverlay();
+    _gpsViewportSize = viewportSize;
+    try {
+      await controller.addMarkerLayer(
+          layerId: KakaoMapController.defaultLabelLayerId);
+      final myLocationBytes = await _loadAssetBytes('assets/images/my_location.png');
+      await controller.registerMarkerStyles(styles: [
+        MarkerStyle(
+          styleId: _gpsPlayerStyleId,
+          perLevels: [
+            MarkerPerLevelStyle.fromBytes(bytes: myLocationBytes, level: 1),
+            MarkerPerLevelStyle.fromBytes(bytes: myLocationBytes, level: 21),
+          ],
+        ),
+      ]);
+    } catch (e, st) {
+      debugPrint('[map-debug] gps 마커 스타일 등록 예외: $e\n$st');
+    }
+    // 초기 카메라는 KakaoMap의 initialPosition/initialLevel(목표 중심, 레벨 17) 그대로다 —
+    // 화면 좌표 계산도 같은 값으로 맞춰야 목표 핀이 처음부터 제자리(화면 중앙)에 찍힌다.
+    final n = targets[gpsIdx].node;
+    if (mounted && n?.mapX != null && n?.mapY != null) {
+      setState(() {
+        _gpsMapCenter = LatLng(latitude: n!.mapY!, longitude: n.mapX!);
+        _gpsMapZoom = 17;
+      });
+    }
     _startGpsPlayerStream();
   }
 
@@ -1663,55 +1692,39 @@ class _QuestJourneyScreenState extends State<QuestJourneyScreen> with TickerProv
     }
   }
 
-  /// 나와 목표가 모두 보이게 카메라를 맞추고, 맞춘 직후 오버레이 좌표를 다시 계산한다.
+  /// 나와 목표가 모두 보이게 카메라 중심·줌을 직접 계산해 맞춘다.
+  /// CameraUpdate.fromBounds는 iOS 플러그인에서 항상 E004로 실패해 쓸 수 없다
+  /// (네이티브 디코더가 position+zoomLevel만 읽는데 fromBounds는 그 필드를 안 채운다).
   Future<void> _fitGpsCamera(Position me) async {
     final controller = _gpsMapController;
     final n = targets[gpsIdx].node;
-    if (controller == null || n?.mapX == null || n?.mapY == null) return;
-    await controller.moveCamera(
-      cameraUpdate: CameraUpdate.fromBounds(
-        LatLngBounds(
-          southwest: LatLng(
-              latitude: math.min(me.latitude, n!.mapY!),
-              longitude: math.min(me.longitude, n.mapX!)),
-          northeast: LatLng(
-              latitude: math.max(me.latitude, n.mapY!),
-              longitude: math.max(me.longitude, n.mapX!)),
-        ),
-        padding: 90,
-      ),
+    final viewportSize = _gpsViewportSize;
+    if (controller == null || n?.mapX == null || n?.mapY == null || viewportSize == null) {
+      return;
+    }
+    final fit = fitBounds(
+      points: [
+        LatLng(latitude: me.latitude, longitude: me.longitude),
+        LatLng(latitude: n!.mapY!, longitude: n.mapX!),
+      ],
+      viewportSize: viewportSize,
+      paddingPx: 90,
     );
-    await _syncGpsOverlay();
-  }
-
-  /// 목표의 화면 좌표와 인증 반경의 화면 반지름(px)을 지도에서 받아온다.
-  /// 반지름은 목표에서 북쪽으로 반경만큼 떨어진 점을 함께 변환해 픽셀 거리로 구한다 —
-  /// 패키지가 줌 레벨 → 미터/픽셀 환산을 주지 않기 때문이다.
-  Future<void> _syncGpsOverlay({bool retry = true}) async {
-    final controller = _gpsMapController;
-    final n = targets[gpsIdx].node;
-    if (controller == null || n?.mapX == null || n?.mapY == null) return;
-    final target = LatLng(latitude: n!.mapY!, longitude: n.mapX!);
-    final center = await controller.toScreenPoint(position: target);
-    if (center == null) {
-      // 지도 뷰포트가 아직 준비되지 않았을 수 있다 — 한 번만 다시 시도한다.
-      if (retry) {
-        await Future<void>.delayed(const Duration(milliseconds: 300));
-        if (mounted) await _syncGpsOverlay(retry: false);
-        return;
-      }
+    try {
+      await controller.moveCamera(
+        cameraUpdate: CameraUpdate(position: fit.center, zoomLevel: fit.zoom),
+      );
+    } catch (e, st) {
+      debugPrint('[map-debug] gps moveCamera 예외: $e\n$st');
       if (mounted) setState(() => _gpsProjectionFailed = true);
       return;
     }
-    final edge = await controller.toScreenPoint(
-        position: LatLng(
-            latitude: n.mapY! + n.triggerRadiusM / _metersPerLatDegree,
-            longitude: n.mapX!));
-    if (!mounted) return;
-    setState(() {
-      _gpsTargetPoint = center;
-      _gpsRadiusPx = edge == null ? null : (center - edge).distance;
-    });
+    if (mounted) {
+      setState(() {
+        _gpsMapCenter = fit.center;
+        _gpsMapZoom = fit.zoom;
+      });
+    }
   }
 
   /// 이동 화면을 벗어날 때 지도·위치 스트림을 정리한다 — 다시 들어오면 새로 마운트된다.
@@ -1720,8 +1733,9 @@ class _QuestJourneyScreenState extends State<QuestJourneyScreen> with TickerProv
     _gpsMapPositionSub = null;
     _gpsMapController = null;
     _hasGpsPlayerMarker = false;
-    _gpsTargetPoint = null;
-    _gpsRadiusPx = null;
+    _gpsMapCenter = null;
+    _gpsMapZoom = null;
+    _gpsViewportSize = null;
     _gpsLastFitAt = null;
     _gpsProjectionFailed = false;
   }
@@ -2025,6 +2039,21 @@ class _QuestJourneyScreenState extends State<QuestJourneyScreen> with TickerProv
     return Container(
       color: const Color(0xFF14111A),
       child: LayoutBuilder(builder: (ctx, box) {
+        final viewportSize = Size(box.maxWidth, box.maxHeight);
+        _gpsViewportSize = viewportSize;
+        final center = _gpsMapCenter;
+        final zoom = _gpsMapZoom;
+        final canOverlay = realMap && center != null && zoom != null;
+        final targetPoint = canOverlay
+            ? projectToScreen(
+                point: LatLng(latitude: gpsNode!.mapY!, longitude: gpsNode.mapX!),
+                center: center,
+                zoom: zoom,
+                viewportSize: viewportSize,
+              )
+            : null;
+        final ringPx = canOverlay ? _gpsRingPxFor(radiusM, gpsNode!.mapY!) : null;
+        final overlaySide = _gpsOverlaySideFor(ringPx);
         return Stack(children: [
           if (realMap)
             // 제스처 차단 — 카메라를 코드로만 움직여야 반경 오버레이가 어긋나지 않는다
@@ -2032,7 +2061,7 @@ class _QuestJourneyScreenState extends State<QuestJourneyScreen> with TickerProv
             Positioned.fill(
               child: IgnorePointer(
                 child: KakaoMap(
-                  onMapCreated: _onGpsMapCreated,
+                  onMapCreated: (c) => _onGpsMapCreated(c, viewportSize),
                   initialPosition:
                       LatLng(latitude: gpsNode!.mapY!, longitude: gpsNode.mapX!),
                   initialLevel: 17,
@@ -2044,14 +2073,14 @@ class _QuestJourneyScreenState extends State<QuestJourneyScreen> with TickerProv
           // 상단 칩
           Positioned(top: 54, left: 0, right: 0, child: Center(child: _pill('● GPS 추적 중 — ${gpsT.name}', border: _blue, textColor: const Color(0xFF9FD4EC)))),
           // 목적지 — 실지도면 실좌표 위에 오버레이로, 데모면 기존 자리에.
-          if (realMap && _gpsTargetPoint != null)
+          if (targetPoint != null)
             Positioned(
-              left: _gpsTargetPoint!.dx - _gpsOverlaySide / 2,
-              top: _gpsTargetPoint!.dy - _gpsOverlaySide / 2,
+              left: targetPoint.dx - overlaySide / 2,
+              top: targetPoint.dy - overlaySide / 2,
               child: SizedBox(
-                width: _gpsOverlaySide,
-                height: _gpsOverlaySide,
-                child: _gpsTargetVisual(gpsT, gpsNear, radiusM, _gpsRingPx),
+                width: overlaySide,
+                height: overlaySide,
+                child: _gpsTargetVisual(gpsT, gpsNear, radiusM, ringPx),
               ),
             ),
           if (!realMap) ...[
