@@ -6,16 +6,37 @@
 // 구현일: 2026-07-08 | 작성: kys (course-hub/kys/v2) · 시안: 종로의 기억석 UI
 // ------------------------------------------------------------
 // [v1] 노드 카드 리스트 + 연계 인벤토리 — 2026-06-18 kys (rpg-dialogue/kys/v1)
+// ------------------------------------------------------------
+// [v3] 동선 지도 배경을 실지도(KakaoMap)로 — 핀·동선 연출은 그대로 얹는다.
+// 구현(요약): 노드 좌표를 상자에 정규화해 그린 가짜 지도라, 실제로 어디를 도는 코스인지
+//            알 수 없었다. 배경에 KakaoMap을 깔고 카메라를 전체 노드가 담기게 맞춘 뒤
+//            각 노드의 화면 좌표(toScreenPoint)를 받아 기존 핀·동선을 그 위에 그린다.
+//            카카오맵에는 선을 그리는 API가 없어(마커·카메라뿐) 동선은 계속 Flutter가 그린다.
+//            이 패키지에는 카메라 이동 콜백이 없어 사용자가 지도를 움직이면 오버레이가
+//            어긋나므로 제스처를 막고(IgnorePointer) 카메라는 코드로만 움직인다.
+//            좌표 변환이 두 번 다 실패하면 실지도를 접고 기존 정규화 배치로 돌아간다.
+// 구현일: 2026-09-12 | 작성: ljs (explore-radius-first/ljs/v1)
+// ------------------------------------------------------------
+// [v4] 실기기 확인 결과 v3가 항상 실패해 지도에 핀이 하나도 안 찍혔다. 원인은
+//      kakao_maps_flutter 0.2.2의 iOS 네이티브 구현 자체 — toScreenPoint는 항상
+//      {dx:null, dy:null}만 반환하는 스텁이고, CameraUpdate.fromBounds는 네이티브
+//      디코더가 position+zoomLevel만 읽어 항상 E004로 실패한다(재시도로 못 고치는
+//      구조적 버그). → 둘 다 버리고 카메라 중심·줌을 표준 Web Mercator로 직접
+//      계산해([../utils/web_mercator.dart]) moveCamera(position+zoomLevel)로 맞추고,
+//      화면 좌표도 그 중심·줌으로 매 build마다 직접 계산한다.
+// 구현일: 2026-09-12 | 작성: ljs (explore-radius-first/ljs/v1)
 // ============================================================
 import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
+import 'package:kakao_maps_flutter/kakao_maps_flutter.dart';
 
 import '../game/player_state.dart';
 import '../models/scenario.dart';
 import '../game/run_session.dart';
 import '../store.dart';
 import '../theme.dart';
+import '../utils/web_mercator.dart';
 import '../widgets/honbul_style.dart';
 import '../widgets/ui.dart';
 import 'quest_journey_screen.dart';
@@ -38,20 +59,80 @@ class _RouteMapState extends State<_RouteMap> with SingleTickerProviderStateMixi
   //    비활성 element에서 TickerMode를 조회하다 터진다.
   late final AnimationController _pulse;
 
+  /// 실지도 배경 — 카메라를 코드로 맞춘다.
+  KakaoMapController? _controller;
+
+  /// 마지막으로 맞춘 카메라 중심·줌 — 화면 좌표는 매 build마다 이 값으로 직접 계산한다
+  /// (toScreenPoint는 iOS 플러그인 미구현이라 항상 null이라 쓸 수 없다).
+  LatLng? _mapCenter;
+  int? _mapZoom;
+
+  /// build()에서 매번 갱신 — didUpdateWidget에서 재계산할 때 필요하다.
+  Size? _viewportSize;
+
+  /// moveCamera 자체가 실패 — 실지도를 접고 기존 정규화 배치로 돌아간다.
+  bool _projectionFailed = false;
+
   @override
   void initState() {
     super.initState();
     _pulse = AnimationController(vsync: this, duration: const Duration(milliseconds: 2200))..repeat();
   }
+
+  @override
+  void didUpdateWidget(covariant _RouteMap old) {
+    super.didUpdateWidget(old);
+    // 갈림길을 고르면 밟는 노드가 바뀐다 — 카메라를 다시 맞춰야 동선이 맞는다.
+    final controller = _controller;
+    final size = _viewportSize;
+    if (old.nodes.length != widget.nodes.length && controller != null && size != null) {
+      final pts = _placeable;
+      if (pts.length >= 2) _fitCamera(controller, pts, size);
+    }
+  }
+
   @override
   void dispose() {
     _pulse.dispose();
     super.dispose();
   }
 
+  /// 좌표가 있는 노드만 — 동선·핀의 대상.
+  List<QuestNode> get _placeable =>
+      widget.nodes.where((n) => n.mapX != null && n.mapY != null).toList();
+
+  /// 전체 노드가 담기게 중심·줌을 직접 계산해 카메라를 맞춘다.
+  /// CameraUpdate.fromBounds는 iOS 플러그인에서 항상 E004로 실패해 쓸 수 없다
+  /// (네이티브 디코더가 position+zoomLevel만 읽는데 fromBounds는 그 필드를 안 채운다).
+  /// onMapCreated 콜백에서 await 없이 호출되므로, 여기서 잡지 않은 예외는 조용히
+  /// 사라진다 — 그래서 try/catch로 감싼다.
+  Future<void> _fitCamera(KakaoMapController controller, List<QuestNode> pts, Size viewportSize) async {
+    _controller = controller;
+    final fit = fitBounds(
+      points: pts.map((n) => LatLng(latitude: n.mapY!, longitude: n.mapX!)).toList(),
+      viewportSize: viewportSize,
+      paddingPx: 60,
+    );
+    try {
+      await controller.moveCamera(
+        cameraUpdate: CameraUpdate(position: fit.center, zoomLevel: fit.zoom),
+      );
+    } catch (e, st) {
+      debugPrint('[map-debug] scenario moveCamera 예외: $e\n$st');
+      if (mounted) setState(() => _projectionFailed = true);
+      return;
+    }
+    if (mounted) {
+      setState(() {
+        _mapCenter = fit.center;
+        _mapZoom = fit.zoom;
+      });
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
-    final pts = widget.nodes.where((n) => n.mapX != null && n.mapY != null).toList();
+    final pts = _placeable;
     if (pts.length < 2) return const SizedBox.shrink();
     final xs = pts.map((n) => n.mapX!), ys = pts.map((n) => n.mapY!);
     final minX = xs.reduce(math.min), maxX = xs.reduce(math.max);
@@ -75,25 +156,59 @@ class _RouteMapState extends State<_RouteMap> with SingleTickerProviderStateMixi
           border: Border.all(color: hbTealD.withOpacity(0.28)),
         ),
         child: LayoutBuilder(builder: (context, box) {
+          final viewportSize = Size(box.maxWidth, box.maxHeight);
+          _viewportSize = viewportSize;
           const pad = 30.0;
           Offset posOf(QuestNode n) => Offset(
                 pad + nx(n.mapX!) * (box.maxWidth - pad * 2),
                 pad + (1 - ny(n.mapY!)) * (box.maxHeight - pad * 2),
               );
-          final line = pts.map(posOf).toList();
+          final center = _mapCenter;
+          final zoom = _mapZoom;
+          // 카메라를 맞췄으면 그 중심·줌으로 직접 계산한 화면 좌표로, 아니면 기존
+          // 정규화 좌표로 그린다.
+          final useMap = !_projectionFailed && center != null && zoom != null;
+          final line = useMap
+              ? pts
+                  .map((n) => projectToScreen(
+                        point: LatLng(latitude: n.mapY!, longitude: n.mapX!),
+                        center: center,
+                        zoom: zoom,
+                        viewportSize: viewportSize,
+                      ))
+                  .toList()
+              : pts.map(posOf).toList();
           final doneFlags = pts.map((n) => widget.done.contains(n.nodeId)).toList();
           return Stack(children: [
-            // 안개 등고선 + 혼불 동선
-            Positioned.fill(child: CustomPaint(painter: _HonbulRoutePainter(line, doneFlags))),
-            // 핀
-            for (var i = 0; i < pts.length; i++)
-              Positioned(
-                left: line[i].dx - 40,
-                top: line[i].dy - 40,
-                child: SizedBox(width: 80, height: 80, child: Center(
-                  child: _pin(pts[i], doneFlags[i], stoneNoOf[pts[i].nodeId], pts[i].nodeId == widget.nextId),
-                )),
+            if (!_projectionFailed)
+              // 제스처 차단 — 카메라를 코드로만 움직여야 핀·동선이 지도와 어긋나지 않는다
+              // (이 패키지에는 카메라 이동 콜백이 없어 사용자 팬·줌을 따라갈 수 없다).
+              Positioned.fill(
+                child: IgnorePointer(
+                  child: KakaoMap(
+                    onMapCreated: (c) => _fitCamera(c, pts, viewportSize),
+                    initialPosition:
+                        LatLng(latitude: pts.first.mapY!, longitude: pts.first.mapX!),
+                    initialLevel: 14,
+                  ),
+                ),
               ),
+            // 좌표를 받기 전에는 그리지 않는다 — 먼저 그리면 지도와 어긋난 자리에 찍힌다.
+            if (useMap || _projectionFailed) ...[
+              // 혼불 동선(실지도 위에서는 안개 등고선을 빼고 길만 남긴다)
+              Positioned.fill(
+                  child: CustomPaint(
+                      painter: _HonbulRoutePainter(line, doneFlags, mist: !useMap))),
+              // 핀
+              for (var i = 0; i < pts.length; i++)
+                Positioned(
+                  left: line[i].dx - 40,
+                  top: line[i].dy - 40,
+                  child: SizedBox(width: 80, height: 80, child: Center(
+                    child: _pin(pts[i], doneFlags[i], stoneNoOf[pts[i].nodeId], pts[i].nodeId == widget.nextId),
+                  )),
+                ),
+            ],
           ]);
         }),
       ),
@@ -173,17 +288,22 @@ class _RouteMapState extends State<_RouteMap> with SingleTickerProviderStateMixi
 class _HonbulRoutePainter extends CustomPainter {
   final List<Offset> pts;
   final List<bool> done;
-  _HonbulRoutePainter(this.pts, this.done);
+
+  /// 안개 등고선을 그릴지 — 실지도 위에서는 실제 지형을 가리기만 해서 끈다.
+  final bool mist;
+  _HonbulRoutePainter(this.pts, this.done, {this.mist = true});
 
   @override
   void paint(Canvas c, Size s) {
     // 안개 등고선 두 줄
-    final mist = Paint()..color = hbTealD.withOpacity(0.12)..style = PaintingStyle.stroke..strokeWidth = 1;
-    for (final f in [0.32, 0.62]) {
-      final path = Path()..moveTo(-10, s.height * f);
-      path.cubicTo(s.width * 0.25, s.height * (f - 0.05), s.width * 0.5, s.height * (f + 0.06), s.width * 0.72, s.height * (f - 0.02));
-      path.cubicTo(s.width * 0.86, s.height * (f - 0.05), s.width, s.height * (f + 0.02), s.width + 10, s.height * f);
-      c.drawPath(path, mist);
+    if (mist) {
+      final fog = Paint()..color = hbTealD.withOpacity(0.12)..style = PaintingStyle.stroke..strokeWidth = 1;
+      for (final f in [0.32, 0.62]) {
+        final path = Path()..moveTo(-10, s.height * f);
+        path.cubicTo(s.width * 0.25, s.height * (f - 0.05), s.width * 0.5, s.height * (f + 0.06), s.width * 0.72, s.height * (f - 0.02));
+        path.cubicTo(s.width * 0.86, s.height * (f - 0.05), s.width, s.height * (f + 0.02), s.width + 10, s.height * f);
+        c.drawPath(path, fog);
+      }
     }
     if (pts.length < 2) return;
     // 동선: 완료 구간=청록 굵게, 예정=이슬빛 점선느낌 얇게
@@ -205,7 +325,8 @@ class _HonbulRoutePainter extends CustomPainter {
   }
 
   @override
-  bool shouldRepaint(covariant _HonbulRoutePainter old) => old.pts != pts || old.done != done;
+  bool shouldRepaint(covariant _HonbulRoutePainter old) =>
+      old.pts != pts || old.done != done || old.mist != mist;
 }
 
 class ScenarioScreen extends StatefulWidget {

@@ -24,7 +24,7 @@ import '../theme.dart';
 import '../widgets/ui.dart';
 import 'ar_search_screen.dart';
 import 'create_scenario_screen.dart' show haversineMeters;
-import 'explore_place_screen.dart';
+import 'explore_conditions_screen.dart';
 import 'quest_journey_screen.dart';
 import 'scenario_screen.dart';
 
@@ -93,7 +93,7 @@ class _QuestTabScreenState extends State<QuestTabScreen> {
               const SizedBox(height: 8),
               FilledButton.icon(
                 onPressed: () => Navigator.push(
-                    context, MaterialPageRoute(builder: (_) => const ExplorePlaceScreen())),
+                    context, MaterialPageRoute(builder: (_) => const ExploreConditionsScreen())),
                 icon: const Icon(Icons.add),
                 label: const Text('새 코스 만들기'),
               ),

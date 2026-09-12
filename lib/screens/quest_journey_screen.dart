@@ -1,4 +1,30 @@
 // ============================================================
+// [v11] 이동 화면(_gpsScreen)도 실지도로 — 걷는 게 지도 위에서 보인다.
+// 구현(요약): 이동 화면 배경이 가짜 격자였고, 플레이어 점은 "진행도에 따라 위로 올라가는"
+//            연출이라 실제로 어디로 걷고 있는지 알 수 없었다.
+//            → 배경을 KakaoMap으로 바꾸고 내 위치를 Geolocator 스트림(5m)으로 실시간 갱신한다.
+//              카카오맵에는 원을 그리는 API가 없어(마커·카메라뿐) **인증 반경 링과 한자 핀은
+//              Flutter 오버레이**로 얹고, 목표의 화면 좌표는 controller.toScreenPoint로 받는다.
+//              사용자 팬·줌은 콜백이 없어 오버레이를 따라 맞출 수 없으므로 지도 제스처를 막고
+//              (IgnorePointer) 카메라는 코드로만 움직인다 — 내가 30m 이상 움직이면 나와 목표가
+//              모두 보이게 다시 맞추고(CameraUpdate.fromBounds), 맞춘 직후 오버레이를 재계산한다.
+//              반경 링은 실제 축척(북쪽 반경만큼 떨어진 점을 같이 변환해 픽셀 반지름을 구한다)이라
+//              멀리서는 몇 px에 불과해 핀보다 작으면 그리지 않는다 — 다가가면 카메라가 좁혀지며
+//              링이 커져 "거의 다 왔다"는 신호가 된다. 거리 숫자도 같은 스트림으로 갱신해
+//              5초 폴링보다 촘촘하게 줄어든다. 좌표 없는 데모 모드는 기존 격자 연출 그대로.
+// 구현일: 2026-09-12 | 작성: ljs (explore-radius-first/ljs/v1)
+// ------------------------------------------------------------
+// [v12] 실기기 확인 결과 v11이 항상 실패해 지도가 아예 안 뜨거나 목표 핀이
+//      안 찍혔다. 원인은 kakao_maps_flutter 0.2.2의 iOS 네이티브 구현 자체 —
+//      toScreenPoint는 항상 {dx:null, dy:null}만 반환하는 스텁이고,
+//      CameraUpdate.fromBounds는 네이티브 디코더가 position+zoomLevel만 읽어
+//      항상 E004로 실패한다(재시도로 못 고치는 구조적 버그). → 둘 다 버리고
+//      카메라 중심·줌을 표준 Web Mercator로 직접 계산해([../utils/web_mercator.dart])
+//      moveCamera(position+zoomLevel)로 맞추고, 화면 좌표·반경 픽셀도 그 중심·줌으로
+//      매 build마다 직접 계산한다(반경은 위도별 미터/픽셀 닫힌 형태 — 두 점을 찍어
+//      차분하던 방식 대신).
+// 구현일: 2026-09-12 | 작성: ljs (explore-radius-first/ljs/v1)
+// ------------------------------------------------------------
 // [v10] 챕터 진행판(_mapScreen)의 배경이 실좌표와 무관한 가짜 격자였다.
 //      POI는 화면 비율 하드코딩(Offset(.30,.29) 등)이라 실제 지리와 전혀
 //      안 맞았는데, QuestNode에는 이미 실좌표(mapX/mapY)가 있고 홈 지도
@@ -132,6 +158,7 @@ import '../models/run.dart';
 import '../models/scenario.dart';
 import '../store.dart';
 import '../theme.dart';
+import '../utils/web_mercator.dart';
 import '../widgets/native_ar_view.dart';
 import '../widgets/reward_pop.dart';
 import 'create_scenario_screen.dart' show haversineMeters;
@@ -367,6 +394,29 @@ class _QuestJourneyScreenState extends State<QuestJourneyScreen> with TickerProv
   StreamSubscription<Position>? _questMapPositionSub;
   bool _hasPlayerMarker = false;
 
+  // ── 이동 화면(_gpsScreen)의 실지도 상태 ──
+  // 인증 반경 링·한자 핀은 Flutter 오버레이다(카카오맵에 원 API가 없다). 그래서 지도 제스처를
+  // 막고 카메라를 코드로만 움직인다 — 움직인 직후 목표의 화면 좌표를 다시 받아 오버레이를 맞춘다.
+  KakaoMapController? _gpsMapController;
+  StreamSubscription<Position>? _gpsMapPositionSub;
+  bool _hasGpsPlayerMarker = false;
+
+  /// 마지막으로 맞춘 카메라 중심·줌 — 화면 좌표는 이 값으로 직접 계산한다
+  /// (toScreenPoint는 iOS 플러그인 미구현이라 항상 null이라 쓸 수 없다).
+  LatLng? _gpsMapCenter;
+  int? _gpsMapZoom;
+
+  /// build()에서 매번 갱신 — onMapCreated·_fitGpsCamera에서 카메라를 맞출 때 필요하다.
+  Size? _gpsViewportSize;
+
+  /// 마지막으로 카메라를 맞춘 지점 — 여기서 [_gpsRefitMoveM] 이상 움직이면 다시 맞춘다.
+  Position? _gpsLastFitAt;
+  static const _gpsRefitMoveM = 30.0;
+
+  /// 카메라 맞춤(moveCamera) 자체가 실패 — 목표를 지도 위에 얹을 수 없으니
+  /// 실지도를 접고 기존 연출로 돌아간다(지도만 있고 목표 표시가 없는 상태를 만들지 않는다).
+  bool _gpsProjectionFailed = false;
+
   @override
   void initState() {
     super.initState();
@@ -575,6 +625,7 @@ class _QuestJourneyScreenState extends State<QuestJourneyScreen> with TickerProv
     _scanTimer?.cancel();
     _summonTimer?.cancel();
     _questMapPositionSub?.cancel();
+    _gpsMapPositionSub?.cancel();
     _gpsPollTimer?.cancel();
     _hint?.removeListener(_onHintChanged);
     _hint?.dispose();
@@ -786,6 +837,7 @@ class _QuestJourneyScreenState extends State<QuestJourneyScreen> with TickerProv
       go(t.after);
       return;
     }
+    _teardownGpsMap(); // 이동 화면을 떠난다 — 지도·위치 스트림 정리
     setState(() {
       screen = 'summon';
       summonFor = t.after == 'summon-sejong' ? 'sejong' : 'meok';
@@ -1005,6 +1057,7 @@ class _QuestJourneyScreenState extends State<QuestJourneyScreen> with TickerProv
     _walkTimer?.cancel();
     _scanTimer?.cancel();
     _summonTimer?.cancel();
+    _teardownGpsMap();
     setState(() {
       screen = 'map';
       budget = 20000;
@@ -1221,7 +1274,10 @@ class _QuestJourneyScreenState extends State<QuestJourneyScreen> with TickerProv
           const SizedBox(height: 16),
           Row(children: [
             Expanded(child: GestureDetector(
-              onTap: () => setState(() { guidance = null; screen = 'map'; }),
+              onTap: () {
+                _teardownGpsMap(); // 이동 화면에서 온 안내일 수 있다
+                setState(() { guidance = null; screen = 'map'; });
+              },
               child: Container(
                 padding: const EdgeInsets.symmetric(vertical: 14),
                 alignment: Alignment.center,
@@ -1494,6 +1550,194 @@ class _QuestJourneyScreenState extends State<QuestJourneyScreen> with TickerProv
     _questMapPositionSub = null;
     _questMapController = null;
     _hasPlayerMarker = false;
+  }
+
+  // ── 이동 화면(_gpsScreen) 실지도 ──────────────────
+  static const _gpsPlayerStyleId = 'gps_my_location_style';
+  static const _gpsPlayerMarkerId = 'gps_my_location';
+
+  /// 인증 반경 링의 화면 지름(px) — **실제 축척 그대로**. 핀(62px)보다 작으면 그리지 않는다:
+  /// 멀리서는 반경이 몇 px라 보여줄 수가 없고, 다가가면 카메라가 좁혀지며 링이 커져
+  /// "거의 다 왔다"는 신호가 된다. 정확한 값은 링 아래 라벨이 늘 들고 있다.
+  /// toScreenPoint로 두 점을 찍어 차분하던 이전 방식(iOS 플러그인 미구현이라 항상 null)
+  /// 대신, 줌 레벨에서 바로 나오는 미터/픽셀로 닫힌 형태로 구한다.
+  double? _gpsRingPxFor(int radiusM, double latitude) {
+    final zoom = _gpsMapZoom;
+    if (zoom == null) return null;
+    final d = (radiusM / metersPerPixel(latitude: latitude, zoom: zoom)) * 2;
+    return d >= 70 ? d : null;
+  }
+
+  /// 목표 오버레이가 차지하는 정사각 변(px) — 링이 없을 때도 핀은 들어가야 한다.
+  double _gpsOverlaySideFor(double? ringPx) => math.max(ringPx ?? 0, 76);
+
+  /// 목표 지점 표시 — 인증 반경 링(그릴 수 있을 때) + 한자 핀 + 반경 라벨.
+  /// 실지도에서는 이 위젯을 목표의 화면 좌표에 얹고, 데모에서는 화면 중앙에 둔다.
+  Widget _gpsTargetVisual(_Target t, bool near, int radiusM, double? ringPx) =>
+      Stack(alignment: Alignment.center, clipBehavior: Clip.none, children: [
+        if (ringPx != null)
+          Container(
+            width: ringPx,
+            height: ringPx,
+            decoration: BoxDecoration(
+              shape: BoxShape.circle,
+              color: (near ? _tealDeep : _verm).withOpacity(near ? 0.1 : 0.05),
+              border: Border.all(
+                  color: (near ? _tealDeep : _verm).withOpacity(near ? 1 : 0.6), width: 2),
+            ),
+          ),
+        Container(
+          width: 62, height: 62, alignment: Alignment.center,
+          decoration: BoxDecoration(
+            shape: BoxShape.circle,
+            gradient: const LinearGradient(begin: Alignment.topCenter, end: Alignment.bottomCenter, colors: [Color(0xFFF4EDDA), Color(0xFFEADFC4)]),
+            border: Border.all(color: _verm, width: 2.5),
+            boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.5), blurRadius: 22, offset: const Offset(0, 8))],
+          ),
+          child: Text(t.hanja, style: dokkaebiTitle(size: 26, color: _parchInk)),
+        ),
+        Positioned(
+          bottom: ringPx == null ? -20 : 6,
+          child: Container(
+            padding: const EdgeInsets.symmetric(horizontal: 11, vertical: 3),
+            decoration: BoxDecoration(color: _inkDeep.withOpacity(0.85), borderRadius: BorderRadius.circular(999)),
+            child: Text('인증 반경 ${_distLabel(radiusM)}', style: const TextStyle(fontSize: 10, color: _muted)),
+          ),
+        ),
+      ]);
+
+  /// 데모 모드 플레이어 점(맥동) — 실지도에선 네이티브 "내 위치" 마커를 쓴다.
+  Widget _gpsPlayerDot() => SizedBox(
+        width: 20, height: 20,
+        child: Stack(alignment: Alignment.center, clipBehavior: Clip.none, children: [
+          AnimatedBuilder(animation: _pulse, builder: (_, __) => Container(width: 20 + 18 * _pulse.value, height: 20 + 18 * _pulse.value, decoration: BoxDecoration(shape: BoxShape.circle, border: Border.all(color: _blue.withOpacity(0.7 * (1 - _pulse.value)), width: 2)))),
+          Container(width: 20, height: 20, decoration: BoxDecoration(shape: BoxShape.circle, color: _blue, border: Border.all(color: const Color(0xFFEAF6FC), width: 3), boxShadow: [BoxShadow(color: _blue.withOpacity(0.9), blurRadius: 16)])),
+        ]),
+      );
+
+  /// 실지도 준비 완료 — 내 위치 마커 스타일을 등록하고 카메라를 목표에 맞춘 뒤
+  /// 위치 스트림을 시작한다.
+  /// onMapCreated 콜백에서 await 없이 호출되므로, 여기서 잡지 않은 예외는 조용히
+  /// 사라진다 — 그래서 try/catch로 감싼다.
+  Future<void> _onGpsMapCreated(KakaoMapController controller, Size viewportSize) async {
+    _gpsMapController = controller;
+    _gpsViewportSize = viewportSize;
+    try {
+      await controller.addMarkerLayer(
+          layerId: KakaoMapController.defaultLabelLayerId);
+      final myLocationBytes = await _loadAssetBytes('assets/images/my_location.png');
+      await controller.registerMarkerStyles(styles: [
+        MarkerStyle(
+          styleId: _gpsPlayerStyleId,
+          perLevels: [
+            MarkerPerLevelStyle.fromBytes(bytes: myLocationBytes, level: 1),
+            MarkerPerLevelStyle.fromBytes(bytes: myLocationBytes, level: 21),
+          ],
+        ),
+      ]);
+    } catch (e, st) {
+      debugPrint('[map-debug] gps 마커 스타일 등록 예외: $e\n$st');
+    }
+    // 초기 카메라는 KakaoMap의 initialPosition/initialLevel(목표 중심, 레벨 17) 그대로다 —
+    // 화면 좌표 계산도 같은 값으로 맞춰야 목표 핀이 처음부터 제자리(화면 중앙)에 찍힌다.
+    final n = targets[gpsIdx].node;
+    if (mounted && n?.mapX != null && n?.mapY != null) {
+      setState(() {
+        _gpsMapCenter = LatLng(latitude: n!.mapY!, longitude: n.mapX!);
+        _gpsMapZoom = 17;
+      });
+    }
+    _startGpsPlayerStream();
+  }
+
+  /// 걸으면 지도 위 내 마커가 따라 움직이고, 거리 숫자도 같은 신호로 줄어든다(5m 간격).
+  void _startGpsPlayerStream() {
+    _gpsMapPositionSub ??= Geolocator.getPositionStream(
+      locationSettings: const LocationSettings(
+          accuracy: LocationAccuracy.best, distanceFilter: 5),
+    ).listen(_onGpsPlayerMoved);
+  }
+
+  Future<void> _onGpsPlayerMoved(Position pos) async {
+    final controller = _gpsMapController;
+    if (controller == null || !mounted) return;
+    // 명령형 API라 지우고 새로 찍는다(홈 지도·챕터 진행판과 같은 패턴).
+    if (_hasGpsPlayerMarker) await controller.removeMarker(id: _gpsPlayerMarkerId);
+    _hasGpsPlayerMarker = true;
+    await controller.addMarker(
+      markerOption: MarkerOption(
+        id: _gpsPlayerMarkerId,
+        latLng: LatLng(latitude: pos.latitude, longitude: pos.longitude),
+        styleId: _gpsPlayerStyleId,
+      ),
+    );
+    // 거리 카드도 이 신호로 갱신 — 5초 폴링보다 촘촘해 걷는 것이 숫자로 보인다.
+    final n = targets[gpsIdx].node;
+    if (mounted && n?.mapX != null && n?.mapY != null) {
+      setState(() {
+        _liveDistM = haversineMeters(pos.latitude, pos.longitude, n!.mapY!, n.mapX!).round();
+        _liveDistNodeId = n.nodeId;
+        _liveAccuracyM = pos.accuracy;
+        _locError = null;
+        _locNeedsSettings = false;
+      });
+    }
+    // 카메라는 많이 움직였을 때만 다시 맞춘다 — 매 신호마다 맞추면 줌이 계속 흔들린다.
+    final last = _gpsLastFitAt;
+    if (last == null ||
+        haversineMeters(last.latitude, last.longitude, pos.latitude, pos.longitude) >=
+            _gpsRefitMoveM) {
+      _gpsLastFitAt = pos;
+      await _fitGpsCamera(pos);
+    }
+  }
+
+  /// 나와 목표가 모두 보이게 카메라 중심·줌을 직접 계산해 맞춘다.
+  /// CameraUpdate.fromBounds는 iOS 플러그인에서 항상 E004로 실패해 쓸 수 없다
+  /// (네이티브 디코더가 position+zoomLevel만 읽는데 fromBounds는 그 필드를 안 채운다).
+  Future<void> _fitGpsCamera(Position me) async {
+    final controller = _gpsMapController;
+    final n = targets[gpsIdx].node;
+    final viewportSize = _gpsViewportSize;
+    if (controller == null || n?.mapX == null || n?.mapY == null || viewportSize == null) {
+      return;
+    }
+    final fit = fitBounds(
+      points: [
+        LatLng(latitude: me.latitude, longitude: me.longitude),
+        LatLng(latitude: n!.mapY!, longitude: n.mapX!),
+      ],
+      viewportSize: viewportSize,
+      paddingPx: 90,
+    );
+    try {
+      await controller.moveCamera(
+        cameraUpdate: CameraUpdate(position: fit.center, zoomLevel: fit.zoom),
+      );
+    } catch (e, st) {
+      debugPrint('[map-debug] gps moveCamera 예외: $e\n$st');
+      if (mounted) setState(() => _gpsProjectionFailed = true);
+      return;
+    }
+    if (mounted) {
+      setState(() {
+        _gpsMapCenter = fit.center;
+        _gpsMapZoom = fit.zoom;
+      });
+    }
+  }
+
+  /// 이동 화면을 벗어날 때 지도·위치 스트림을 정리한다 — 다시 들어오면 새로 마운트된다.
+  void _teardownGpsMap() {
+    _gpsMapPositionSub?.cancel();
+    _gpsMapPositionSub = null;
+    _gpsMapController = null;
+    _hasGpsPlayerMarker = false;
+    _gpsMapCenter = null;
+    _gpsMapZoom = null;
+    _gpsViewportSize = null;
+    _gpsLastFitAt = null;
+    _gpsProjectionFailed = false;
   }
 
   Widget _mapHud(int chapterNum) => Row(children: [
@@ -1786,63 +2030,77 @@ class _QuestJourneyScreenState extends State<QuestJourneyScreen> with TickerProv
     final accuracyLabel = !real
         ? '정확도 ±8m'
         : (_liveAccuracyM == null ? '' : '정확도 ±${_liveAccuracyM!.round()}m');
+    // 실지도는 실제 GPS 모드 + 목표 좌표가 있을 때만. 없으면 기존 격자 연출 그대로.
+    final gpsNode = gpsT.node;
+    final realMap = real &&
+        gpsNode?.mapX != null &&
+        gpsNode?.mapY != null &&
+        !_gpsProjectionFailed;
     return Container(
       color: const Color(0xFF14111A),
       child: LayoutBuilder(builder: (ctx, box) {
+        final viewportSize = Size(box.maxWidth, box.maxHeight);
+        _gpsViewportSize = viewportSize;
+        final center = _gpsMapCenter;
+        final zoom = _gpsMapZoom;
+        final canOverlay = realMap && center != null && zoom != null;
+        final targetPoint = canOverlay
+            ? projectToScreen(
+                point: LatLng(latitude: gpsNode!.mapY!, longitude: gpsNode.mapX!),
+                center: center,
+                zoom: zoom,
+                viewportSize: viewportSize,
+              )
+            : null;
+        final ringPx = canOverlay ? _gpsRingPxFor(radiusM, gpsNode!.mapY!) : null;
+        final overlaySide = _gpsOverlaySideFor(ringPx);
         return Stack(children: [
-          const Positioned.fill(child: CustomPaint(painter: _GridPainter())),
+          if (realMap)
+            // 제스처 차단 — 카메라를 코드로만 움직여야 반경 오버레이가 어긋나지 않는다
+            // (이 패키지에는 카메라 이동 콜백이 없어 사용자 팬·줌을 따라갈 수 없다).
+            Positioned.fill(
+              child: IgnorePointer(
+                child: KakaoMap(
+                  onMapCreated: (c) => _onGpsMapCreated(c, viewportSize),
+                  initialPosition:
+                      LatLng(latitude: gpsNode!.mapY!, longitude: gpsNode.mapX!),
+                  initialLevel: 17,
+                ),
+              ),
+            )
+          else
+            const Positioned.fill(child: CustomPaint(painter: _GridPainter())),
           // 상단 칩
           Positioned(top: 54, left: 0, right: 0, child: Center(child: _pill('● GPS 추적 중 — ${gpsT.name}', border: _blue, textColor: const Color(0xFF9FD4EC)))),
-          // 목적지 마커 + 반경
-          Positioned(
-            left: 0, right: 0, top: box.maxHeight * .22,
-            child: Center(
+          // 목적지 — 실지도면 실좌표 위에 오버레이로, 데모면 기존 자리에.
+          if (targetPoint != null)
+            Positioned(
+              left: targetPoint.dx - overlaySide / 2,
+              top: targetPoint.dy - overlaySide / 2,
               child: SizedBox(
-                width: 170, height: 190,
-                child: Stack(alignment: Alignment.center, clipBehavior: Clip.none, children: [
-                  Container(
-                    width: 170, height: 170,
-                    decoration: BoxDecoration(
-                      shape: BoxShape.circle,
-                      color: (gpsNear ? _tealDeep : _verm).withOpacity(gpsNear ? 0.1 : 0.05),
-                      border: Border.all(color: (gpsNear ? _tealDeep : _verm).withOpacity(gpsNear ? 1 : 0.6), width: 2, style: BorderStyle.solid),
-                    ),
-                  ),
-                  Container(
-                    width: 62, height: 62, alignment: Alignment.center,
-                    decoration: BoxDecoration(
-                      shape: BoxShape.circle,
-                      gradient: const LinearGradient(begin: Alignment.topCenter, end: Alignment.bottomCenter, colors: [Color(0xFFF4EDDA), Color(0xFFEADFC4)]),
-                      border: Border.all(color: _verm, width: 2.5),
-                      boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.5), blurRadius: 22, offset: const Offset(0, 8))],
-                    ),
-                    child: Text(gpsT.hanja, style: dokkaebiTitle(size: 26, color: _parchInk)),
-                  ),
-                  Positioned(
-                    bottom: 6,
-                    child: Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 11, vertical: 3),
-                      decoration: BoxDecoration(color: _inkDeep.withOpacity(0.85), borderRadius: BorderRadius.circular(999)),
-                      child: Text('인증 반경 ${_distLabel(radiusM)}', style: const TextStyle(fontSize: 10, color: _muted)),
-                    ),
-                  ),
-                ]),
+                width: overlaySide,
+                height: overlaySide,
+                child: _gpsTargetVisual(gpsT, gpsNear, radiusM, ringPx),
               ),
             ),
-          ),
-          // 플레이어(접근하며 위로)
-          AnimatedPositioned(
-            duration: const Duration(milliseconds: 250),
-            left: box.maxWidth / 2 - 10,
-            top: box.maxHeight * (0.62 - prog * 0.26),
-            child: SizedBox(
-              width: 20, height: 20,
-              child: Stack(alignment: Alignment.center, clipBehavior: Clip.none, children: [
-                AnimatedBuilder(animation: _pulse, builder: (_, __) => Container(width: 20 + 18 * _pulse.value, height: 20 + 18 * _pulse.value, decoration: BoxDecoration(shape: BoxShape.circle, border: Border.all(color: _blue.withOpacity(0.7 * (1 - _pulse.value)), width: 2)))),
-                Container(width: 20, height: 20, decoration: BoxDecoration(shape: BoxShape.circle, color: _blue, border: Border.all(color: const Color(0xFFEAF6FC), width: 3), boxShadow: [BoxShadow(color: _blue.withOpacity(0.9), blurRadius: 16)])),
-              ]),
+          if (!realMap) ...[
+            Positioned(
+              left: 0, right: 0, top: box.maxHeight * .22,
+              child: Center(
+                child: SizedBox(
+                  width: 170, height: 190,
+                  child: _gpsTargetVisual(gpsT, gpsNear, radiusM, 170),
+                ),
+              ),
             ),
-          ),
+            // 플레이어(접근하며 위로) — 실지도에선 네이티브 "내 위치" 마커가 대신한다.
+            AnimatedPositioned(
+              duration: const Duration(milliseconds: 250),
+              left: box.maxWidth / 2 - 10,
+              top: box.maxHeight * (0.62 - prog * 0.26),
+              child: _gpsPlayerDot(),
+            ),
+          ],
           // 하단 카드
           Positioned(left: 12, right: 12, bottom: 18, child: _parchment(child: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.start, children: [
             Row(crossAxisAlignment: CrossAxisAlignment.baseline, textBaseline: TextBaseline.alphabetic, children: [

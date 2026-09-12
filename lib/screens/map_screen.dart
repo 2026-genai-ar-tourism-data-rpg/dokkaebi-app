@@ -57,7 +57,7 @@ import '../game/location_service.dart';
 import '../store.dart';
 import '../theme.dart';
 import '../widgets/ui.dart';
-import 'explore_place_screen.dart';
+import 'explore_conditions_screen.dart';
 import 'quest_journey_screen.dart';
 
 class MapScreen extends StatefulWidget {
@@ -311,7 +311,7 @@ class _MapScreenState extends State<MapScreen> {
           const SizedBox(height: 12),
           FilledButton(
             onPressed: () => Navigator.push(context,
-                MaterialPageRoute(builder: (_) => const ExplorePlaceScreen())),
+                MaterialPageRoute(builder: (_) => const ExploreConditionsScreen())),
             child: const Text('이 지역 탐험하기  →'),
           ),
         ]),
