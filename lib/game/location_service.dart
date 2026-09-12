@@ -6,6 +6,13 @@
 //            (다시 요청 / 설정 열기 / 위치 서비스 켜기).
 //            정확도(accuracy)를 함께 반환한다 — 서버가 이 값으로 반경을 보정한다.
 // 구현일: 2026-08-04 | 작성: kys (game-loop-ui/kys/v1)
+// ------------------------------------------------------------
+// [v2] 권한·위치 서비스만 확인하는 checkAccess() 분리 — 좌표 없이 "쓸 수 있는 상태인지"만 본다.
+// 구현(요약): 코스 진행 화면에서 이미 도착 인증한 장소는 서버에 다시 묻지 않는데, 위치 권한을
+//            꺼도 그대로 진행돼 버그처럼 보였다. 좌표까지 읽으면 실내에서 신호를 못 잡아 막히므로
+//            권한·서비스 상태만 확인하는 함수를 따로 두고, current()도 이 함수를 먼저 거친다.
+//            권한 확인 중 플랫폼 예외는 unknown으로 돌려준다(좌표 획득 실패는 그대로 timeout).
+// 구현일: 2026-09-12 | 작성: ljs (mission-strategy-routing/ljs/v1)
 // ============================================================
 import 'package:geolocator/geolocator.dart';
 
@@ -74,22 +81,9 @@ class LocationService {
   Future<LocationResult> current({
     Duration timeout = const Duration(seconds: 15),
   }) async {
+    final denied = await checkAccess();
+    if (denied != null) return LocationResult.fail(denied);
     try {
-      final enabled = await (_serviceEnabledOverride?.call() ??
-          Geolocator.isLocationServiceEnabled());
-      if (!enabled) return const LocationResult.fail(LocationFailure.serviceDisabled);
-
-      var permission = await (_permissionOverride?.call() ?? Geolocator.checkPermission());
-      if (permission == LocationPermission.denied) {
-        permission = await (_permissionOverride?.call() ?? Geolocator.requestPermission());
-      }
-      if (permission == LocationPermission.deniedForever) {
-        return const LocationResult.fail(LocationFailure.deniedForever);
-      }
-      if (permission == LocationPermission.denied) {
-        return const LocationResult.fail(LocationFailure.denied);
-      }
-
       // ⚠️ geolocator 12 API — desiredAccuracy/timeLimit.
       //    13+는 locationSettings로 바뀌었지만, 13은 Flutter 3.27+를 요구해서
       //    팀 SDK(3.24.3)에서 빌드가 깨진다(Color.toARGB32 없음).
@@ -103,6 +97,28 @@ class LocationService {
     } on Exception {
       // timeLimit 초과·플랫폼 예외 — 신호를 못 잡은 것으로 본다.
       return const LocationResult.fail(LocationFailure.timeout);
+    }
+  }
+
+  /// 위치 권한·위치 서비스만 확인한다(좌표는 읽지 않는다). 쓸 수 있으면 null, 아니면 사유.
+  ///
+  /// 권한이 아직 없으면 요청한다. 좌표가 필요 없는 확인(이미 도착 인증한 장소 등)에 쓴다 —
+  /// 좌표까지 읽으면 실내에서 신호를 못 잡아 괜히 막힌다.
+  Future<LocationFailure?> checkAccess() async {
+    try {
+      final enabled = await (_serviceEnabledOverride?.call() ??
+          Geolocator.isLocationServiceEnabled());
+      if (!enabled) return LocationFailure.serviceDisabled;
+
+      var permission = await (_permissionOverride?.call() ?? Geolocator.checkPermission());
+      if (permission == LocationPermission.denied) {
+        permission = await (_permissionOverride?.call() ?? Geolocator.requestPermission());
+      }
+      if (permission == LocationPermission.deniedForever) return LocationFailure.deniedForever;
+      if (permission == LocationPermission.denied) return LocationFailure.denied;
+      return null;
+    } on Exception {
+      return LocationFailure.unknown;
     }
   }
 

@@ -5,6 +5,9 @@
 //            화면이 사유별 안내와 다음 행동(설정 열기/다시 확인)을 내는지 본다.
 //            v1 화면은 1.8초 뒤 무조건 성공 pop이라 검증할 게 없었다.
 // 구현일: 2026-08-04 | 작성: kys (game-loop-ui/kys/v1)
+// ------------------------------------------------------------
+// [v2] checkAccess() — 권한·위치 서비스만 확인하고 좌표는 읽지 않는지.
+// 구현일: 2026-09-12 | 작성: ljs (mission-strategy-routing/ljs/v1)
 // ============================================================
 import 'package:dokkaebi_app/game/location_service.dart';
 import 'package:dokkaebi_app/screens/location_verify_screen.dart';
@@ -161,6 +164,29 @@ void main() {
         position: () async => throw Exception('신호 없음'),
       );
       expect((await svc.current()).failure, LocationFailure.timeout);
+    });
+
+    test('checkAccess — 영구 거부면 사유를 돌려주고 좌표는 읽지 않는다', () async {
+      var positionRead = false;
+      final svc = LocationService(
+        serviceEnabled: () async => true,
+        permission: () async => LocationPermission.deniedForever,
+        position: () async {
+          positionRead = true;
+          throw Exception('좌표를 읽으면 안 된다');
+        },
+      );
+      expect(await svc.checkAccess(), LocationFailure.deniedForever);
+      expect(positionRead, isFalse, reason: '권한만 확인하는 함수가 실내에서 신호를 기다리면 안 된다');
+    });
+
+    test('checkAccess — 권한이 있으면 신호가 없어도 문제없음(null)', () async {
+      final svc = LocationService(
+        serviceEnabled: () async => true,
+        permission: () async => LocationPermission.whileInUse,
+        position: () async => throw Exception('신호 없음'),
+      );
+      expect(await svc.checkAccess(), isNull);
     });
   });
 }
