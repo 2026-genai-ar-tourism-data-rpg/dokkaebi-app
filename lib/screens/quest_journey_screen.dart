@@ -1,7 +1,8 @@
 // ============================================================
 // [v12] 종로 고정값 걷어내기 — HUD·보상 수치·발자국 문구·힌트 타이머(계획 B7·B8·B14·C6).
 // 구현(요약):
-//   B7  HUD 칭호 "글지기 견습" → 닉네임(없으면 "탐험가"). 여비 20,000원 고정 → 코스 예산이고,
+//   B7  HUD 칭호 "글지기 견습" → 닉네임(없으면 "탐험가"). 칭호 첫 글자를 박아 둔 아바타 원('글')과
+//       장 번호 점은 뺐다 — 닉네임과 겹치고, 장 번호는 "제 N 장 진행 중"에 있다. 여비 20,000원 고정 → 코스 예산이고,
 //       예산이 없으면(입력이 숨겨져 대부분 없다) HUD·카페·엔딩의 여비 표시를 숨긴다(데모만 20,000).
 //       붓털은 코스별로 저장해 재진입해도 유지한다(ScenarioStore.brushOf/setBrush) — 예전엔 들어올
 //       때마다 3개로 돌아가 "써도 안 줄어드는" 것처럼 보였다.
@@ -1820,30 +1821,6 @@ class _QuestJourneyScreenState extends State<QuestJourneyScreen> with TickerProv
   }
 
   Widget _mapHud(int chapterNum) => Row(children: [
-        // 아바타
-        SizedBox(
-          width: 52, height: 52,
-          child: Stack(clipBehavior: Clip.none, children: [
-            Container(
-              decoration: BoxDecoration(
-                shape: BoxShape.circle,
-                gradient: const LinearGradient(begin: Alignment.topCenter, end: Alignment.bottomCenter, colors: [Color(0xFFF4EDDA), Color(0xFFEADFC4)]),
-                border: Border.all(color: _tealDeep, width: 2),
-              ),
-              alignment: Alignment.center,
-              child: Text('글', style: dokkaebiTitle(size: 21, color: _parchInk)),
-            ),
-            Positioned(
-              right: -3, bottom: -3,
-              child: Container(
-                width: 20, height: 20, alignment: Alignment.center,
-                decoration: BoxDecoration(shape: BoxShape.circle, color: _verm, border: Border.all(color: const Color(0xFF14111A), width: 2)),
-                child: Text('$chapterNum', style: const TextStyle(color: Color(0xFFFDF6E6), fontSize: 11, fontWeight: FontWeight.w900)),
-              ),
-            ),
-          ]),
-        ),
-        const SizedBox(width: 10),
         // Expanded — 좁은 화면(320px)에서 칭호·챕터 텍스트가 우측 스탯을 밀어내 오버플로났다.
         // 남는 폭을 텍스트가 갖고, 모자라면 말줄임으로 접는다(스탯은 항상 보여야 함).
         Expanded(

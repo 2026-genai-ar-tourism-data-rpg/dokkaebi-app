@@ -1178,6 +1178,8 @@ void main() {
 
       expect(find.text('달빛산책자'), findsOneWidget);
       expect(find.text('글지기 견습'), findsNothing);
+      expect(find.text('글'), findsNothing, reason: '칭호 첫 글자를 박아 둔 아바타 원도 없다');
+      expect(find.text('제 1 장 진행 중'), findsOneWidget, reason: '장 번호는 아바타 점 대신 이 줄에 남는다');
     });
 
     testWidgets('닉네임이 없으면 탐험가로 보인다', (tester) async {
