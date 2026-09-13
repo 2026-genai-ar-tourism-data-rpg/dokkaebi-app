@@ -25,6 +25,10 @@
 //      계산해([../utils/web_mercator.dart]) moveCamera(position+zoomLevel)로 맞추고,
 //      화면 좌표도 그 중심·줌으로 매 build마다 직접 계산한다.
 // 구현일: 2026-09-12 | 작성: ljs (explore-radius-first/ljs/v1)
+// ------------------------------------------------------------
+// [v5] 전 조각 복원 배너의 "종로의 기억이 되살아났다" 고정 문구 → 코스 지역명(계획 B11).
+//      지역명이 비어 있으면 "잊혀진 기억"으로 둔다.
+// 구현일: 2026-09-13 | 작성: ljs (jongno-hardcode-cleanup/ljs/v1)
 // ============================================================
 import 'dart:math' as math;
 
@@ -606,7 +610,7 @@ class _ScenarioScreenState extends State<ScenarioScreen> {
                       : () => _play(next!, carried),
                 )
               else if (allDone)
-                _RestoredBanner(),
+                _RestoredBanner(region: scn.region),
               const SizedBox(height: 14),
 
               // ── 상태 그래프 — 단서함·성향·쿠폰 ───────────
@@ -768,15 +772,20 @@ class _NextTarget extends StatelessWidget {
 
 /// 전 조각 복원 완료 배너.
 class _RestoredBanner extends StatelessWidget {
+  /// 복원한 코스의 지역명 — 비어 있으면 지역을 말하지 않는다.
+  final String region;
+  const _RestoredBanner({required this.region});
+
   @override
   Widget build(BuildContext context) {
+    final whose = region.trim().isEmpty ? '잊혀진' : '${region.trim()}의';
     return GlowCard(
       glow: AppColors.gold,
       child: Row(children: [
         const Icon(Icons.auto_awesome, color: AppColors.gold),
         const SizedBox(width: 10),
         Expanded(
-          child: Text('기억석 복원 완료 — 종로의 기억이 되살아났다.',
+          child: Text('기억석 복원 완료 — $whose 기억이 되살아났다.',
               style: dokkaebiTitle(size: 15, color: AppColors.gold)),
         ),
       ]),

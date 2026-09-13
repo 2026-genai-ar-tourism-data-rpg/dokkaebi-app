@@ -1,4 +1,21 @@
 // ============================================================
+// [v12] 종로 고정값 걷어내기 — HUD·보상 수치·발자국 문구·힌트 타이머(계획 B7·B8·B14·C6).
+// 구현(요약):
+//   B7  HUD 칭호 "글지기 견습" → 닉네임(없으면 "탐험가"). 여비 20,000원 고정 → 코스 예산이고,
+//       예산이 없으면(입력이 숨겨져 대부분 없다) HUD·카페·엔딩의 여비 표시를 숨긴다(데모만 20,000).
+//       붓털은 코스별로 저장해 재진입해도 유지한다(ScenarioStore.brushOf/setBrush) — 예전엔 들어올
+//       때마다 3개로 돌아가 "써도 안 줄어드는" 것처럼 보였다.
+//   B8  화면용 보상 숫자 정리(모두 종로 정답지 값을 옮겨 둔 것) — 퀴즈 경험치 +30, 발자국 +50·쿠폰 +500원
+//       ("익선동카페" StateRef 포함), 피날레 +200, 사이드 +30, 인사동 +40 제거. 경험치는 조각 기록 때 서버가
+//       실제로 준 expGained만 합산한다(서버는 AI의 correct.exp를 읽지 않고 조각당 값을 따로 준다).
+//       퀴즈 쿠폰은 AI가 퀴즈 원자에 담아 보내는 correct.coupon을 읽어 조각과 함께 지급한다 — 예전엔
+//       200원을 박아 두고 저장도 안 해 재진입하면 사라졌다. 발자국은 AI 데이터에 보상이 없어 뺐다.
+//   B14 발자국 대사 4줄(먹내음·처마 — 종로 대본) → AI의 trail_clue·steps(trailWhisper).
+//       가짜 거리 "파편까지 Nm"와 힌트 버튼 조건의 걸음 수 3 고정도 걷어냈다.
+//   C6  힌트 사다리를 미션 화면에 들어갈 때 만들어 시작한다(_enterMission) — 힌트 창을 처음 열거나
+//       퀴즈를 틀릴 때에야 만들어져 "멈춰 있으면 힌트1"(idle60) 타이머가 늦게 켜졌다.
+// 구현일: 2026-09-13 | 작성: ljs (jongno-hardcode-cleanup/ljs/v1)
+// ------------------------------------------------------------
 // [v11] 이동 화면(_gpsScreen)도 실지도로 — 걷는 게 지도 위에서 보인다.
 // 구현(요약): 이동 화면 배경이 가짜 격자였고, 플레이어 점은 "진행도에 따라 위로 올라가는"
 //            연출이라 실제로 어디로 걷고 있는지 알 수 없었다.
@@ -156,6 +173,7 @@ import '../game/location_service.dart';
 import '../game/run_session.dart';
 import '../models/run.dart';
 import '../models/scenario.dart';
+import '../session.dart';
 import '../store.dart';
 import '../theme.dart';
 import '../utils/web_mercator.dart';
@@ -245,6 +263,32 @@ const _defaultClues = ['申時', 'ㄱ', 'ㅏ', ''];
 /// 코스 데이터 없는 데모 모드의 지역명(시안이 종로 4챕터다).
 const _defaultRegion = '종로';
 
+/// 코스 데이터 없는 데모 모드의 여비(원). 실제 코스는 코스 예산을 쓰고, 예산이 없으면 여비를 숨긴다.
+const _demoBudget = 20000;
+
+/// 발자국 추적 단계별 도깨비 귀띔 — AI가 준 자취 묘사([clue])와 거쳐갈 지점([steps])을 쓴다.
+///
+/// [step]은 지금까지 밟은 발자국 수(0..[total]). 0이면 자취 묘사를, 그 뒤로는 방금 닿은 지점을 보여주고,
+/// 마지막 발자국에 닿으면 조각을 거두라는 말을 붙인다. 데이터가 없으면 지역 색 없는 기본 문구를 쓴다
+/// (예전엔 "먹내음·처마" 같은 종로 대본 4줄이 모든 코스에 고정으로 떴다).
+@visibleForTesting
+String trailWhisper({
+  String? clue,
+  List<String> steps = const [],
+  required int step,
+  required int total,
+}) {
+  if (step <= 0) {
+    final c = clue?.trim() ?? '';
+    return c.isEmpty ? '"발자국이 이어져 있느니라. 하나씩 밟아 보거라."' : '"$c"';
+  }
+  final reached = step - 1 < steps.length ? steps[step - 1].trim() : '';
+  if (step >= total) {
+    return reached.isEmpty ? '"저기다! 빛나는 것을 거두거라."' : '"$reached — 저기 빛나는 것을 거두거라."';
+  }
+  return reached.isEmpty ? '"옳지, 그 방향이다."' : '"$reached"';
+}
+
 class QuestJourneyScreen extends StatefulWidget {
   /// 도착 인증에 쓸 위치 서비스. 테스트·데모에서 갈아끼운다.
   final LocationService locationService;
@@ -272,7 +316,7 @@ class _QuestJourneyScreenState extends State<QuestJourneyScreen> with TickerProv
   // ── 시안 initState 그대로 ──
   // '새 여정 꾸리기(setup)' 화면 제거 — "도깨비에게 길 묻기" 진입점인 'map'에서 바로 시작.
   String screen = 'map';
-  int budget = 20000, hours = 2;
+  int budget = _demoBudget, hours = 2;
   String? flag;
   int dlgStep = 0;
   late final ApiClient _api = widget.apiClient ?? ApiClient();
@@ -318,7 +362,7 @@ class _QuestJourneyScreenState extends State<QuestJourneyScreen> with TickerProv
   bool _dialogueLoading = false;
   String? _liveAnswer;
   String quizState = 'idle';
-  int fragments = 0, coupon = 0, spent = 0, exp = 0, brush = 3;
+  int fragments = 0, coupon = 0, spent = 0, exp = 0, brush = ScenarioStore.defaultBrush;
   late List<Map<String, dynamic>> enemies = [
     {'id': 1, 'left': .38, 'top': .30, 'size': 96.0, 'dur': 3.0, 'dead': false},
     {'id': 2, 'left': .12, 'top': .48, 'size': 64.0, 'dur': 3.6, 'dead': false},
@@ -455,7 +499,13 @@ class _QuestJourneyScreenState extends State<QuestJourneyScreen> with TickerProv
         ScenarioStore.I.inventoryOf(s.scenarioId).map(StateRef.parse));
     fragments = pstate.fragments.length;      // 캡은 targets 확정 후(initState)에서
     coupon = pstate.couponTotal;
+    brush = ScenarioStore.I.brushOf(s.scenarioId);  // 재진입해도 쓴 붓털이 되돌아오지 않게
+    if (s.budget != null) budget = s.budget!;
   }
+
+  /// 여비를 보여줄지 — 코스에 예산이 있을 때만. 예산 입력이 숨겨져 있어 실제 코스는 대부분 예산이 없는데,
+  /// 그때 데모 값(20,000원)을 보여주면 사용자가 정한 적 없는 여비가 된다. 데모 모드(코스 없음)는 보여준다.
+  bool get _showBudget => widget.scenario == null || widget.scenario!.budget != null;
 
   /// Scenario → 챕터 매핑. **실제 밟는 경로(playedPath)의 조각 노드**를 쓴다 —
   /// 갈림길을 b1로 골랐으면 샛길 노드가 챕터로 들어온다. 없으면 종로 기본값.
@@ -538,6 +588,9 @@ class _QuestJourneyScreenState extends State<QuestJourneyScreen> with TickerProv
     }
   }
 
+  /// 이 챕터 퀴즈를 맞히면 받는 쿠폰(원) — AI가 퀴즈 원자에 담아 보낸 `correct.coupon`. 없으면 0.
+  int get _quizCoupon => _actionAtom('answer')?.correctCoupon ?? 0;
+
   /// 현재 챕터 노드의 컴파일된 액션 원자 중 타입이 `type`인 첫 번째 것.
   ActionAtom? _actionAtom(String type) {
     for (final a in _curNode?.actions ?? const <ActionAtom>[]) {
@@ -614,6 +667,21 @@ class _QuestJourneyScreenState extends State<QuestJourneyScreen> with TickerProv
     _hint?.removeListener(_onHintChanged);
     _hint?.dispose();
     _hint = null;
+  }
+
+  /// 붓털 1개로 다음 힌트를 앞당겨 연다 — 남은 개수는 코스별로 저장해 재진입해도 유지된다.
+  void _spendBrush() {
+    if (!hint.forceNext()) return;
+    setState(() => brush = math.max(0, brush - 1));
+    final s = widget.scenario;
+    if (s != null) ScenarioStore.I.setBrush(s.scenarioId, brush);
+  }
+
+  /// 미션 화면으로 들어간다 — 힌트 사다리도 이때 만들어 시작한다.
+  /// 예전엔 힌트 창을 처음 열거나 퀴즈를 틀릴 때에야 만들어져 "멈춰 있으면 힌트1"(idle60) 타이머가 늦게 켜졌다.
+  void _enterMission(String stage) {
+    _hint ??= _newHint();
+    go(stage);
   }
 
   @override
@@ -905,6 +973,16 @@ class _QuestJourneyScreenState extends State<QuestJourneyScreen> with TickerProv
     }
   }
 
+  /// 퀴즈 챕터 조각 확정 — AI가 준 정답 쿠폰이 있으면 조각과 함께 지급한다.
+  /// 서버 기록이 성공해야 확정되고(_claimChapter), 쿠폰은 획득 팝업에도 보이고 코스에 저장된다.
+  void _claimQuizChapter() {
+    final amount = _quizCoupon; // 확정되면 챕터가 넘어가 _curNode가 바뀐다 — 먼저 읽어 둔다
+    _claimCurrentChapter(
+      extra: [if (amount > 0) StateRef(kind: StateKind.coupon, value: '', amount: amount)],
+      also: amount > 0 ? () => coupon += amount : null,
+    );
+  }
+
   /// 지금 챕터 조각 확정(일반 챕터) — 서버에 기록되면 조각 수를 올리고 획득 팝업을 띄운다.
   /// [also]는 그 챕터 고유의 화면 반영(발자국 파편 거두기·카페 주문 완료 등) — 확정될 때 함께 적용한다.
   void _claimCurrentChapter({List<StateRef> extra = const [], VoidCallback? also}) {
@@ -945,6 +1023,8 @@ class _QuestJourneyScreenState extends State<QuestJourneyScreen> with TickerProv
       _pendingClaim = null;
       _recordFailure = null;
       _claimed = (chapterIdx: claim.chapterIdx, extra: claim.extra, reward: reward);
+      // 경험치는 서버가 실제로 준 값만 모은다(이미 받은 보상이면 0) — 화면용 가산 숫자는 없앴다.
+      if (reward != null && !reward.alreadyRewarded) exp += reward.expGained;
     });
     await claim.onClaimed();
     await _grantChapter(claim.chapterIdx, extra: claim.extra);
@@ -1036,7 +1116,6 @@ class _QuestJourneyScreenState extends State<QuestJourneyScreen> with TickerProv
         ending = resolved;
         screen = 'ending';
         fragments = _stoneTotal;
-        exp += 200;
       });
       final s = widget.scenario;
       if (s != null) await ScenarioStore.I.setEnding(s.scenarioId, resolved);
@@ -1060,7 +1139,7 @@ class _QuestJourneyScreenState extends State<QuestJourneyScreen> with TickerProv
     _teardownGpsMap();
     setState(() {
       screen = 'map';
-      budget = 20000;
+      budget = widget.scenario?.budget ?? _demoBudget;
       hours = 2;
       flag = null;
       dlgStep = 0;
@@ -1069,7 +1148,7 @@ class _QuestJourneyScreenState extends State<QuestJourneyScreen> with TickerProv
       coupon = 0;
       spent = 0;
       exp = 0;
-      brush = 3;
+      brush = ScenarioStore.defaultBrush;
       for (final e in enemies) {
         e['dead'] = false;
       }
@@ -1769,7 +1848,8 @@ class _QuestJourneyScreenState extends State<QuestJourneyScreen> with TickerProv
         // 남는 폭을 텍스트가 갖고, 모자라면 말줄임으로 접는다(스탯은 항상 보여야 함).
         Expanded(
           child: Column(crossAxisAlignment: CrossAxisAlignment.start, mainAxisSize: MainAxisSize.min, children: [
-            Text('글지기 견습',
+            // 칭호 고정값("글지기 견습") 대신 닉네임 — 서버 등급(/me)은 아직 앱에 연결돼 있지 않다.
+            Text(Session.nickname ?? '탐험가',
                 maxLines: 1, overflow: TextOverflow.ellipsis,
                 style: dokkaebiTitle(size: 17, color: _cream)),
             Text('제 $chapterNum 장 진행 중',
@@ -1777,8 +1857,10 @@ class _QuestJourneyScreenState extends State<QuestJourneyScreen> with TickerProv
                 style: const TextStyle(fontSize: 11, color: _muted)),
           ]),
         ),
-        const SizedBox(width: 8),
-        _hudStat(_remain.toString(), _gold, ring: true),
+        if (_showBudget) ...[
+          const SizedBox(width: 8),
+          _hudStat(_remain.toString(), _gold, ring: true),
+        ],
         const SizedBox(width: 7),
         _hudStat('붓털 $brush', _soft),
       ]);
@@ -2349,7 +2431,7 @@ class _QuestJourneyScreenState extends State<QuestJourneyScreen> with TickerProv
               const SizedBox(height: 10),
               // strategy가 S3(퀴즈→개봉)인 노드만 시험으로, 나머지는 지령으로.
               _missionStageFor(_curNode) == 'quiz'
-                  ? _cta('계속 — 도깨비의 시험', () => go('quiz'))
+                  ? _cta('계속 — 도깨비의 시험', () => _enterMission('quiz'))
                   : _cta('계속 — 지령 받기', () => go('order')),
             ],
           ])),
@@ -2433,18 +2515,20 @@ class _QuestJourneyScreenState extends State<QuestJourneyScreen> with TickerProv
                         padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 11),
                         decoration: BoxDecoration(color: _tealDeep.withOpacity(0.1), borderRadius: BorderRadius.circular(11), border: Border.all(color: _tealDeep.withOpacity(0.45))),
                         child: Row(children: [
+                          // 경험치 태그는 뺐다 — 조각을 기록할 때 서버가 실제로 주는 값(획득 팝업)과 달랐다.
+                          // 쿠폰은 AI가 퀴즈 원자에 담아 보낸 값(correct.coupon)이 있을 때만 보여준다.
                           Flexible(child: Text('"옳거니! 안목이 있구나."', style: dokkaebiTitle(size: 13.5, color: const Color(0xFF1D4A41)))),
-                          const Spacer(),
-                          _miniTag('경험치 +30', _tealDeep),
-                          const SizedBox(width: 6),
-                          _miniTag('쿠폰 +200원', const Color(0xFFA87F2C)),
+                          if (_quizCoupon > 0) ...[
+                            const Spacer(),
+                            _miniTag('쿠폰 +${_won(_quizCoupon)}', const Color(0xFFA87F2C)),
+                          ],
                         ]),
                       ),
                       const SizedBox(height: 12),
                       // S3(퀴즈→개봉)은 정답 자체가 곧 개봉이다 — 지령 화면을
                       // 거치지 않고 바로 조각을 지급한다(원래 order→hunt로
                       // 흘러가던 건 챕터 0 전용 하드코딩 사슬이었다).
-                      _cta('계속하기', () => _claimCurrentChapter()),
+                      _cta('계속하기', _claimQuizChapter),
                     ],
                   ]),
                 ),
@@ -2473,7 +2557,7 @@ class _QuestJourneyScreenState extends State<QuestJourneyScreen> with TickerProv
       onTap: () {
         if (quizState == 'correct') return;
         if (correct) {
-          setState(() { quizState = 'correct'; exp += 30; coupon += 200; });
+          setState(() => quizState = 'correct');
           hint.noteProgress();
         } else {
           setState(() => quizState = 'wrong');
@@ -2548,7 +2632,7 @@ class _QuestJourneyScreenState extends State<QuestJourneyScreen> with TickerProv
               _cta(ctaLabel, () {
                 if (stage == 'hunt') _prepareHuntEnemies();
                 if (stage == 'gather') _prepareGatherItems();
-                go(stage);
+                _enterMission(stage);
               }, fontSize: 15.5),
             ]),
           )),
@@ -2762,13 +2846,6 @@ class _QuestJourneyScreenState extends State<QuestJourneyScreen> with TickerProv
   // ════════════════════════════════════════════════════
   // 10. TRAIL — 발자국 추적
   // ════════════════════════════════════════════════════
-  static const _trailLines = [
-    '"길이 열렸느니라. 발자국은 해 지는 쪽으로 번졌느니 — 하나씩 밟아 보거라."',
-    '"옳지, 하나. 먹내음이 짙어지는구나."',
-    '"둘. 거의 다 왔느니."',
-    '"저기다! 처마 아래 빛나는 것을 거두거라."',
-  ];
-
   Widget _trailScreen() {
     final fpDefs = [
       (0.20, 0.22, 56.0, -18.0), (0.38, 0.32, 48.0, -24.0), (0.55, 0.42, 40.0, -30.0),
@@ -2782,9 +2859,8 @@ class _QuestJourneyScreenState extends State<QuestJourneyScreen> with TickerProv
         return Stack(children: [
           Align(alignment: const Alignment(0, 0.55), child: ClipPath(clipper: _RoofClipper(), child: Container(height: 110, color: const Color(0xFF0C0A08)))),
           Positioned(top: 58, left: 0, right: 0, child: Center(child: Row(mainAxisSize: MainAxisSize.min, children: [
+            // 가짜 거리("파편까지 Nm")는 뺐다 — 실제 거리와 무관한 걸음 수 × 4m였다.
             _pill('발자국 $trail/$trailTotal', border: _goldDim, textColor: _gold),
-            const SizedBox(width: 10),
-            _pill('파편까지 ${(trailTotal - trail) * 4}m', border: Colors.white, textColor: _soft),
           ]))),
           for (var i = 0; i < trailTotal; i++)
             if (trail >= i && trail < trailTotal)
@@ -2814,14 +2890,8 @@ class _QuestJourneyScreenState extends State<QuestJourneyScreen> with TickerProv
               right: box.maxWidth * .14, bottom: box.maxHeight * .5,
               child: GestureDetector(
                 // 서버 기록이 성공해야 파편을 거둔다 — 지금 챕터 번호는 _claimCurrentChapter가 먼저 읽어 둔다.
-                onTap: () => _claimCurrentChapter(
-                  extra: [const StateRef(kind: StateKind.coupon, value: '', to: '익선동카페', amount: 500)],
-                  also: () {
-                    fragTaken = true;
-                    exp += 50;
-                    coupon += 500;
-                  },
-                ),
+                // 발자국 쿠폰("익선동카페" +500원)·경험치 +50은 뺐다 — AI 데이터에 근거가 없다.
+                onTap: () => _claimCurrentChapter(also: () => fragTaken = true),
                 child: _Floaty(anim: _float, child: SizedBox(
                   width: 110, height: 110,
                   child: Stack(alignment: Alignment.center, clipBehavior: Clip.none, children: [
@@ -2846,10 +2916,17 @@ class _QuestJourneyScreenState extends State<QuestJourneyScreen> with TickerProv
                 ]),
               ),
               const SizedBox(width: 12),
-              Expanded(child: Text(_trailLines[trail], style: dokkaebiTitle(size: 14, color: const Color(0xFFE8DCC4), height: 1.5))),
+              Expanded(child: Text(
+                  trailWhisper(
+                    clue: _curNode?.mission?.trailClue,
+                    steps: _curNode?.mission?.steps ?? const [],
+                    step: trail,
+                    total: trailTotal,
+                  ),
+                  style: dokkaebiTitle(size: 14, color: const Color(0xFFE8DCC4), height: 1.5))),
             ]),
           )),
-          if (trail < 3)
+          if (trail < trailTotal)
             Positioned(right: 18, top: 120, child: GestureDetector(
               onTap: () => setState(() => hintOpen = true),
               child: Container(width: 48, height: 48, alignment: Alignment.center, decoration: BoxDecoration(shape: BoxShape.circle, color: _inkDeep.withOpacity(0.75), border: Border.all(color: _verm.withOpacity(0.5))), child: const Text('힌트', style: TextStyle(fontSize: 11.5, color: Color(0xFFE8A08D), fontWeight: FontWeight.w700))),
@@ -2947,21 +3024,23 @@ class _QuestJourneyScreenState extends State<QuestJourneyScreen> with TickerProv
                   ),
               ]),
             ),
-            const SizedBox(height: 20),
-            // 남은 여비
-            Container(
-              padding: const EdgeInsets.symmetric(horizontal: 15, vertical: 13),
-              decoration: BoxDecoration(color: _cream.withOpacity(0.05), borderRadius: BorderRadius.circular(14), border: Border.all(color: Colors.white.withOpacity(0.1))),
-              child: Column(children: [
-                Row(children: [
-                  const Text('남은 여비', style: TextStyle(fontSize: 11.5, color: _soft, fontWeight: FontWeight.w700)),
-                  const Spacer(),
-                  Text(_won(_remain), style: const TextStyle(fontSize: 11.5, color: _cream, fontWeight: FontWeight.w900)),
+            // 남은 여비 — 코스에 예산이 있을 때만(_showBudget)
+            if (_showBudget) ...[
+              const SizedBox(height: 20),
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 15, vertical: 13),
+                decoration: BoxDecoration(color: _cream.withOpacity(0.05), borderRadius: BorderRadius.circular(14), border: Border.all(color: Colors.white.withOpacity(0.1))),
+                child: Column(children: [
+                  Row(children: [
+                    const Text('남은 여비', style: TextStyle(fontSize: 11.5, color: _soft, fontWeight: FontWeight.w700)),
+                    const Spacer(),
+                    Text(_won(_remain), style: const TextStyle(fontSize: 11.5, color: _cream, fontWeight: FontWeight.w900)),
+                  ]),
+                  const SizedBox(height: 8),
+                  _progress(math.max(0.04, _remain / budget), grad: const LinearGradient(colors: [_tealDeep, Color(0xFF3AA88F)]), track: const Color(0xCC0D0B09)),
                 ]),
-                const SizedBox(height: 8),
-                _progress(math.max(0.04, _remain / budget), grad: const LinearGradient(colors: [_tealDeep, Color(0xFF3AA88F)]), track: const Color(0xCC0D0B09)),
-              ]),
-            ),
+              ),
+            ],
           ]),
         ),
       ),
@@ -3081,7 +3160,7 @@ class _QuestJourneyScreenState extends State<QuestJourneyScreen> with TickerProv
         if (isAnswer) {
           // 챕터 번호 하드코딩(옛 4챕터 종로 대본: 인사동=항상 2번) 제거.
           final idx = _tIdx;
-          setState(() { insaPick = t; insaState = 'opened'; fragments = idx + 1; exp += 40; });
+          setState(() { insaPick = t; insaState = 'opened'; fragments = idx + 1; });
           hint.noteProgress();
           _grantChapter(idx);
         } else {
@@ -3203,7 +3282,7 @@ class _QuestJourneyScreenState extends State<QuestJourneyScreen> with TickerProv
   Widget _sideOption(String num, String label, bool correct) {
     final picked = sideDone && correct;
     return GestureDetector(
-      onTap: () { if (correct) setState(() { sideDone = true; exp += 30; }); },
+      onTap: () { if (correct) setState(() => sideDone = true); },
       child: Container(
         padding: const EdgeInsets.symmetric(horizontal: 13, vertical: 11),
         decoration: BoxDecoration(color: picked ? _tealDeep.withOpacity(0.14) : _cream.withOpacity(0.04), borderRadius: BorderRadius.circular(12), border: Border.all(color: picked ? _tealDeep : Colors.white.withOpacity(0.1), width: picked ? 1.5 : 1)),
@@ -3255,11 +3334,14 @@ class _QuestJourneyScreenState extends State<QuestJourneyScreen> with TickerProv
                 const Text('NEW', style: TextStyle(fontSize: 11, color: _teal, fontWeight: FontWeight.w900)),
               ])),
             ],
-            const SizedBox(height: 8),
-            Container(padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 11), decoration: BoxDecoration(color: _cream.withOpacity(0.05), borderRadius: BorderRadius.circular(13), border: Border.all(color: Colors.white.withOpacity(0.1))), child: Row(children: [
-              Expanded(child: Text('총 지출 ${_won(spent)} · 예산 ${_won(budget)} 안에서 ✓', style: const TextStyle(fontSize: 12, color: _soft))),
-              Text('여비 ${_won(_remain)} 남음', style: const TextStyle(fontSize: 11, color: _teal, fontWeight: FontWeight.w900)),
-            ])),
+            // 예산 요약 — 코스에 예산이 있을 때만(_showBudget)
+            if (_showBudget) ...[
+              const SizedBox(height: 8),
+              Container(padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 11), decoration: BoxDecoration(color: _cream.withOpacity(0.05), borderRadius: BorderRadius.circular(13), border: Border.all(color: Colors.white.withOpacity(0.1))), child: Row(children: [
+                Expanded(child: Text('총 지출 ${_won(spent)} · 예산 ${_won(budget)} 안에서 ✓', style: const TextStyle(fontSize: 12, color: _soft))),
+                Text('여비 ${_won(_remain)} 남음', style: const TextStyle(fontSize: 11, color: _teal, fontWeight: FontWeight.w900)),
+              ])),
+            ],
             const SizedBox(height: 8),
             Row(children: [
               Expanded(child: GestureDetector(onTap: _restart, child: Container(height: 48, alignment: Alignment.center, decoration: BoxDecoration(borderRadius: BorderRadius.circular(13), border: Border.all(color: Colors.white.withOpacity(0.18))), child: const Text('처음부터 다시', style: TextStyle(color: _soft, fontWeight: FontWeight.w900, fontSize: 14))))),
@@ -3470,9 +3552,7 @@ class _QuestJourneyScreenState extends State<QuestJourneyScreen> with TickerProv
                         style: const TextStyle(fontSize: 11, color: _bronze)),
                   ])),
                   GestureDetector(
-                    onTap: brush <= 0 ? null : () => setState(() {
-                      if (hint.forceNext()) brush = math.max(0, brush - 1);
-                    }),
+                    onTap: brush <= 0 ? null : _spendBrush,
                     child: Container(
                       padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 9),
                       decoration: BoxDecoration(color: brush <= 0 ? _bronze : _parchInk, borderRadius: BorderRadius.circular(10)),

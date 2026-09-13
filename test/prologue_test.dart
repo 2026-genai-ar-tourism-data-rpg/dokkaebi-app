@@ -6,6 +6,9 @@
 //       ③ PrologueScreen이 서버 프롤로그를 그대로 보여준다
 //       ④ prologue가 비어있으면 기존 정적(종로) 대본으로 폴백한다
 // 구현일: 2026-09-04 | 작성: ljs (prologue-story-gen/ljs/v1)
+// ------------------------------------------------------------
+// [v2] ④ 폴백 대본의 "종로" 고정 문구 → 코스 지역명(B11). 지역명이 비어 있으면 "오래된"으로 둔다.
+// 구현일: 2026-09-13 | 작성: ljs (jongno-hardcode-cleanup/ljs/v1)
 // ============================================================
 import 'package:dokkaebi_app/models/scenario.dart';
 import 'package:dokkaebi_app/screens/prologue_screen.dart';
@@ -64,15 +67,29 @@ void main() {
       expect(find.textContaining('종로'), findsNothing);
     });
 
-    testWidgets('prologue가 비어있으면 기존 정적(종로) 대본으로 폴백한다', (tester) async {
-      final scenario = Scenario.fromJson(_scenarioJson());   // prologue 없음
+    testWidgets('prologue가 비어있으면 정적 대본으로 폴백하되, 지역은 이 코스의 지역명이다', (tester) async {
+      final scenario = Scenario.fromJson(_scenarioJson());   // prologue 없음, 지역 강남구
 
       await tester.pumpWidget(MaterialApp(
         home: PrologueScreen(scenario: scenario),
       ));
       await tester.pump(const Duration(milliseconds: 100));
 
-      expect(find.textContaining('종로'), findsOneWidget);
+      expect(find.textContaining('강남구 거리를 걷던'), findsOneWidget);
+      expect(find.textContaining('종로'), findsNothing,
+          reason: '어느 지역 코스든 "종로를 지나던"으로 시작하던 고정 문구');
+    });
+
+    testWidgets('폴백 대본에서 지역명이 비어 있으면 문장이 깨지지 않게 둔다', (tester) async {
+      final scenario = Scenario.fromJson({..._scenarioJson(), 'region': ''});
+
+      await tester.pumpWidget(MaterialApp(
+        home: PrologueScreen(scenario: scenario),
+      ));
+      await tester.pump(const Duration(milliseconds: 100));
+
+      expect(find.textContaining('오래된 거리를 걷던'), findsOneWidget);
+      expect(find.textContaining('{region}'), findsNothing);
     });
   });
 }

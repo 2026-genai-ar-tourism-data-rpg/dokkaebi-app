@@ -4,6 +4,9 @@
 // 구현(요약): 시나리오구조화.md 6-1 노드1 JSON 원문을 그대로 넣어 파싱 검증 +
 //            requires 게이팅(soft/hard·부분인지·데드락 금지) + 힌트 사다리 규칙 파싱.
 // 구현일: 2026-07-30 | 작성: kys (app-v3-back/kys/v1)
+// ------------------------------------------------------------
+// [v2] answer 원자의 정답 보상 쿠폰(correct.coupon) 파싱 — 6-1 원문 그대로 200원, 없거나 0이면 null.
+// 구현일: 2026-09-13 | 작성: ljs (jongno-hardcode-cleanup/ljs/v1)
 // ============================================================
 import 'package:dokkaebi_app/game/hint_ladder_controller.dart';
 import 'package:dokkaebi_app/game/player_state.dart';
@@ -136,6 +139,29 @@ void main() {
       expect(n.actions[5].countTarget, 1); // count:[1,1] → 목표 1
       expect(n.actions[6].npc, '먹 도깨비');
       expect(n.actions[2].answerIdx, 1);
+    });
+
+    // AI가 모든 퀴즈 노드의 answer 원자에 담아 보내는 정답 보상. 경험치는 앱이 읽지 않는다(서버 기준).
+    test('answer 원자의 정답 보상 쿠폰을 읽는다', () {
+      expect(n.actions[2].correctCoupon, 200);
+    });
+
+    test('정답 보상 쿠폰이 없거나 0이면 null — answer가 아닌 원자도 null', () {
+      expect(ActionAtom.fromJson({'a': 'answer', 'quiz': {'answer_idx': 0}}).correctCoupon, isNull);
+      expect(
+          ActionAtom.fromJson({
+            'a': 'answer',
+            'quiz': {'answer_idx': 0, 'correct': {'exp': 10}},
+          }).correctCoupon,
+          isNull,
+          reason: '구매 없이 인증하는 퀴즈는 경험치만 준다');
+      expect(
+          ActionAtom.fromJson({
+            'a': 'answer',
+            'quiz': {'correct': {'coupon': 0}},
+          }).correctCoupon,
+          isNull);
+      expect(n.actions[0].correctCoupon, isNull);
     });
 
     test('선택지 효과는 코드 고정 — 문구(text)는 아직 비어 있어도 파싱된다', () {

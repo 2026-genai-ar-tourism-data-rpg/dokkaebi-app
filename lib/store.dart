@@ -1,4 +1,13 @@
 // ============================================================
+// [v4] 코스별 남은 붓털 영속 — 화면에 다시 들어올 때마다 3개로 돌아가던 것(계획 B7).
+// 구현(요약): 힌트를 앞당겨 여는 붓털이 코스 진행 화면의 지역 변수라, 뒤로 갔다 다시 들어오면
+//            항상 3개로 초기화됐다(써도 줄지 않는 것처럼 보인 원인). scenarioId→남은 붓털을
+//            함께 저장한다. 처음부터 다시(resetProgress)·코스 삭제·전체 초기화 때 기본값으로 돌린다.
+//            + completeNode가 누적형(쿠폰·친밀도)도 문자열이 같으면 버려, 퀴즈 두 곳에서 각각 받은
+//            `coupon:200`이 하나만 남았다 → 노드를 처음 끝낼 때는 같은 문자열이 있어도 더한다
+//            (같은 노드를 다시 끝내면 이중 지급하지 않는다).
+// 구현일: 2026-09-13 | 작성: ljs (jongno-hardcode-cleanup/ljs/v1)
+// ------------------------------------------------------------
 // [v3] 코스별 서버 run_id 영속 — 앱 재시작·코스 전환 후에도 같은 서버 기록을 이어 쓴다.
 // 구현(요약): RunSession이 run을 메모리에 하나만 들고 있어서 앱을 다시 켜거나 코스 A→B→A로
 //            오가면 A의 서버 run이 새로 생겼다(앞서 모은 조각이 새 run엔 없어 피날레에서
@@ -37,6 +46,10 @@ class ScenarioStore extends ChangeNotifier {
   final Map<String, String> _endings = {}; // scenarioId -> 엔딩 코드
   final Set<String> _prologueSeen = {}; // 프롤로그를 본 scenarioId — 코스별로 최초 1회만.
   final Map<String, String> _runs = {}; // scenarioId -> 서버 run_id(재시작·코스 전환 후 이어 쓰기)
+  final Map<String, int> _brush = {}; // scenarioId -> 남은 붓털(힌트를 앞당겨 여는 데 쓴다)
+
+  /// 코스를 처음 시작할 때 주는 붓털 수.
+  static const defaultBrush = 3;
 
   String get _key => 'store_${Session.userId ?? 'guest'}';
 
@@ -44,6 +57,9 @@ class ScenarioStore extends ChangeNotifier {
   List<String> doneOf(String scenarioId) => _doneNodes[scenarioId] ?? const [];
   List<String> inventoryOf(String scenarioId) => _inventory[scenarioId] ?? const [];
   int progressOf(Scenario s) => doneOf(s.scenarioId).length;
+
+  /// 이 코스에 남은 붓털 수 — 기록이 없으면 [defaultBrush].
+  int brushOf(String scenarioId) => _brush[scenarioId] ?? defaultBrush;
 
   /// 이 코스의 프롤로그를 이미 봤는가 — 봤으면 재진입 시 프롤로그를 건너뛴다.
   bool prologueSeenOf(String scenarioId) => _prologueSeen.contains(scenarioId);
@@ -133,6 +149,7 @@ class ScenarioStore extends ChangeNotifier {
     _endings.clear();
     _prologueSeen.clear();
     _runs.clear();
+    _brush.clear();
     final raw = p.getString(_key);
     if (raw != null && raw.isNotEmpty) {
       final d = jsonDecode(raw) as Map<String, dynamic>;
@@ -149,6 +166,7 @@ class ScenarioStore extends ChangeNotifier {
       _prologueSeen.addAll(
           ((d['prologueSeen'] ?? []) as List).map((e) => e.toString()));
       (d['runs'] as Map<String, dynamic>? ?? {}).forEach((k, v) => _runs[k] = v.toString());
+      (d['brush'] as Map<String, dynamic>? ?? {}).forEach((k, v) => _brush[k] = (v as num).toInt());
     }
     notifyListeners();
   }
@@ -169,6 +187,7 @@ class ScenarioStore extends ChangeNotifier {
     _choices.remove(scenarioId);
     _endings.remove(scenarioId);
     _runs.remove(scenarioId);
+    _brush.remove(scenarioId);
     notifyListeners();
     await _persist();
   }
@@ -180,10 +199,15 @@ class ScenarioStore extends ChangeNotifier {
   /// 소유형은 중복 저장하지 않아 재방문 시 이중 누적이 없다.
   Future<void> completeNode(String scenarioId, String nodeId, List<String> grants) async {
     final done = _doneNodes[scenarioId] ??= [];
-    if (!done.contains(nodeId)) done.add(nodeId);
+    final firstTime = !done.contains(nodeId);
+    if (firstTime) done.add(nodeId);
     final inv = _inventory[scenarioId] ??= [];
     for (final g in grants) {
-      if (!inv.contains(g)) inv.add(g);
+      // 누적형(쿠폰·친밀도)은 노드마다 따로 쌓인다 — 다른 노드가 같은 금액(`coupon:200`)을 이미 줬어도
+      // 이 노드를 처음 끝낸 것이면 더한다. 같은 노드를 다시 끝낸 경우엔 이중 지급하지 않는다.
+      final kind = StateRef.parse(g).kind;
+      final cumulative = kind == StateKind.coupon || kind == StateKind.affinity;
+      if (!inv.contains(g) || (cumulative && firstTime)) inv.add(g);
     }
     notifyListeners();
     await _persist();
@@ -236,13 +260,21 @@ class ScenarioStore extends ChangeNotifier {
     await _persist();
   }
 
+  /// 남은 붓털 기록 — 힌트를 붓털로 앞당겨 열었을 때.
+  Future<void> setBrush(String scenarioId, int count) async {
+    _brush[scenarioId] = count;
+    notifyListeners();
+    await _persist();
+  }
+
   /// 이 코스 진행만 초기화(다시 처음부터). 생성된 시나리오 자체는 유지.
-  /// 서버 run_id는 지우지 않는다 — 같은 서버 기록을 계속 쓴다.
+  /// 서버 run_id는 지우지 않는다 — 같은 서버 기록을 계속 쓴다. 붓털은 처음 개수로 돌린다.
   Future<void> resetProgress(String scenarioId) async {
     _doneNodes.remove(scenarioId);
     _inventory.remove(scenarioId);
     _choices.remove(scenarioId);
     _endings.remove(scenarioId);
+    _brush.remove(scenarioId);
     notifyListeners();
     await _persist();
   }
@@ -256,6 +288,7 @@ class ScenarioStore extends ChangeNotifier {
     _endings.clear();
     _prologueSeen.clear();
     _runs.clear();
+    _brush.clear();
     notifyListeners();
     await _persist();
   }
@@ -270,6 +303,7 @@ class ScenarioStore extends ChangeNotifier {
       'endings': _endings,
       'prologueSeen': _prologueSeen.toList(),
       'runs': _runs,
+      'brush': _brush,
     }));
   }
 }
