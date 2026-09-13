@@ -12,6 +12,10 @@
 //            반경 밖을 숨기고 개수를 알리는지, 위치를 못 읽으면 필터를 끄고 전체를
 //            보여주는지, 검색 8건 한계를 알리는지 확인한다.
 // 구현일: 2026-09-12 | 작성: ljs (explore-radius-first/ljs/v1)
+// ------------------------------------------------------------
+// [v3] 검색 건수 한계 안내를 뺐다 — 서버가 30건까지 받아오게 바뀌어 "8건까지만"이 틀린 안내가 됐다.
+//      반경 밖 개수만 알리고 건수 한계 문장은 나오지 않는지로 바꿨다.
+// 구현일: 2026-09-13 | 작성: ljs (search-hint-fix/ljs/v1)
 // ============================================================
 import 'dart:convert';
 
@@ -275,7 +279,7 @@ void main() {
       expect(find.textContaining('숨겼어요'), findsNothing);
     });
 
-    testWidgets('검색이 8건을 다 채운 채 반경 밖을 걸렀으면 검색 한계를 알린다', (tester) async {
+    testWidgets('반경 밖 개수만 알리고, 검색 건수 한계는 말하지 않는다', (tester) async {
       await _searchOn(tester,
           candidates: [
             _near('in'),
@@ -283,8 +287,10 @@ void main() {
           ],
           location: _fixedLocation(_gangnamLat, _gangnamLng));
 
-      expect(find.textContaining('반경 안 장소가 더 있을 수 있어요'), findsOneWidget,
-          reason: '서버가 top_n을 노출하지 않아 앱 필터로는 8건 안에서만 걸러진다');
+      expect(find.text('반경 밖 7건은 숨겼어요.'), findsOneWidget);
+      expect(find.textContaining('건까지만 받아와'), findsNothing,
+          reason: '앱은 서버가 몇 건까지 받아오는지 모른다 — 숫자를 박으면 서버 설정이 바뀔 때 틀린 안내가 된다');
+      expect(find.textContaining('더 있을 수 있어요'), findsNothing);
     });
   });
 }

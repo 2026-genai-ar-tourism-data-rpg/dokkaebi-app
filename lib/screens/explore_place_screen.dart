@@ -21,6 +21,14 @@
 //            검색은 8건 고정이라(서버가 top_n을 쿼리로 노출하지 않음) 반경 밖을 걸렀을 때는
 //            반경 안 후보가 그 밖으로 밀렸을 수 있다는 단서도 함께 보여준다.
 // 구현일: 2026-09-12 | 작성: ljs (explore-radius-first/ljs/v1)
+// ------------------------------------------------------------
+// [v4] "검색은 8건까지만 받아와, 반경 안 장소가 더 있을 수 있어요" 문장 삭제.
+// 구현(요약): 서버가 top_n=8을 박아 보내던 것을 없애(dokkaebi-server search-top-n/ljs/v1)
+//            검색이 AI 설정값(30건)까지 받아오게 됐는데, 앱에 8이 그대로 박혀 있어 틀린 안내가 떴다.
+//            게다가 "카페"처럼 22건만 온 경우는 받을 수 있는 걸 다 받은 것이라 "더 있을 수 있다"도
+//            거짓이었다. 앱은 서버가 몇 건까지 받아오는지 알 수 없으니 숫자를 박지 않고,
+//            반경 밖을 몇 건 숨겼는지만 알린다(_searchLimit 제거).
+// 구현일: 2026-09-13 | 작성: ljs (search-hint-fix/ljs/v1)
 // ============================================================
 import 'dart:async';
 
@@ -35,11 +43,6 @@ import '../theme.dart';
 import '../widgets/ui.dart';
 import 'create_scenario_screen.dart' show haversineMeters;
 import 'explore_confirm_screen.dart';
-
-/// 검색이 한 번에 받아오는 후보 수. 서버가 top_n을 쿼리로 노출하지 않아 앱에서 늘릴 수 없다
-/// (scenario.module.ts는 keyword만 받고 ai.client.ts가 8을 박아 보낸다).
-/// 반경 밖을 걸러냈을 때 "반경 안 장소가 더 있을 수 있다"고 알릴 근거로만 쓴다.
-const _searchLimit = 8;
 
 class ExplorePlaceScreen extends StatefulWidget {
   /// 조건 화면(1단계)에서 이어받은 입력 — 반경 필터의 기준이 여기 들어 있다.
@@ -297,15 +300,13 @@ class _ExplorePlaceScreenState extends State<ExplorePlaceScreen> {
                           onTap: () => _pick(c),
                         ),
                       )),
-                  // 반경 밖을 몇 건 걸렀는지 알린다. 검색이 8건 고정이라 반경 안 후보가
-                  // 그 밖으로 밀렸을 수 있어, 목록이 8건을 다 찼으면 그 사실도 함께 알린다.
+                  // 반경 밖을 몇 건 걸렀는지 알린다. 검색 건수 한계는 말하지 않는다 —
+                  // 앱은 서버가 몇 건까지 받아오는지 몰라 숫자를 박으면 틀린 안내가 된다.
                   if (_hiddenCount > 0)
                     Padding(
                       padding: const EdgeInsets.only(top: 8),
                       child: Text(
-                        _results.length >= _searchLimit
-                            ? '반경 밖 $_hiddenCount건은 숨겼어요. 검색은 $_searchLimit건까지만 받아와, 반경 안 장소가 더 있을 수 있어요.'
-                            : '반경 밖 $_hiddenCount건은 숨겼어요.',
+                        '반경 밖 $_hiddenCount건은 숨겼어요.',
                         style: const TextStyle(
                             color: AppColors.textMuted, fontSize: 12.5, height: 1.4),
                       ),
