@@ -42,6 +42,12 @@
 //      실제 장소·지역·조각 번호·단서와 서버가 준 보상(경험치·도감·칭호)이 뜨는지,
 //      서버에 기록하지 못한 조각은 경험치 대신 그 사실을 알리는지 잠근다.
 // 구현일: 2026-09-12 | 작성: ljs (mission-strategy-routing/ljs/v1)
+// ------------------------------------------------------------
+// [v9] 종로 고정값 걷어내기(B7·B8·B14·C6) — HUD 칭호가 닉네임인지, 예산 없는 코스엔 여비가 안 뜨는지,
+//      붓털이 코스에 저장되는지, 퀴즈 정답에 가짜 경험치 태그가 없고 쿠폰은 AI 데이터(correct.coupon)로
+//      지급·저장되는지, 발자국 대사가 AI 데이터에서
+//      오는지(trailWhisper), 힌트 사다리가 미션에 들어간 순간부터 시간을 세는지.
+// 구현일: 2026-09-13 | 작성: ljs (jongno-hardcode-cleanup/ljs/v1)
 // ============================================================
 import 'dart:convert';
 
@@ -51,6 +57,7 @@ import 'package:dokkaebi_app/game/location_service.dart';
 import 'package:dokkaebi_app/game/run_session.dart';
 import 'package:dokkaebi_app/models/scenario.dart';
 import 'package:dokkaebi_app/screens/quest_journey_screen.dart';
+import 'package:dokkaebi_app/session.dart';
 import 'package:dokkaebi_app/store.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -633,6 +640,53 @@ void main() {
       expect(find.textContaining('/ 4', findRichText: true), findsOneWidget);
       expect(find.textContaining('/ 5', findRichText: true), findsNothing);
     });
+
+    /// 대화(C) → 지령 → 사냥 화면까지 진행.
+    Future<void> toHunt(WidgetTester tester) async {
+      await _toDialogue(tester, _huntCourse());
+      await tester.tap(find.text('"그냥 빨리 찾겠소."'));
+      await tester.pump();
+      await tester.tap(find.text('계속 — 지령 받기'));
+      await tester.pump();
+      await tester.tap(find.text('지령 받기 — 사냥 시작'));
+      await tester.pump();
+    }
+
+    // 계획 C6 — 힌트 사다리가 미션에 들어간 순간부터 시간을 세야 "멈춰 있으면 힌트1"(idle60)이 제때 열린다.
+    testWidgets('힌트 — 사냥 화면에서 60초 멈춰 있다가 힌트 창을 열면 이미 힌트1이 열려 있다', (tester) async {
+      await toHunt(tester);
+      await tester.pump(const Duration(seconds: 61));
+
+      await tester.tap(find.text('힌트'));
+      await tester.pump();
+
+      expect(find.text('"그늘은 해가 드는 반대편이니라."'), findsOneWidget,
+          reason: '힌트 창을 연 순간이 아니라 미션에 들어간 순간부터 멈춘 시간을 세야 한다');
+      expect(find.textContaining('아직 귀띔할 때가 아니니라'), findsNothing);
+    });
+
+    testWidgets('힌트 — 미션에 막 들어와 창을 열면 힌트1은 아직 닫혀 있다', (tester) async {
+      await toHunt(tester);
+
+      await tester.tap(find.text('힌트'));
+      await tester.pump();
+
+      expect(find.textContaining('아직 귀띔할 때가 아니니라'), findsOneWidget);
+    });
+
+    // 계획 B7 — 붓털이 화면 지역 변수라 재진입하면 3개로 돌아가던 것.
+    testWidgets('붓털 — 붓털로 힌트를 열면 줄어든 개수가 코스에 저장된다', (tester) async {
+      final sc = _huntCourse();
+      await toHunt(tester);
+      await tester.tap(find.text('힌트'));
+      await tester.pump();
+
+      await tester.tap(find.text('붓털 1개로 열기'));
+      await tester.pump();
+
+      expect(ScenarioStore.I.brushOf(sc.scenarioId), ScenarioStore.defaultBrush - 1,
+          reason: '저장하지 않으면 다시 들어올 때 붓털이 되돌아온다');
+    });
   });
 
   // mission-strategy-routing/ljs/v1 — 이동 단계를 실제 GPS 도착 인증으로 바꾼 것(계획 0-2).
@@ -1057,6 +1111,127 @@ void main() {
 
       expect(find.text('도깨비'), findsOneWidget);
       expect(find.textContaining('먹 도깨비'), findsNothing);
+    });
+
+    // 계획 B8 — 퀴즈 경험치 태그(+30)는 서버 지급액과 달라 뺐고, 쿠폰은 AI 데이터가 있을 때만 준다.
+    testWidgets('퀴즈 정답 — 경험치 태그는 없고, AI 쿠폰 데이터가 없으면 쿠폰도 없다', (tester) async {
+      final sc = quizCourse(); // answer 원자(correct.coupon) 없는 코스
+      await toQuizContinue(tester, sc, _FakeQuestServer(scenarioId: sc.scenarioId));
+
+      expect(find.text('"옳거니! 안목이 있구나."'), findsOneWidget);
+      expect(find.text('경험치 +30'), findsNothing);
+      expect(find.textContaining('쿠폰 +'), findsNothing, reason: '데이터에 없는 쿠폰을 박아 주지 않는다');
+    });
+
+    // AI가 퀴즈 원자에 담아 보내는 정답 보상 쿠폰 — 예전엔 200원을 박아 두고 저장도 안 해 재진입하면 사라졌다.
+    Scenario couponQuizCourse() => Scenario.fromJson({
+          'scenario_id': 'gyeongju_quiz_coupon',
+          'title': '경주시의 기억석',
+          'region': '경주시',
+          'node_sequence': [
+            {
+              ..._rich('q1', '첨성대', 'QUIZ_FIND', quiz: {
+                'q': '첨성대는 무엇을 살피던 곳이더냐?',
+                'options': ['별', '물', '바람'],
+                'answer': 0,
+                'wrong_hint': '하늘을 보거라',
+              }),
+              'actions': [
+                {'a': 'answer', 'quiz': {'answer_idx': 0, 'correct': {'exp': 30, 'coupon': 200}}},
+              ],
+            },
+            _rich('q2', '월성', 'RESTORE_AR'),
+          ],
+        });
+
+    testWidgets('퀴즈 정답 — AI가 준 쿠폰을 보여주고, 조각과 함께 지급해 코스에 저장한다', (tester) async {
+      final sc = couponQuizCourse();
+      await toQuizContinue(tester, sc, _FakeQuestServer(scenarioId: sc.scenarioId));
+
+      expect(find.text('쿠폰 +200원'), findsOneWidget, reason: 'AI correct.coupon 값');
+      expect(find.text('경험치 +30'), findsNothing);
+
+      await tester.tap(find.text('계속하기'));
+      await tester.pump(const Duration(milliseconds: 100));
+      await tester.pump(const Duration(milliseconds: 100));
+
+      expect(find.text('+200원'), findsOneWidget, reason: '획득 팝업의 쿠폰 줄');
+      expect(ScenarioStore.I.stateOf(sc.scenarioId).couponTotal, 200,
+          reason: '재진입해도 남도록 코스에 저장돼야 한다');
+    });
+  });
+
+  // 계획 B7 — 지도 HUD의 칭호·여비 고정값.
+  group('HUD', () {
+    Scenario hudCourse({int? budget}) => Scenario.fromJson({
+          'scenario_id': 'hud_course',
+          'title': '경주시의 기억석',
+          'region': '경주시',
+          if (budget != null) 'budget': budget,
+          'node_sequence': [_stone('u1', '첨성대'), _stone('u2', '월성', finale: true)],
+        });
+
+    testWidgets('칭호 자리에 닉네임이 뜬다 — 글지기 견습 고정값이 아니다', (tester) async {
+      Session.nickname = '달빛산책자';
+      addTearDown(() => Session.nickname = null);
+      await _toMap(tester, hudCourse());
+
+      expect(find.text('달빛산책자'), findsOneWidget);
+      expect(find.text('글지기 견습'), findsNothing);
+      expect(find.text('글'), findsNothing, reason: '칭호 첫 글자를 박아 둔 아바타 원도 없다');
+      expect(find.text('제 1 장 진행 중'), findsOneWidget, reason: '장 번호는 아바타 점 대신 이 줄에 남는다');
+    });
+
+    testWidgets('닉네임이 없으면 탐험가로 보인다', (tester) async {
+      Session.nickname = null;
+      await _toMap(tester, hudCourse());
+
+      expect(find.text('탐험가'), findsOneWidget);
+    });
+
+    testWidgets('코스에 예산이 없으면 여비를 보여주지 않는다', (tester) async {
+      await _toMap(tester, hudCourse());
+
+      expect(find.text('20000'), findsNothing, reason: '사용자가 정한 적 없는 데모 여비다');
+    });
+
+    testWidgets('코스에 예산이 있으면 그 예산이 여비로 보인다', (tester) async {
+      await _toMap(tester, hudCourse(budget: 30000));
+
+      expect(find.text('30000'), findsOneWidget);
+    });
+
+    testWidgets('붓털은 코스에 저장된 개수로 시작한다', (tester) async {
+      final sc = hudCourse();
+      await ScenarioStore.I.add(sc);
+      await ScenarioStore.I.setBrush(sc.scenarioId, 1);
+      await _toMap(tester, sc);
+
+      expect(find.text('붓털 1'), findsOneWidget);
+    });
+  });
+
+  // 계획 B14 — 발자국 대사가 모든 코스에 종로 대본 4줄(먹내음·처마)로 고정돼 있었다.
+  group('발자국 귀띔(trailWhisper)', () {
+    const steps = ['돌담 모퉁이', '느티나무 아래', '우물터'];
+
+    test('첫 발자국 전엔 자취 묘사를, 걸음마다 방금 닿은 지점을, 끝에선 거두라는 말을 붙인다', () {
+      expect(trailWhisper(clue: '물기 어린 발자국이 동쪽으로 이어진다', steps: steps, step: 0, total: 3),
+          '"물기 어린 발자국이 동쪽으로 이어진다"');
+      expect(trailWhisper(steps: steps, step: 1, total: 3), '"돌담 모퉁이"');
+      expect(trailWhisper(steps: steps, step: 2, total: 3), '"느티나무 아래"');
+      expect(trailWhisper(steps: steps, step: 3, total: 3), '"우물터 — 저기 빛나는 것을 거두거라."');
+    });
+
+    test('자취 묘사·지점이 없으면 종로 대본이 아닌 기본 문구를 쓴다', () {
+      final lines = [for (var i = 0; i <= 3; i++) trailWhisper(step: i, total: 3)];
+
+      expect(lines.first, contains('발자국이 이어져'));
+      expect(lines.last, contains('빛나는 것을 거두거라'));
+      for (final line in lines) {
+        expect(line, isNot(contains('먹내음')));
+        expect(line, isNot(contains('처마')));
+      }
     });
   });
 }

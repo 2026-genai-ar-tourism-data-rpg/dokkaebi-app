@@ -5,6 +5,12 @@
 //            초롱 도깨비 NPC는 별도 이미지 에셋 없이 벡터로 구성 —
 //            참고 이미지의 청록 피부·홍색 한복·금 장식을 코드로 재현.
 // 구현일: 2026-08-04 | 작성: Claude
+// ------------------------------------------------------------
+// [v2] 기본 대본(서버 프롤로그가 없을 때)의 "종로를 지나던" 고정 문구 → 코스 지역명(계획 B11).
+// 구현(요약): `{region}` 자리표시자를 두고 {name}처럼 화면에서 치환한다. 지역명이 비어 있으면
+//            "오래된"으로 둬 문장이 깨지지 않게 한다. 지역명 뒤에 조사를 붙이지 않는 문장으로
+//            바꿔(… 거리를 걷던) 받침에 따라 을/를이 어긋나지 않게 했다.
+// 구현일: 2026-09-13 | 작성: ljs (jongno-hardcode-cleanup/ljs/v1)
 // ============================================================
 import 'dart:math' as math;
 
@@ -74,7 +80,7 @@ class _PrologueScreenState extends State<PrologueScreen> {
       };
 
   static const _fallbackLines = <_Line>[
-    _Line(_Speaker.narration, '{name}는 종로를 지나던 평범한 사람이다.'),
+    _Line(_Speaker.narration, '{name}는 {region} 거리를 걷던 평범한 사람이다.'),
     _Line(_Speaker.narration, '오래된 골목길을 걷던 중, 낡은 담장 아래에서 희미하게 흔들리는 푸른빛을 발견한다.'),
     _Line(_Speaker.narration, '처음에는 누군가 떨어뜨린 조명이나 반사광이라고 생각한다.'),
     _Line(_Speaker.narration,
@@ -169,7 +175,7 @@ class _PrologueScreenState extends State<PrologueScreen> {
                   ),
                 ),
               ),
-              if (!isBeat) _DialogueBox(line: line),
+              if (!isBeat) _DialogueBox(line: line, region: widget.scenario.region),
               Padding(
                 padding: const EdgeInsets.only(bottom: 12, top: 4),
                 child: Text(
@@ -472,7 +478,10 @@ class _Eye extends StatelessWidget {
 
 class _DialogueBox extends StatelessWidget {
   final _Line line;
-  const _DialogueBox({required this.line});
+
+  /// 기본 대본의 `{region}` 자리에 들어갈 코스 지역명.
+  final String region;
+  const _DialogueBox({required this.line, required this.region});
 
   @override
   Widget build(BuildContext context) {
@@ -499,7 +508,9 @@ class _DialogueBox extends StatelessWidget {
                   style: dokkaebiTitle(size: 12, color: isNpc ? AppColors.goldDim : AppColors.teal)),
             ),
           Text(
-            line.text.replaceAll('{name}', Session.nickname ?? '탐험가'),
+            line.text
+                .replaceAll('{name}', Session.nickname ?? '탐험가')
+                .replaceAll('{region}', region.trim().isEmpty ? '오래된' : region.trim()),
             style: TextStyle(
               color: AppColors.textPrimary,
               fontSize: 15,

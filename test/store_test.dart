@@ -8,6 +8,10 @@
 // ------------------------------------------------------------
 // [v2] 서버 run 번호 영속 — 코스별 저장·재시작 후 유지, 삭제·전체 초기화 때만 지워지는지.
 // 구현일: 2026-09-12 | 작성: ljs (mission-strategy-routing/ljs/v1)
+// ------------------------------------------------------------
+// [v3] 붓털 영속(B7) — 기록이 없으면 기본값, 쓴 뒤 재시작해도 유지, 처음부터 다시·삭제·전체 초기화 때 기본값.
+//      누적형 보상(B8) — 서로 다른 노드가 같은 금액 쿠폰을 주면 둘 다 쌓이고, 같은 노드를 다시 끝내면 이중 지급 없음.
+// 구현일: 2026-09-13 | 작성: ljs (jongno-hardcode-cleanup/ljs/v1)
 // ============================================================
 import 'package:dokkaebi_app/models/scenario.dart';
 import 'package:dokkaebi_app/store.dart';
@@ -219,6 +223,53 @@ void main() {
       await ScenarioStore.I.resetAll();
       await ScenarioStore.I.load();
       expect(ScenarioStore.I.runIdOf('other'), isNull);
+    });
+  });
+
+  // 계획 B7 — 붓털이 코스 진행 화면의 지역 변수라 다시 들어오면 3개로 돌아갔다.
+  group('붓털', () {
+    test('기록이 없으면 기본값이고, 쓴 뒤에는 재시작해도 남는다', () async {
+      expect(ScenarioStore.I.brushOf(sid), ScenarioStore.defaultBrush);
+
+      await ScenarioStore.I.setBrush(sid, 1);
+      await ScenarioStore.I.load();
+
+      expect(ScenarioStore.I.brushOf(sid), 1);
+      expect(ScenarioStore.I.brushOf('other'), ScenarioStore.defaultBrush);
+    });
+
+    test('처음부터 다시·코스 삭제·전체 초기화하면 기본값으로 돌아간다', () async {
+      await ScenarioStore.I.add(_scenario());
+      await ScenarioStore.I.setBrush(sid, 0);
+      await ScenarioStore.I.resetProgress(sid);
+      expect(ScenarioStore.I.brushOf(sid), ScenarioStore.defaultBrush);
+
+      await ScenarioStore.I.setBrush(sid, 2);
+      await ScenarioStore.I.remove(sid);
+      expect(ScenarioStore.I.brushOf(sid), ScenarioStore.defaultBrush);
+
+      await ScenarioStore.I.setBrush('other', 1);
+      await ScenarioStore.I.resetAll();
+      await ScenarioStore.I.load();
+      expect(ScenarioStore.I.brushOf('other'), ScenarioStore.defaultBrush);
+    });
+  });
+
+  // 계획 B8 — 퀴즈마다 받은 같은 금액 쿠폰(`coupon:200`)이 문자열이 같다는 이유로 하나만 남았다.
+  group('누적형 보상(쿠폰)', () {
+    test('서로 다른 노드가 같은 금액 쿠폰을 주면 둘 다 쌓이고, 재시작해도 남는다', () async {
+      await ScenarioStore.I.completeNode(sid, 'n1', ['fragment:글씨조각1', 'coupon:200']);
+      await ScenarioStore.I.completeNode(sid, 'n2', ['fragment:글씨조각2', 'coupon:200']);
+      await ScenarioStore.I.load();
+
+      expect(ScenarioStore.I.stateOf(sid).couponTotal, 400);
+    });
+
+    test('같은 노드를 다시 끝내도 쿠폰을 이중으로 주지 않는다', () async {
+      await ScenarioStore.I.completeNode(sid, 'n1', ['coupon:200']);
+      await ScenarioStore.I.completeNode(sid, 'n1', ['coupon:200']);
+
+      expect(ScenarioStore.I.stateOf(sid).couponTotal, 200);
     });
   });
 }

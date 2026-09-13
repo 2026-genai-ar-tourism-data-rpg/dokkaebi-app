@@ -5,6 +5,9 @@
 //            (2) 단서함·성향 칩이 상태 그래프에서 오는지, (3) 조각 미완 시 피날레 잠금
 //            안내가 뜨는지, (4) 하드 requires 노드 탭 → 차단이 아니라 안내 모드인지 확인.
 // 구현일: 2026-07-30 | 작성: kys (app-v3-back/kys/v1)
+// ------------------------------------------------------------
+// [v2] 전 조각 복원 배너(B11) — "종로의 기억" 고정 문구 대신 코스 지역명, 지역명이 없으면 지역을 말하지 않는다.
+// 구현일: 2026-09-13 | 작성: ljs (jongno-hardcode-cleanup/ljs/v1)
 // ============================================================
 import 'package:dokkaebi_app/models/scenario.dart';
 import 'package:dokkaebi_app/screens/scenario_screen.dart';
@@ -234,6 +237,40 @@ void main() {
       expect(ScenarioStore.I.choicesOf(sid), {'n1': 'b1'});
       expect(find.text('탑골공원'), findsWidgets);
       expect(find.text('익선동'), findsNothing);
+    });
+  });
+
+  // 계획 B11 — 전 조각 복원 배너가 어느 코스든 "종로의 기억이 되살아났다"였다.
+  group('복원 배너', () {
+    Scenario restored(String region) => Scenario.fromJson({
+          'scenario_id': 'restored_course',
+          'title': '기억석 코스',
+          'region': region,
+          'node_sequence': [_n('r1', '첨성대'), _n('r2', '월성', finale: true)],
+        });
+
+    Future<void> completeAll(Scenario sc) async {
+      await ScenarioStore.I.add(sc);
+      for (final n in sc.nodeSequence) {
+        await ScenarioStore.I.completeNodeWithGrants(sc.scenarioId, n);
+      }
+    }
+
+    testWidgets('조각을 다 모으면 그 코스 지역명으로 복원을 알린다', (tester) async {
+      final sc = restored('경주시');
+      await completeAll(sc);
+      await _pump(tester, sc);
+
+      expect(find.text('기억석 복원 완료 — 경주시의 기억이 되살아났다.'), findsOneWidget);
+      expect(find.textContaining('종로의 기억'), findsNothing);
+    });
+
+    testWidgets('지역명이 비어 있으면 지역을 말하지 않는다', (tester) async {
+      final sc = restored('');
+      await completeAll(sc);
+      await _pump(tester, sc);
+
+      expect(find.text('기억석 복원 완료 — 잊혀진 기억이 되살아났다.'), findsOneWidget);
     });
   });
 }
