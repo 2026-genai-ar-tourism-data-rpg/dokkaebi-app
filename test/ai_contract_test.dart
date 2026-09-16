@@ -235,4 +235,69 @@ void main() {
       expect(Scenario.fromJson(withBudget.toJson()).budget, 30000);
     });
   });
+
+  // ai #64 attach_endings 출력 — 피날레 노드에만 붙는다. 엔딩 화면이 이 값으로 그려진다(계획 A1·B3·B4).
+  group('생성 코스 엔딩 → 앱 모델', () {
+    Map<String, dynamic> finaleJson() => {
+          'node_id': 'f1',
+          'name': '월성',
+          'kind': 'spot',
+          'fragment_id': 'frag_f1',
+          'is_finale': true,
+          'final_restore_dialogue': '월성에서 모은 조각이 하나의 경주시 기억석으로 이어졌느니라.',
+          'endings': {
+            'A': {
+              'id': 'A',
+              'choice_text': '이곳의 기억을 계속 지킬게.',
+              'ending': '굿 엔딩',
+              'npc_dialogue': ['그 마음이 경주시의 기억을 오래 지켜 줄 것이니라.', '이제 너는 경주시의 기억 복원자니라.'],
+              'rewards': {
+                'title': '경주시의 기억 복원자',
+                'garden_item_final': '경주시 기억석',
+                'garden_items_per_node': [],
+                'unlock': '경주시의 기억이 복원되었습니다.',
+              },
+            },
+            'B': {
+              'id': 'B',
+              'choice_text': '이제 일상으로 돌아가고 싶어.',
+              'ending': '노멀 엔딩',
+              'npc_dialogue': ['쉬고 싶은 마음도 당연하니라.'],
+              'rewards': {'title': '경주시의 기억 복원자', 'garden_item_final': '경주시 기억석'},
+            },
+          },
+          'final_rewards_common': {
+            'region_stone': {'name': '경주시 기억석', 'desc': '경주시의 기억을 모아 복원한 기억석'},
+          },
+        };
+
+    test('피날레 엔딩 A/B와 지역 기억석을 읽는다', () {
+      final n = QuestNode.fromJson(finaleJson());
+
+      expect(n.finalRestoreDialogue, contains('경주시 기억석으로 이어졌'));
+      expect(n.regionStoneName, '경주시 기억석');
+      expect(n.regionStoneDesc, contains('복원한 기억석'));
+      final good = n.endingOf('A')!;
+      expect(good.isGood, isTrue);
+      expect(good.choiceText, '이곳의 기억을 계속 지킬게.');
+      expect(good.npcDialogue.length, 2);
+      expect(good.title, '경주시의 기억 복원자');
+      expect(good.unlock, '경주시의 기억이 복원되었습니다.');
+      expect(n.endingOf('B')!.isGood, isFalse);
+      // 저장 왕복에서 사라지면 저장된 코스의 엔딩이 종로 폴백으로 떨어진다
+      final back = QuestNode.fromJson(n.toJson());
+      expect(back.endingOf('A')!.npcDialogue, good.npcDialogue);
+      expect(back.regionStoneName, '경주시 기억석');
+    });
+
+    test('엔딩 데이터가 없는 노드는 빈 값 — 조각 노드는 엔딩을 받지 않는다', () {
+      final n = QuestNode.fromJson(_aiNode());
+
+      expect(n.endings, isEmpty);
+      expect(n.finalRestoreDialogue, isNull);
+      expect(n.regionStoneName, isNull);
+      expect(n.endingOf('A'), isNull);
+      expect(n.toJson().containsKey('endings'), isFalse);
+    });
+  });
 }

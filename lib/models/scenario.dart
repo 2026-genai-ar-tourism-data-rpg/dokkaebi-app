@@ -1,4 +1,9 @@
 // ============================================================
+// [v3] 생성 코스 엔딩(ai #64) — 피날레 노드의 final_restore_dialogue · endings(A/B) ·
+//      final_rewards_common.region_stone을 읽는다. 엔딩 화면이 종로 고정값(訓民正音·집현전 붓)
+//      대신 이 값을 쓴다(계획 A1·B3·B4). 저장된 코스에서도 남도록 toJson에 함께 넣는다.
+// 구현일: 2026-09-16 | 작성: ljs (finale-ending/ljs/v1)
+// ------------------------------------------------------------
 // [v2] 시나리오 모델 — 서버 응답(ScenarioGenResponse)과 1:1 + 노드 스키마 v1.1
 // pipeline: 모바일 클라이언트 / 모델 (서버 contract)
 // 구현(요약): QuestNode에 3층 문법(motivation/strategy/actions) + 상태 그래프
@@ -28,6 +33,58 @@ class Quiz {
         wrongHint: j['wrong_hint'] ?? '다시 살펴보거라.',
       );
   Map<String, dynamic> toJson() => {'q': q, 'options': options, 'answer': answer, 'wrong_hint': wrongHint};
+}
+
+/// 피날레에서 고를 수 있는 엔딩 한 갈래 (AI `endings.A`/`endings.B`).
+///
+/// 굿·노멀은 AI가 붙여 주는 이름(`ending`)이고, 어느 쪽을 고를지는 플레이어가 정한다.
+/// 친밀도·쿠폰으로 자동 분기하는 기준은 아직 없다(계획 C4).
+class CourseEnding {
+  final String id; // "A" | "B"
+  final String choiceText; // 피날레에서 보여줄 선택지 문구
+  final String label; // "굿 엔딩" | "노멀 엔딩"
+  final List<String> npcDialogue; // 엔딩 화면 대사(여러 줄)
+  final String? title; // 칭호 — 서버가 준 칭호가 없을 때만 쓴다
+  final String? relic; // rewards.garden_item_final (지역 기억석)
+  final String? unlock; // rewards.unlock — "{지역}의 기억이 복원되었습니다."
+
+  const CourseEnding({
+    required this.id,
+    required this.choiceText,
+    required this.label,
+    this.npcDialogue = const [],
+    this.title,
+    this.relic,
+    this.unlock,
+  });
+
+  factory CourseEnding.fromJson(Map<String, dynamic> j) {
+    final rewards = (j['rewards'] as Map?)?.cast<String, dynamic>() ?? const {};
+    return CourseEnding(
+      id: (j['id'] ?? '').toString(),
+      choiceText: (j['choice_text'] ?? '').toString(),
+      label: (j['ending'] ?? '').toString(),
+      npcDialogue: ((j['npc_dialogue'] ?? []) as List).map((e) => e.toString()).toList(),
+      title: rewards['title']?.toString(),
+      relic: rewards['garden_item_final']?.toString(),
+      unlock: rewards['unlock']?.toString(),
+    );
+  }
+
+  Map<String, dynamic> toJson() => {
+        'id': id,
+        'choice_text': choiceText,
+        'ending': label,
+        if (npcDialogue.isNotEmpty) 'npc_dialogue': npcDialogue,
+        'rewards': {
+          if (title != null) 'title': title,
+          if (relic != null) 'garden_item_final': relic,
+          if (unlock != null) 'unlock': unlock,
+        },
+      };
+
+  /// 굿 엔딩 갈래인가 — 화면 강조(금색)와 저장값('good'/'normal')을 이걸로 정한다.
+  bool get isGood => label.contains('굿');
 }
 
 /// 노드 미션 (타입별 다양화: PHOTO_FIND·COLLECT·DIALOGUE_FIND·FIND·QUIZ_FIND·DIALOGUE_COLLECT)
@@ -201,6 +258,12 @@ class QuestNode {
   final bool outOfRadius; // true면 검색 반경 밖 좌표로 합성된 앵커(위치 부정확 가능)
   final String? source; // 앵커 출처("wishlist" 등)
 
+  // ── 생성 코스 엔딩 (ai #64, 피날레 노드에만 붙는다) ──
+  final String? finalRestoreDialogue; // 조각을 모두 이었을 때의 복원 대사
+  final Map<String, CourseEnding> endings; // "A"/"B" → 갈래
+  final String? regionStoneName; // final_rewards_common.region_stone.name
+  final String? regionStoneDesc; // 〃 .desc
+
   QuestNode({
     required this.order,
     required this.nodeId,
@@ -234,6 +297,10 @@ class QuestNode {
     this.branch,
     this.outOfRadius = false,
     this.source,
+    this.finalRestoreDialogue,
+    this.endings = const {},
+    this.regionStoneName,
+    this.regionStoneDesc,
   });
 
   /// 식음(카페·식당) 경유 노드인가 — 기억석 조각 아님.
@@ -312,6 +379,10 @@ class QuestNode {
             : null,
         outOfRadius: j['out_of_radius'] ?? false,
         source: j['source']?.toString(),
+        finalRestoreDialogue: j['final_restore_dialogue']?.toString(),
+        endings: _endingsFrom(j['endings']),
+        regionStoneName: _regionStone(j)?['name']?.toString(),
+        regionStoneDesc: _regionStone(j)?['desc']?.toString(),
         // success는 판정식 문자열("tap:글씨파편>=1") — 분해하지 않고 그대로 보관
         success: (j['success'] is List)
             ? (j['success'] as List).map((e) => e.toString()).toList()
@@ -351,7 +422,36 @@ class QuestNode {
         if (branch != null) 'branch': branch!.toJson(),
         if (outOfRadius) 'out_of_radius': outOfRadius,
         if (source != null) 'source': source,
+        if (finalRestoreDialogue != null) 'final_restore_dialogue': finalRestoreDialogue,
+        if (endings.isNotEmpty)
+          'endings': endings.map((id, e) => MapEntry(id, e.toJson())),
+        if (regionStoneName != null || regionStoneDesc != null)
+          'final_rewards_common': {
+            'region_stone': {
+              if (regionStoneName != null) 'name': regionStoneName,
+              if (regionStoneDesc != null) 'desc': regionStoneDesc,
+            }
+          },
       };
+
+  /// 고른 갈래 — 없으면 null(데이터 없는 코스·데모).
+  CourseEnding? endingOf(String? id) => id == null ? null : endings[id];
+
+  static Map<String, CourseEnding> _endingsFrom(dynamic raw) {
+    if (raw is! Map) return const {};
+    final out = <String, CourseEnding>{};
+    raw.forEach((k, v) {
+      if (v is Map) out[k.toString()] = CourseEnding.fromJson(v.cast<String, dynamic>());
+    });
+    return out;
+  }
+
+  static Map<String, dynamic>? _regionStone(Map<String, dynamic> j) {
+    final common = j['final_rewards_common'];
+    if (common is! Map) return null;
+    final stone = common['region_stone'];
+    return stone is Map ? stone.cast<String, dynamic>() : null;
+  }
 }
 
 /// 분기 대화 선택지

@@ -1,4 +1,15 @@
 // ============================================================
+// [v13] 피날레·엔딩을 코스 데이터로(계획 A1·B3·B4) — 어느 지역 코스를 돌아도 마지막이 세종대왕이고
+//       엔딩이 訓民正音·종로 글씨 기억석·집현전 붓·"북촌 해금"이었다.
+// 구현(요약): 피날레 노드가 주는 AI 엔딩 데이터(ai #64)를 읽는다 — 이름·그림은 그 노드의 도깨비,
+//       대사는 final_restore_dialogue(없으면 guardian_line), 망각귀 대사는 villain_line,
+//       선택지는 endings A/B의 choice_text, 엔딩 화면은 고른 갈래의 npc_dialogue·unlock과
+//       final_rewards_common.region_stone. 칭호는 서버가 준 값을 먼저 쓰고(없으면 AI 보상),
+//       "다음 지역 해금" 버튼은 실제 해금이 없어 '코스 목록으로'로 바꿨다.
+//       엔딩 데이터가 있는 코스는 고른 갈래가 곧 엔딩이다(누적 플래그 규칙은 데모 대본에만 남음, C4).
+//       근거 데이터가 없는 이순신 사이드 퀘스트(유물 미저장·효과 없음)는 삭제했다.
+// 구현일: 2026-09-16 | 작성: ljs (finale-ending/ljs/v1)
+// ------------------------------------------------------------
 // [v12] 종로 고정값 걷어내기 — HUD·보상 수치·발자국 문구·힌트 타이머(계획 B7·B8·B14·C6).
 // 구현(요약):
 //   B7  HUD 칭호 "글지기 견습" → 닉네임(없으면 "탐험가"). 칭호 첫 글자를 박아 둔 아바타 원('글')과
@@ -387,8 +398,8 @@ class _QuestJourneyScreenState extends State<QuestJourneyScreen> with TickerProv
   int insaScan = 0;
   String insaPick = '';
   String insaState = 'idle';
-  bool sideOpen = false, sideDone = false;
-  String? ending;
+  String? ending; // 'good' | 'normal' — 저장·복원 값
+  String? _endingChoiceId; // 피날레에서 고른 갈래("A"/"B"). 엔딩 데이터가 없는 코스는 null
   int gpsIdx = 0, gpsDist = 550;
   bool gpsWalking = false;
   String? summonFor; // meok | sejong
@@ -714,6 +725,34 @@ class _QuestJourneyScreenState extends State<QuestJourneyScreen> with TickerProv
 
   /// 이 챕터에 낼 시험이 있나 — 없으면 시험 단계를 통째로 건너뛴다.
   Quiz? get _curQuiz => _curNode?.quiz;
+
+  /// 피날레 노드 — 엔딩 대사·갈래·지역 기억석의 출처(AI가 피날레에만 붙인다).
+  QuestNode? get _finaleNode {
+    final n = _curNode;
+    return n != null && n.isFinale ? n : null;
+  }
+
+  /// 고를 수 있는 엔딩 갈래(A→B 순). 데이터가 없는 코스·데모면 빈 목록.
+  List<CourseEnding> get _endingChoices {
+    final all = _finaleNode?.endings.values.toList() ?? const <CourseEnding>[];
+    return all..sort((a, b) => a.id.compareTo(b.id));
+  }
+
+  /// 플레이어가 고른 갈래. 진행을 복원해 선택 id가 없으면 굿/노멀로 맞춘다.
+  CourseEnding? get _chosenEnding {
+    final id = _endingChoiceId;
+    if (id != null) return _finaleNode?.endings[id];
+    for (final e in _endingChoices) {
+      if (e.isGood == (ending == 'good')) return e;
+    }
+    return null;
+  }
+
+  /// 서버가 이번 피날레에 준 칭호 — 없으면(기록 실패·재플레이) null.
+  String? get _serverTitle {
+    final titles = _claimed?.reward?.titles ?? const <String>[];
+    return titles.isEmpty ? null : titles.last;
+  }
 
   /// 이 장소를 지키는 도깨비 이름. 노드에 없으면 어떤 도깨비인지 알 수 없으니 그냥 '도깨비' —
   /// 종로 시안값('먹 도깨비')을 쓰면 전 지역이 먹 도깨비가 된다.
@@ -1107,14 +1146,20 @@ class _QuestJourneyScreenState extends State<QuestJourneyScreen> with TickerProv
   /// - `true`(백성을 위한 글) + 호기심 누적 → `good`
   /// - `true`지만 실리만 쌓였으면 → `normal` (말만 곱게 한 셈)
   /// - `false`(보상부터) → `normal`
-  Future<void> _finish(String pick) async {
+  /// AI 엔딩 갈래를 골랐을 때 — 고른 갈래가 곧 엔딩이다(대사·보상도 그 갈래 것).
+  Future<void> _finishWith(CourseEnding e) => _finish(e.isGood ? 'good' : 'normal', choiceId: e.id);
+
+  Future<void> _finish(String pick, {String? choiceId}) async {
     final curious = pstate.flags.contains('호기심');
-    final resolved = (pick == 'good' && curious) ? 'good' : 'normal';
+    // 엔딩 데이터가 있는 코스는 선택만으로 갈린다(AI 계약). 누적 플래그 규칙은 데모 대본에만 남는다 —
+    // 친밀도·쿠폰으로 굿 엔딩을 가르는 기준은 아직 정해지지 않았다(계획 C4).
+    final resolved = choiceId != null ? pick : ((pick == 'good' && curious) ? 'good' : 'normal');
     // 챕터 번호 하드코딩(옛 4챕터 종로 대본) 제거 — 피날레는 늘 마지막 챕터다.
     // 피날레 조각도 서버 기록이 성공해야 엔딩으로 넘어간다(_claimChapter).
     await _claimChapter(_stoneTotal - 1, onClaimed: () async {
       setState(() {
         ending = resolved;
+        _endingChoiceId = choiceId;
         screen = 'ending';
         fragments = _stoneTotal;
       });
@@ -1164,9 +1209,8 @@ class _QuestJourneyScreenState extends State<QuestJourneyScreen> with TickerProv
       insaScan = 0;
       insaPick = '';
       insaState = 'idle';
-      sideOpen = false;
-      sideDone = false;
       ending = null;
+      _endingChoiceId = null;
       gpsIdx = 0;
       gpsDist = 550;
       gpsWalking = false;
@@ -1417,7 +1461,7 @@ class _QuestJourneyScreenState extends State<QuestJourneyScreen> with TickerProv
       case 'insa':
         return _insaScreen();
       case 'sejong':
-        return _sejongScreen();
+        return _finaleScreen();
       case 'ending':
         return _endingScreen();
     }
@@ -2252,14 +2296,15 @@ class _QuestJourneyScreenState extends State<QuestJourneyScreen> with TickerProv
   // 4. SUMMON — AR 소환
   // ════════════════════════════════════════════════════
   Widget _summonScreen() {
-    final sejong = summonFor == 'sejong';
+    // 피날레 소환 — 전용 연출이 고정 인물이었다. 이름·그림은 노드의 도깨비를 쓴다.
+    final finale = summonFor == 'sejong';
     final scanning = summonPhase == 'scan';
     // 실제 AR 경로: 카메라 배경 + 3D 도깨비 마커. 2D 연출 요소(그라데이션 배경·지붕·
     // 먹웅덩이·그림 도깨비)는 카메라를 가리므로 AR일 땐 그리지 않는다.
     // 마커 탭 = '말 걸기'와 동일(스캔 중이면 대기를 건너뛰고 바로 등장).
     final bool realAr = _arSupported == true && !_arError;
     return Container(
-      decoration: realAr ? null : BoxDecoration(gradient: sejong ? _sejongBg : _dialBg),
+      decoration: realAr ? null : BoxDecoration(gradient: finale ? _finaleBg : _dialBg),
       child: LayoutBuilder(builder: (ctx, box) {
         return Stack(children: [
           if (realAr)
@@ -2268,8 +2313,8 @@ class _QuestJourneyScreenState extends State<QuestJourneyScreen> with TickerProv
                 markers: [
                   ArMarkerDef(
                     id: 'summon',
-                    label: sejong ? '세종대왕' : _npcName,
-                    color: sejong ? _gold : AppColors.teal,
+                    label: _npcName,
+                    color: finale ? _gold : AppColors.teal,
                     forward: 1.8,
                     down: 0.1,
                   ),
@@ -2279,16 +2324,16 @@ class _QuestJourneyScreenState extends State<QuestJourneyScreen> with TickerProv
                     _summonTimer?.cancel();
                     summonPhase = 'appear';
                   } else {
-                    go(sejong ? 'sejong' : 'dialogue');
+                    go(finale ? 'sejong' : 'dialogue');
                   }
                 }),
                 onError: () => setState(() => _arError = true),
               ),
             )
           else
-            Align(alignment: const Alignment(0, 0.55), child: ClipPath(clipper: _RoofClipper(), child: Container(height: 130, color: sejong ? const Color(0xFF2A1F16) : const Color(0xFF0C0A08)))),
+            Align(alignment: const Alignment(0, 0.55), child: ClipPath(clipper: _RoofClipper(), child: Container(height: 130, color: finale ? const Color(0xFF2A1F16) : const Color(0xFF0C0A08)))),
           Positioned(top: 58, left: 0, right: 0, child: Center(child: _pill(
-            sejong ? 'AR — 수호 정령 반응 · 신호 매우 강함' : 'AR — 정령 반응 감지 · 신호 강함',
+            finale ? 'AR — 수호 정령 반응 · 신호 매우 강함' : 'AR — 정령 반응 감지 · 신호 강함',
             border: _goldDim, textColor: _gold,
           ))),
           // 먹 웅덩이 (2D 폴백 전용)
@@ -2306,7 +2351,7 @@ class _QuestJourneyScreenState extends State<QuestJourneyScreen> with TickerProv
               ))),
             ),
             Positioned(left: 0, right: 0, top: box.maxHeight * .74, child: Center(child: Text(
-              realAr ? '천천히 주변을 비춰 보거라…' : (sejong ? '거룩한 기운이 모여든다…' : '기운이 모여든다…'),
+              realAr ? '천천히 주변을 비춰 보거라…' : '기운이 모여든다…',
               style: dokkaebiTitle(size: 15, color: const Color(0xFFE8DCC4))))),
           ] else ...[
             // 실제 AR에서는 도깨비가 카메라 공간의 3D 마커로 떠 있으므로 그림을 겹치지 않는다.
@@ -2314,9 +2359,9 @@ class _QuestJourneyScreenState extends State<QuestJourneyScreen> with TickerProv
               Positioned(
                 left: 0, right: 0, top: box.maxHeight * .30,
                 child: Center(child: _Floaty(anim: _float, child: Column(mainAxisSize: MainAxisSize.min, children: [
-                  _pill(sejong ? '세종대왕 · 수호' : _npcName, border: _goldDim, textColor: _goldDim),
+                  _pill(finale ? '$_npcName · 수호' : _npcName, border: _goldDim, textColor: _goldDim),
                   const SizedBox(height: 10),
-                  sejong ? const _Sejong(size: 140) : const _Dokkaebi(size: 140),
+                  const _Dokkaebi(size: 140),
                 ]))),
               ),
             Positioned(left: 14, right: 14, bottom: 40, child: Column(mainAxisSize: MainAxisSize.min, children: [
@@ -2324,10 +2369,10 @@ class _QuestJourneyScreenState extends State<QuestJourneyScreen> with TickerProv
                 width: double.infinity,
                 padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
                 decoration: BoxDecoration(color: _inkDeep.withOpacity(0.85), borderRadius: BorderRadius.circular(14), border: Border.all(color: _goldDim.withOpacity(0.35))),
-                child: Text(sejong ? '"기다리고 있었네, 글지기여."' : '"허허… 누가 날 깨우는 게냐."', textAlign: TextAlign.center, style: dokkaebiTitle(size: 14, color: const Color(0xFFE8DCC4))),
+                child: Text('"허허… 누가 날 깨우는 게냐."', textAlign: TextAlign.center, style: dokkaebiTitle(size: 14, color: const Color(0xFFE8DCC4))),
               ),
               const SizedBox(height: 9),
-              _cta('말 걸기', () => go(sejong ? 'sejong' : 'dialogue')),
+              _cta('말 걸기', () => go(finale ? 'sejong' : 'dialogue')),
             ])),
           ],
         ]);
@@ -3160,46 +3205,65 @@ class _QuestJourneyScreenState extends State<QuestJourneyScreen> with TickerProv
   }
 
   // ════════════════════════════════════════════════════
-  // 13. SEJONG — 세종대왕
+  // 13. FINALE — 수호 도깨비 앞 마지막 선택
   // ════════════════════════════════════════════════════
-  Widget _sejongScreen() {
+  /// 피날레 화면 — 예전엔 어느 코스든 세종대왕 정령과 종로 대사가 떴다.
+  /// 이름·대사·선택지는 피날레 노드에서 온다(AI final_restore_dialogue·endings).
+  Widget _finaleScreen() {
+    final node = _finaleNode;
+    final choices = _endingChoices;
+    final villain = node?.mission?.villainLine;
+    final line = node?.finalRestoreDialogue ??
+        node?.mission?.guardianLine ??
+        (node == null
+            ? '"그대가 흩어진 조각을 모아 왔는가. 마지막 조각은… 그대 마음에 있네."'
+            : '"조각이 모두 모였구나. 이제 이 땅의 기억을 되돌릴 때이니라."');
     return Container(
-      decoration: BoxDecoration(gradient: _sejongBg),
+      decoration: BoxDecoration(gradient: _finaleBg),
       child: LayoutBuilder(builder: (ctx, box) {
         return Stack(children: [
           Positioned(top: 58, left: 0, right: 0, child: Column(children: [
-            _pill('글씨조각 3/4 — 마지막 조각은 어디에?', border: _gold, textColor: _gold),
-            const SizedBox(height: 8),
-            GestureDetector(
-              onTap: () => setState(() => sideOpen = true),
-              child: _pill('⚔ 사이드 — 이순신 장군 ${sideDone ? '완료 ✓' : '도전 가능'}', bg: const Color(0xFF2A3A52), opacity: 0.85, border: const Color(0xFFDCE8F8), textColor: const Color(0xFFDCE8F8)),
-            ),
+            _pill('조각 $fragments/$_stoneTotal — 마지막 하나', border: _gold, textColor: _gold),
           ])),
-          Positioned(left: 0, right: 0, top: box.maxHeight * .22, child: Center(child: _Floaty(anim: _float, amplitude: 10, child: const _Sejong(size: 170, halo: true)))),
+          Positioned(left: 0, right: 0, top: box.maxHeight * .22, child: Center(child: _Floaty(anim: _float, amplitude: 10, child: const _Dokkaebi(size: 170)))),
           Positioned(left: 14, right: 14, bottom: 34, child: Column(mainAxisSize: MainAxisSize.min, children: [
+            // 망각귀의 비관 — AI가 피날레 미션에 함께 넣어 준다(없으면 줄을 뺀다).
+            if (villain != null && villain.isNotEmpty) ...[
+              Text('"$villain"', textAlign: TextAlign.center, style: _gowun(13, _muted, height: 1.6)),
+              const SizedBox(height: 10),
+            ],
             Stack(clipBehavior: Clip.none, children: [
               Container(
                 width: double.infinity,
                 padding: const EdgeInsets.fromLTRB(18, 22, 18, 16),
                 decoration: BoxDecoration(color: _inkDeep.withOpacity(0.92), borderRadius: BorderRadius.circular(18), border: Border.all(color: _gold.withOpacity(0.7), width: 2)),
-                child: Text('"그대가 흩어진 글씨를 모아 왔는가. 백성이 쉬이 익히라 만든 글이거늘, 잊혀선 아니 되네. 마지막 조각은… 그대 마음에 있네."', style: dokkaebiTitle(size: 16, color: _cream, height: 1.65)),
+                child: Text(line, style: dokkaebiTitle(size: 16, color: _cream, height: 1.65)),
               ),
               Positioned(top: -14, left: 16, child: Row(children: [
-                Container(padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 5), decoration: BoxDecoration(gradient: _goldGrad, borderRadius: BorderRadius.circular(8)), child: const Text('세종대왕', style: TextStyle(color: Color(0xFF3A2A08), fontWeight: FontWeight.w900, fontSize: 13))),
+                Container(padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 5), decoration: BoxDecoration(gradient: _goldGrad, borderRadius: BorderRadius.circular(8)), child: Text(_npcName, style: const TextStyle(color: Color(0xFF3A2A08), fontWeight: FontWeight.w900, fontSize: 13))),
                 const SizedBox(width: 6),
                 Container(padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5), decoration: BoxDecoration(color: _inkDeep.withOpacity(0.9), borderRadius: BorderRadius.circular(8), border: Border.all(color: _gold.withOpacity(0.5))), child: const Text('수호', style: TextStyle(color: _gold, fontWeight: FontWeight.w900, fontSize: 11))),
               ])),
             ]),
             const SizedBox(height: 10),
-            _sejongChoice('"백성을 위한 글이었군요."', '굿 엔딩', _gold, () => _finish('good')),
-            const SizedBox(height: 8),
-            _sejongChoice('"보상부터 주시죠."', '노멀 엔딩', _muted, () => _finish('normal')),
+            if (choices.isEmpty) ...[
+              // 엔딩 데이터가 없는 코스·데모 — 예전 두 갈래를 그대로 쓴다.
+              _endingChoiceTile('"이곳의 기억을 계속 지킬게."', '굿 엔딩', true, () => _finish('good')),
+              const SizedBox(height: 8),
+              _endingChoiceTile('"이제 일상으로 돌아가고 싶어."', '노멀 엔딩', false, () => _finish('normal')),
+            ] else
+              for (final e in choices) ...[
+                _endingChoiceTile(e.choiceText, e.label, e.isGood, () => _finishWith(e)),
+                if (e != choices.last) const SizedBox(height: 8),
+              ],
           ])),
-          if (sideOpen) _sideModal(),
         ]);
       }),
     );
   }
+
+  Widget _endingChoiceTile(String text, String tag, bool good, VoidCallback onTap) =>
+      _sejongChoice(text, tag, good ? _gold : _muted, onTap);
 
   Widget _sejongChoice(String text, String tag, Color tagColor, VoidCallback onTap) => GestureDetector(
         onTap: onTap,
@@ -3213,70 +3277,17 @@ class _QuestJourneyScreenState extends State<QuestJourneyScreen> with TickerProv
         ),
       );
 
-  Widget _sideModal() {
-    final sideAnswers = [('1', '학이 날개를 편 모양', true), ('2', '거북이 등딱지 모양', false), ('3', '일자로 늘어선 모양', false)];
-    return Positioned.fill(child: Container(
-      color: Colors.black.withOpacity(0.78),
-      alignment: Alignment.center,
-      child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 20),
-        child: Stack(clipBehavior: Clip.none, children: [
-          Container(
-            padding: const EdgeInsets.fromLTRB(18, 20, 18, 18),
-            decoration: BoxDecoration(color: _inkDeep.withOpacity(0.96), borderRadius: BorderRadius.circular(18), border: Border.all(color: const Color(0xFFDCE8F8).withOpacity(0.3), width: 1.5)),
-            child: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.start, children: [
-              const SizedBox(height: 6),
-              RichText(text: TextSpan(style: _gowun(15, _cream, height: 1.6), children: const [
-                TextSpan(text: '"묻겠다. 한산 앞바다에서 펼친 '),
-                TextSpan(text: '학익진', style: TextStyle(color: _gold)),
-                TextSpan(text: '은 무슨 모양이었는가."'),
-              ])),
-              const SizedBox(height: 13),
-              for (final a in sideAnswers) Padding(padding: const EdgeInsets.only(bottom: 7), child: _sideOption(a.$1, a.$2, a.$3)),
-              if (sideDone) ...[
-                const SizedBox(height: 5),
-                Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 11),
-                  decoration: BoxDecoration(color: _tealDeep.withOpacity(0.12), borderRadius: BorderRadius.circular(11), border: Border.all(color: _tealDeep.withOpacity(0.5))),
-                  child: Row(children: [
-                    const Flexible(child: Text('"과연." — 유물 「충무공의 나침반」 획득', style: TextStyle(fontSize: 13, color: _teal, fontWeight: FontWeight.w900))),
-                    const Spacer(),
-                    const Text('AR 탐지 범위 ↑', style: TextStyle(fontSize: 10.5, color: Color(0xFF8FA8C8), fontWeight: FontWeight.w700)),
-                  ]),
-                ),
-                const SizedBox(height: 11),
-                _cta('돌아가기', () => setState(() => sideOpen = false), bg: const Color(0xFF3A352E), fg: _cream),
-              ],
-            ]),
-          ),
-          Positioned(top: -13, left: 16, child: Container(padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 5), decoration: BoxDecoration(color: const Color(0xFF2A3A52), borderRadius: BorderRadius.circular(8)), child: const Text('이순신 장군', style: TextStyle(color: Color(0xFFDCE8F8), fontWeight: FontWeight.w900, fontSize: 13)))),
-          Positioned(top: 12, right: 14, child: GestureDetector(onTap: () => setState(() => sideOpen = false), child: Container(width: 28, height: 28, alignment: Alignment.center, decoration: BoxDecoration(shape: BoxShape.circle, color: Colors.white.withOpacity(0.08)), child: const Text('✕', style: TextStyle(color: _soft, fontSize: 13))))),
-        ]),
-      ),
-    ));
-  }
-
-  Widget _sideOption(String num, String label, bool correct) {
-    final picked = sideDone && correct;
-    return GestureDetector(
-      onTap: () { if (correct) setState(() => sideDone = true); },
-      child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 13, vertical: 11),
-        decoration: BoxDecoration(color: picked ? _tealDeep.withOpacity(0.14) : _cream.withOpacity(0.04), borderRadius: BorderRadius.circular(12), border: Border.all(color: picked ? _tealDeep : Colors.white.withOpacity(0.1), width: picked ? 1.5 : 1)),
-        child: Row(children: [
-          Container(width: 24, height: 24, alignment: Alignment.center, decoration: BoxDecoration(color: const Color(0xFF3A352E), borderRadius: BorderRadius.circular(7)), child: Text(num, style: const TextStyle(color: _soft, fontWeight: FontWeight.w900, fontSize: 12))),
-          const SizedBox(width: 11),
-          Expanded(child: Text(picked ? '✓ $label' : label, style: const TextStyle(fontSize: 13.5, color: Color(0xFFE8DCC4), fontWeight: FontWeight.w500))),
-        ]),
-      ),
-    );
-  }
-
   // ════════════════════════════════════════════════════
   // 14. ENDING — 엔딩
   // ════════════════════════════════════════════════════
+  /// 엔딩 화면 — 예전엔 어느 코스든 訓民正音·종로 글씨 기억석·집현전 붓이 떴다.
+  /// 고른 갈래(AI endings)의 대사·기억석·해금 문구를 쓰고, 칭호는 서버가 준 것을 먼저 쓴다.
   Widget _endingScreen() {
-    final good = ending == 'good';
+    final e = _chosenEnding;
+    final good = e?.isGood ?? ending == 'good';
+    final stone = _finaleNode?.regionStoneName;
+    final title = _serverTitle ?? e?.title;
+    final lines = e == null || e.npcDialogue.isEmpty ? null : e.npcDialogue.join('\n');
     return Container(
       decoration: const BoxDecoration(gradient: RadialGradient(center: Alignment(0, -0.32), radius: 1.0, colors: [Color(0xFF3A2E1A), Color(0xFF17120C), Color(0xFF0A0806)], stops: [0, .55, 1])),
       child: LayoutBuilder(builder: (ctx, box) {
@@ -3286,30 +3297,29 @@ class _QuestJourneyScreenState extends State<QuestJourneyScreen> with TickerProv
             child: Stack(alignment: Alignment.center, children: [
               AnimatedBuilder(animation: _glow, builder: (_, __) => Container(width: 200, height: 200, decoration: BoxDecoration(shape: BoxShape.circle, gradient: RadialGradient(colors: [_gold.withOpacity(0.35 * (0.55 + _glow.value * 0.45)), Colors.transparent], stops: const [0, 0.66])))),
               Container(width: 164, height: 164, padding: const EdgeInsets.all(22), decoration: BoxDecoration(shape: BoxShape.circle, gradient: const RadialGradient(center: Alignment(-0.2, -0.36), colors: [Color(0xFF4A4034), Color(0xFF2A2318), Color(0xFF17120C)], stops: [0, .55, 1]), border: Border.all(color: _gold.withOpacity(0.55), width: 2), boxShadow: [BoxShadow(color: _gold.withOpacity(0.4), blurRadius: 44)]),
-                child: GridView.count(crossAxisCount: 2, physics: const NeverScrollableScrollPhysics(), children: [for (final c in ['訓', '民', '正', '音']) Center(child: Text(c, style: dokkaebiTitle(size: 32, color: const Color(0xFFFFE9B0))))])),
+                child: stone != null
+                    ? Center(child: Text(stone, textAlign: TextAlign.center, style: dokkaebiTitle(size: 22, color: const Color(0xFFFFE9B0), height: 1.3)))
+                    : GridView.count(crossAxisCount: 2, physics: const NeverScrollableScrollPhysics(), children: [for (final c in ['訓', '民', '正', '音']) Center(child: Text(c, style: dokkaebiTitle(size: 32, color: const Color(0xFFFFE9B0))))])),
             ]),
           )))),
           Positioned(left: 0, right: 0, top: box.maxHeight * .41, child: Column(children: [
-            Text(good ? '복 원 · 굿 엔딩' : '복 원 · 노멀 엔딩', style: const TextStyle(fontSize: 12, letterSpacing: 4, color: Color(0xFFA87F2C), fontWeight: FontWeight.w900)),
+            Text('복 원 · ${e?.label ?? (good ? '굿 엔딩' : '노멀 엔딩')}', style: const TextStyle(fontSize: 12, letterSpacing: 4, color: Color(0xFFA87F2C), fontWeight: FontWeight.w900)),
             const SizedBox(height: 8),
-            Text('종로 글씨 기억석 복원', style: dokkaebiTitle(size: 25, color: _cream)),
+            Text('${stone ?? '종로 글씨 기억석'} 복원', textAlign: TextAlign.center, style: dokkaebiTitle(size: 25, color: _cream)),
             const SizedBox(height: 8),
-            Text('"백성의 글이 다시 깨어났다.\n그대의 걸음이 사백 년의 먹을 되살렸느니."', textAlign: TextAlign.center, style: dokkaebiTitle(size: 13, color: const Color(0xFFB3A892), height: 1.7)),
+            Text(lines ?? '"백성의 글이 다시 깨어났다.\n그대의 걸음이 사백 년의 먹을 되살렸느니."',
+                textAlign: TextAlign.center, style: dokkaebiTitle(size: 13, color: const Color(0xFFB3A892), height: 1.7)),
           ])),
           Positioned(left: 20, right: 20, bottom: 34, child: Column(mainAxisSize: MainAxisSize.min, children: [
             Row(children: [
-              _endStat('칭호', '종로의 글지기', _gold, _gold),
-              if (good) ...[const SizedBox(width: 8), _endStat('희귀 유물', '집현전 붓', _gold, _gold)],
-              const SizedBox(width: 8),
+              // 칭호는 서버가 준 것을 먼저 쓴다(기록 못 한 조각이면 AI 엔딩 보상으로 폴백).
+              if (title != null) ...[_endStat('칭호', title, _gold, _gold), const SizedBox(width: 8)],
+              if (stone != null) ...[_endStat('기억석', stone, _gold, _gold), const SizedBox(width: 8)],
               _endStat('경험치', '+$exp', _tealDeep, _teal),
             ]),
-            if (sideDone) ...[
+            if (e?.unlock != null && e!.unlock!.isNotEmpty) ...[
               const SizedBox(height: 8),
-              Container(padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 11), decoration: BoxDecoration(color: const Color(0xFF2A3A52).withOpacity(0.4), borderRadius: BorderRadius.circular(13), border: Border.all(color: const Color(0xFFDCE8F8).withOpacity(0.25))), child: Row(children: [
-                const Text('⚔ 사이드 완료 — 유물 「충무공의 나침반」', style: TextStyle(fontSize: 12, color: Color(0xFFDCE8F8))),
-                const Spacer(),
-                const Text('NEW', style: TextStyle(fontSize: 11, color: _teal, fontWeight: FontWeight.w900)),
-              ])),
+              Text(e.unlock!, textAlign: TextAlign.center, style: const TextStyle(fontSize: 12, color: _soft)),
             ],
             // 예산 요약 — 코스에 예산이 있을 때만(_showBudget)
             if (_showBudget) ...[
@@ -3325,7 +3335,7 @@ class _QuestJourneyScreenState extends State<QuestJourneyScreen> with TickerProv
               const SizedBox(width: 8),
               Expanded(flex: 14, child: GestureDetector(
                 onTap: () => Navigator.of(context).maybePop(),
-                child: Container(height: 48, alignment: Alignment.center, decoration: BoxDecoration(gradient: _goldGrad, borderRadius: BorderRadius.circular(13), boxShadow: [BoxShadow(color: const Color(0xFFE8C268).withOpacity(0.3), blurRadius: 22, offset: const Offset(0, 8))]), child: const Text('다음 지역 — 북촌 해금', style: TextStyle(color: Color(0xFF3A2A08), fontWeight: FontWeight.w900, fontSize: 14))),
+                child: Container(height: 48, alignment: Alignment.center, decoration: BoxDecoration(gradient: _goldGrad, borderRadius: BorderRadius.circular(13), boxShadow: [BoxShadow(color: const Color(0xFFE8C268).withOpacity(0.3), blurRadius: 22, offset: const Offset(0, 8))]), child: const Text('코스 목록으로', style: TextStyle(color: Color(0xFF3A2A08), fontWeight: FontWeight.w900, fontSize: 14))),
               )),
             ]),
           ])),
@@ -3646,7 +3656,7 @@ class _QuestJourneyScreenState extends State<QuestJourneyScreen> with TickerProv
 
   // ── 공유 그라디언트 ──
   static const _dialBg = LinearGradient(begin: Alignment.topCenter, end: Alignment.bottomCenter, colors: [Color(0xFF1B2138), Color(0xFF2A2440), Color(0xFF453230), Color(0xFF17120E)], stops: [0, .38, .62, 1]);
-  static const _sejongBg = LinearGradient(begin: Alignment.topCenter, end: Alignment.bottomCenter, colors: [Color(0xFFD8A86A), Color(0xFFC98A52), Color(0xFF8A5A3E), Color(0xFF4A3226), Color(0xFF241A12)], stops: [0, .26, .52, .76, 1]);
+  static const _finaleBg = LinearGradient(begin: Alignment.topCenter, end: Alignment.bottomCenter, colors: [Color(0xFFD8A86A), Color(0xFFC98A52), Color(0xFF8A5A3E), Color(0xFF4A3226), Color(0xFF241A12)], stops: [0, .26, .52, .76, 1]);
 }
 
 // ════════════════════════════════════════════════════════
@@ -3708,40 +3718,6 @@ class _HornPainter extends CustomPainter {
   bool shouldRepaint(_) => false;
 }
 
-/// 세종대왕 정령 — 금빛 실루엣 + 익선관.
-class _Sejong extends StatelessWidget {
-  final double size;
-  final bool halo;
-  const _Sejong({this.size = 170, this.halo = false});
-  @override
-  Widget build(BuildContext context) {
-    final bodyW = size * .88, bodyH = size;
-    return SizedBox(
-      width: size, height: size * 1.06,
-      child: Stack(alignment: Alignment.topCenter, clipBehavior: Clip.none, children: [
-        if (halo) Positioned(top: size * .04, child: Container(width: size * .95, height: size * .95, decoration: BoxDecoration(shape: BoxShape.circle, gradient: RadialGradient(colors: [_gold.withOpacity(0.3), Colors.transparent], stops: const [0, 0.68])))),
-        // 관모
-        Positioned(top: -20, child: Container(width: size * .45, height: 26, decoration: BoxDecoration(gradient: const LinearGradient(begin: Alignment.topCenter, end: Alignment.bottomCenter, colors: [Color(0xFF2A2118), _ink]), border: Border.all(color: _goldDim, width: 1.5), borderRadius: const BorderRadius.vertical(top: Radius.circular(6), bottom: Radius.circular(2))))),
-        Positioned(top: -34, child: Container(width: size * .21, height: 18, decoration: BoxDecoration(color: _ink, border: Border.all(color: _goldDim, width: 1.5), borderRadius: const BorderRadius.vertical(top: Radius.circular(5))))),
-        // 얼굴
-        Positioned(top: 6, child: Container(
-          width: bodyW, height: bodyH,
-          decoration: BoxDecoration(
-            borderRadius: BorderRadius.all(Radius.elliptical(bodyW, bodyH)),
-            gradient: const RadialGradient(center: Alignment(-0.16, -0.44), colors: [Color(0xFF4A3D28), Color(0xFF241D12), Color(0xFF100C07)], stops: [0, .52, 1]),
-            boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.6), blurRadius: 50, offset: const Offset(0, 20))],
-          ),
-        )),
-        Positioned(top: size * .40, left: size * .30, child: _eye()),
-        Positioned(top: size * .40, right: size * .30, child: _eye()),
-      ]),
-    );
-  }
-
-  Widget _eye() => Container(width: 15, height: 16, decoration: BoxDecoration(color: const Color(0xFFFFE9B0), borderRadius: BorderRadius.circular(8), boxShadow: [BoxShadow(color: const Color(0xFFFFE9B0).withOpacity(0.95), blurRadius: 18)]));
-}
-
-/// 먹그림자(적) — 검은 blob + 붉은 눈 + 펄스 링.
 class _MeokShadow extends StatelessWidget {
   final double size;
   final Animation<double> pulse;
