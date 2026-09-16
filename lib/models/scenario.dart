@@ -89,12 +89,40 @@ class CourseEnding {
 
 /// 노드 미션 (타입별 다양화: PHOTO_FIND·COLLECT·DIALOGUE_FIND·FIND·QUIZ_FIND·DIALOGUE_COLLECT)
 /// 공통: type·order·hints. 타입별 필드는 옵셔널(없으면 null/빈값).
+/// 촬영 타깃의 참조 정보 — AI가 TourAPI에서 꺼내 준다(photo_refs.py).
+/// refImage는 비전 검증의 비교 대상, credit은 화면 출처 표기(공공누리).
+class PhotoRef {
+  final String name;
+  final String? why;
+  final String? refImage;
+  final String? credit;
+  const PhotoRef({required this.name, this.why, this.refImage, this.credit});
+
+  factory PhotoRef.fromJson(Map<String, dynamic> j) => PhotoRef(
+        name: (j['name'] ?? '').toString(),
+        why: j['why']?.toString(),
+        refImage: j['ref_image']?.toString(),
+        credit: j['credit']?.toString(),
+      );
+
+  Map<String, dynamic> toJson() => {
+        'name': name,
+        if (why != null) 'why': why,
+        if (refImage != null) 'ref_image': refImage,
+        if (credit != null) 'credit': credit,
+      };
+}
+
 class Mission {
   final String type;
   final String order;
   final List<String> hints;
   // PHOTO_FIND
   final List<String> photoTargets;
+  /// 타깃별 참조 사진·이유·출처 (photo_targets와 같은 순서, 없을 수 있음).
+  final List<PhotoRef> photoRefs;
+  /// ARKit Augmented Images 후보 — 노드 진입 시 내려받아 참조 이미지로 등록한다.
+  final List<String> arReferenceImages;
   // COLLECT
   final List<String> items;
   final List<String> reactions;
@@ -124,6 +152,8 @@ class Mission {
     required this.order,
     required this.hints,
     this.photoTargets = const [],
+    this.photoRefs = const [],
+    this.arReferenceImages = const [],
     this.items = const [],
     this.reactions = const [],
     this.object,
@@ -150,6 +180,13 @@ class Mission {
         order: (j['order'] ?? '').toString(),
         hints: _strs(j['hints']),
         photoTargets: _strs(j['photo_targets']),
+        photoRefs: j['photo_refs'] is List
+            ? (j['photo_refs'] as List)
+                .whereType<Map>()
+                .map((e) => PhotoRef.fromJson(e.cast<String, dynamic>()))
+                .toList()
+            : const [],
+        arReferenceImages: _strs(j['ar_reference_images']),
         items: _strs(j['items']),
         reactions: _strs(j['reactions']),
         object: j['object']?.toString(),
@@ -173,6 +210,8 @@ class Mission {
         'order': order,
         'hints': hints,
         if (photoTargets.isNotEmpty) 'photo_targets': photoTargets,
+        if (photoRefs.isNotEmpty) 'photo_refs': photoRefs.map((e) => e.toJson()).toList(),
+        if (arReferenceImages.isNotEmpty) 'ar_reference_images': arReferenceImages,
         if (items.isNotEmpty) 'items': items,
         if (reactions.isNotEmpty) 'reactions': reactions,
         if (object != null) 'object': object,

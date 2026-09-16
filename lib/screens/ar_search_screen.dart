@@ -13,9 +13,29 @@
 //      확인하고, 아니면(시뮬레이터·구형기기·Android) 기존 고정 2D 마커로 폴백한다.
 //      네이티브 코드라 이 폴백 분기 밖은 실기기에서 직접 확인 필요(시뮬레이터로 못 봄).
 // 구현일: 2026-08-31 | 작성: 정찬희
+// ------------------------------------------------------------
+// [v3] 실시간 미션 연출 — 거리·조준으로 굴러가는 네 미션(계획서 2026-08-19 "A층").
+// 구현(요약): v2는 마커가 고정 오프셋에 떠 있고 탭하면 끝이라, "다가가면 자국이 늘고
+//            겨누면 드러난다"가 없었다. 네이티브가 10Hz로 보내는 거리·조준각을
+//            ArMissionController에 흘려 넣고, 그 판정으로 마커 표시를 바꾼다.
+//            missionType이 없으면 v2의 기존 2마커 동작 그대로다(하위호환).
+// 구현일: 2026-09-16 | 작성: kys (ar-realtime/kys/v1)
+// ------------------------------------------------------------
+// [v4] 촬영 미션 — 셔터 → 라이브 스냅샷 → 서버 비전 검증 → 도깨비 반응.
+// 구현(요약): PHOTO_FIND·PATH_TRACE는 "찾았다"(거리·조준 또는 참조 이미지 인식)로 끝나지
+//            않고 셔터가 열린다. 스냅샷은 NativeArView(라이브 프레임)에서만 받아 갤러리
+//            사진을 못 쓰게 하고, 검증 결과의 npc_line을 그대로 띄운다 — 검증이 곧 연출.
+//            verified=false면 화면에 남아 다시 찍게 하고, null(판정 불가)은 신뢰로 통과시킨다
+//            (현장에서 모델 장애로 셔터가 막히면 안 된다). 참조 사진 URL은 ARKit 인식용으로
+//            네이티브에도 넘긴다(arReferenceImages).
+// 구현일: 2026-09-16 | 작성: kys (photo-verify/kys/v1)
 // ============================================================
 import 'package:flutter/material.dart';
 
+import '../api/api_client.dart';
+import '../models/scenario.dart';
+
+import '../game/ar_mission_controller.dart';
 import '../theme.dart';
 import '../widgets/native_ar_view.dart';
 
@@ -34,9 +54,25 @@ class ArSearchScreen extends StatefulWidget {
   /// (호출부가 판단 — 이 화면은 연출만 바꾼다).
   final bool remote;
 
+  /// 서버 미션 타입(HUNT·RESTORE_AR·PHOTO_FIND·FIND…). 주면 그 연출로 돈다.
+  /// null이면 기존 2마커(조각·도깨비) 동작 — 호출부를 한꺼번에 못 고쳐도 되게.
+  final String? missionType;
+
+  /// 미션 목표 개수(AI 미션 JSON의 parts·target_count). 없으면 타입별 기본값.
+  final int? targetCount;
+
+  /// 촬영 미션용 — 서버 검증 요청에 실린다. 없으면 검증 없이(행위 완료) 진행.
+  final String? nodeId;
+  final List<String> photoTargets;
+  final List<PhotoRef> photoRefs;
+
+  /// ARKit Augmented Images 참조 사진(TourAPI). 인식되면 "AR이 타깃을 봤다".
+  final List<String> arReferenceImages;
+
   const ArSearchScreen(
       {super.key, this.placeName = '', this.order = '', this.hints = const [], this.collected = 0, this.total = 5,
-      this.remote = false});
+      this.remote = false, this.missionType, this.targetCount,
+      this.nodeId, this.photoTargets = const [], this.photoRefs = const [], this.arReferenceImages = const []});
   @override
   State<ArSearchScreen> createState() => _ArSearchScreenState();
 }
@@ -63,11 +99,64 @@ class _ArSearchScreenState extends State<ArSearchScreen> with SingleTickerProvid
   //    ("Looking up a deactivated widget's ancestor is unsafe").
   late final AnimationController _ac;
 
+  /// 미션 연출 상태기계. missionType이 없으면 null(기존 동작).
+  ArMissionController? _mission;
+  ArViewController? _arController;
+
+  /// 촬영 미션: 찾기 단계가 끝나 셔터가 열린 상태.
+  bool _photoReady = false;
+  bool _verifying = false;
+  /// 검증 결과 도깨비 대사 — HUD 문구를 잠시 덮는다.
+  String? _verdictLine;
+
+  bool get _isPhotoMission => _mission?.type == ArMissionType.photo;
+
+  /// 이 미션이 쓰는 마커 — 기존 동작이면 조각·도깨비 2개.
+  late final List<ArMarkerDef> _markers;
+
   @override
   void initState() {
     super.initState();
     _ac = AnimationController(vsync: this, duration: const Duration(milliseconds: 1400))
       ..repeat(reverse: true);
+
+    final raw = widget.missionType;
+    if (raw == null || raw.isEmpty) {
+      _markers = const [_fragmentMarker, _dokkaebiMarker];
+    } else {
+      final type = arMissionTypeOf(raw);
+      var built = buildArMarkers(
+        type: type,
+        primary: AppColors.teal,
+        accent: AppColors.purple,
+        count: widget.targetCount,
+      );
+      // 촬영 미션은 마커 이름표를 실제 타깃(예: '흥화문')으로 — '문양'은 장소를 모른다.
+      if (type == ArMissionType.photo && widget.photoTargets.isNotEmpty) {
+        built = [
+          for (final m in built)
+            ArMarkerDef(id: m.id, label: widget.photoTargets.first, color: m.color, forward: m.forward,
+                right: m.right, down: m.down, kind: m.kind, state: m.state),
+        ];
+      }
+      _markers = built;
+      _mission = ArMissionController(
+        type: type,
+        markers: _markers,
+        onComplete: () {
+          if (!mounted) return;
+          if (type == ArMissionType.photo) {
+            // 찾았다 → 셔터를 연다. 조각은 촬영·검증이 끝나야 준다.
+            setState(() => _photoReady = true);
+          } else {
+            // 목표를 다 찾으면 조각 획득으로 화면을 닫는다 — 호출부가 서버 collect를 한다.
+            Navigator.pop(context, true);
+          }
+        },
+      )..addListener(() {
+          if (mounted) setState(() {});
+        });
+    }
     if (widget.remote) {
       // 원격 체험은 카메라를 아예 켜지 않는다 — 권한 팝업도 띄우지 않는다.
       _arSupported = false;
@@ -79,6 +168,11 @@ class _ArSearchScreenState extends State<ArSearchScreen> with SingleTickerProvid
   }
 
   void _onNativeMarkerTapped(String id) {
+    final m = _mission;
+    if (m != null) {
+      m.onTapped(id);
+      return;
+    }
     if (id == 'fragment') {
       Navigator.pop(context, true);
     } else if (id == 'dokkaebi') {
@@ -86,8 +180,48 @@ class _ArSearchScreenState extends State<ArSearchScreen> with SingleTickerProvid
     }
   }
 
+  /// 셔터: 라이브 스냅샷 → 서버 검증 → 도깨비 대사 → 통과면 조각 획득으로 닫기.
+  Future<void> _shoot() async {
+    if (_verifying) return;
+    final ctl = _arController;
+    setState(() { _verifying = true; _verdictLine = '도깨비가 사진을 살피는 중…'; });
+
+    final b64 = await ctl?.snapshot();
+    if (b64 == null || b64.isEmpty) {
+      // 스냅샷을 못 얻으면 검증할 대상이 없다 — 막지 않고 행위 완료로 넘긴다.
+      if (mounted) Navigator.pop(context, true);
+      return;
+    }
+    final target = widget.photoTargets.isNotEmpty ? widget.photoTargets.first : widget.placeName;
+    PhotoVerdict verdict;
+    try {
+      verdict = await ApiClient().verifyPhoto(
+        nodeId: widget.nodeId ?? '',
+        nodeName: widget.placeName,
+        target: target,
+        imageB64: b64,
+        refImages: [for (final r in widget.photoRefs) if (r.refImage != null) r.refImage!],
+        aliases: [widget.placeName],
+      );
+    } catch (_) {
+      // 서버·네트워크 실패 = 판정 불가. 현장에서 셔터가 막히면 안 된다 → 신뢰로 통과.
+      verdict = const PhotoVerdict(
+        verified: null, mode: 'unverified', confidence: 0, textSeen: '',
+        npcLine: '허허, 내 눈이 잠시 흐려졌구나. 네가 담아 온 것을 믿어 보겠느니라.',
+      );
+    }
+    if (!mounted) return;
+    setState(() { _verifying = false; _verdictLine = verdict.npcLine; });
+    if (verdict.passes) {
+      await Future<void>.delayed(const Duration(milliseconds: 1800));
+      if (mounted) Navigator.pop(context, true);
+    }
+    // verified=false: 화면에 남는다. 대사가 "아닌 듯하구나"를 말하고 셔터는 다시 열려 있다.
+  }
+
   @override
   void dispose() {
+    _mission?.dispose();
     _ac.dispose();
     super.dispose();
   }
@@ -101,9 +235,16 @@ class _ArSearchScreenState extends State<ArSearchScreen> with SingleTickerProvid
         // 확인 중) 검은 placeholder + 아래 2D 고정 마커로 폴백.
         if (_arSupported == true && _mode == 'scan' && !_arError)
           NativeArView(
-            markers: const [_fragmentMarker, _dokkaebiMarker],
+            markers: _markers,
+            referenceImages: widget.arReferenceImages,
             onMarkerTapped: _onNativeMarkerTapped,
             onError: () => setState(() => _arError = true),
+            onReady: (c) {
+              _arController = c;
+              _mission?.attach(c);
+            },
+            onTelemetry: _mission?.onTelemetry,
+            onImageDetected: _mission?.onImageDetected,
           )
         else if (widget.remote)
           // 원격 체험 배경 — 그 자리에 없으니 카메라 대신 도깨비 기운이 도는 밤 풍경.
@@ -130,6 +271,18 @@ class _ArSearchScreenState extends State<ArSearchScreen> with SingleTickerProvid
             ]),
           ),
         ),
+
+        // 미션 HUD — 남은 거리 + 지금 뭘 해야 하는지. 실기기에서 이게 없으면
+        // "가까이 가야 하는 줄" 자체를 모른 채 헤맨다.
+        if (_mission != null && _arSupported == true && _mode == 'scan' && !_arError)
+          _MissionHud(progress: _mission!.progress, statusOverride: _verdictLine),
+
+        // 촬영 미션 셔터 — 찾기 단계가 끝난 뒤에만. 검증 중엔 눌리지 않는다.
+        if (_isPhotoMission && _photoReady && _arSupported == true && _mode == 'scan' && !_arError)
+          Positioned(
+            bottom: 108, left: 0, right: 0,
+            child: Center(child: _ShutterButton(busy: _verifying, onTap: _shoot)),
+          ),
 
         // 힌트 모드 (방탈출: 지령 + 단계 힌트)
         if (_mode == 'hint')
@@ -390,3 +543,98 @@ class _RidgeClipper extends CustomClipper<Path> {
   @override
   bool shouldReclip(covariant CustomClipper<Path> oldClipper) => false;
 }
+
+/// 미션 진행 HUD — 거리·진행률·안내 한 줄.
+class _MissionHud extends StatelessWidget {
+  final ArMissionProgress progress;
+  /// 검증 결과 대사처럼 상태기계 문구를 잠시 덮어야 할 때.
+  final String? statusOverride;
+  const _MissionHud({required this.progress, this.statusOverride});
+
+  @override
+  Widget build(BuildContext context) {
+    final p = progress;
+    final d = p.nearestM;
+    return SafeArea(
+      child: Column(children: [
+        const SizedBox(height: 56),
+        // 남은 거리 — 숫자가 줄어드는 것만으로 "다가가라"가 전달된다.
+        if (d != null)
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
+            decoration: BoxDecoration(
+              color: Colors.black.withValues(alpha: 0.55),
+              borderRadius: BorderRadius.circular(999),
+              border: Border.all(color: AppColors.teal.withValues(alpha: 0.5)),
+            ),
+            child: Text(
+              d < 10 ? '${d.toStringAsFixed(1)} m' : '${d.round()} m',
+              style: const TextStyle(color: AppColors.teal, fontSize: 18, fontWeight: FontWeight.w600),
+            ),
+          ),
+        const Spacer(),
+        // 스캔·응시처럼 차오르는 미션만 진행 막대를 보여준다.
+        if (p.ratio > 0 && p.ratio < 1)
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 48),
+            child: ClipRRect(
+              borderRadius: BorderRadius.circular(999),
+              child: LinearProgressIndicator(
+                value: p.ratio,
+                minHeight: 5,
+                backgroundColor: Colors.white24,
+                valueColor: const AlwaysStoppedAnimation(AppColors.teal),
+              ),
+            ),
+          ),
+        const SizedBox(height: 10),
+        Container(
+          margin: const EdgeInsets.only(bottom: 92),
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+          decoration: BoxDecoration(
+            color: Colors.black.withValues(alpha: 0.55),
+            borderRadius: BorderRadius.circular(999),
+          ),
+          child: Text(statusOverride ?? p.status,
+              style: const TextStyle(color: Colors.white, fontSize: 13.5)),
+        ),
+      ]),
+    );
+  }
+}
+
+/// 촬영 미션 셔터. 검증 중엔 회전 인디케이터로 바뀌고 눌리지 않는다.
+class _ShutterButton extends StatelessWidget {
+  final bool busy;
+  final VoidCallback onTap;
+  const _ShutterButton({required this.busy, required this.onTap});
+
+  @override
+  Widget build(BuildContext context) {
+    return Semantics(
+      button: true,
+      label: '사진 찍기',
+      child: GestureDetector(
+        onTap: busy ? null : onTap,
+        child: Container(
+          width: 74, height: 74,
+          decoration: BoxDecoration(
+            shape: BoxShape.circle,
+            color: Colors.black.withValues(alpha: 0.45),
+            border: Border.all(color: Colors.white, width: 4),
+          ),
+          child: Center(
+            child: busy
+                ? const SizedBox(width: 30, height: 30,
+                    child: CircularProgressIndicator(strokeWidth: 3, color: AppColors.teal))
+                : Container(
+                    width: 54, height: 54,
+                    decoration: const BoxDecoration(shape: BoxShape.circle, color: Colors.white),
+                  ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+

@@ -220,6 +220,35 @@ class ApiClient {
     return QuestRun.fromJson(jsonDecode(utf8.decode(res.bodyBytes)));
   }
 
+  /// 촬영 미션 사진 판정 — 서버가 AI 비전 모델로 넘긴다.
+  ///
+  /// [imageB64]는 NativeArView.snapshot() 결과(라이브 프레임)만 넣는다 — 갤러리 사진 금지.
+  /// 반환의 verified가 null이면 '판정 불가(모델 장애)' — 호출부는 행위 완료로 넘긴다.
+  Future<PhotoVerdict> verifyPhoto({
+    required String nodeId,
+    required String nodeName,
+    required String target,
+    required String imageB64,
+    List<String> refImages = const [],
+    List<String> aliases = const [],
+  }) async {
+    final res = await _http.post(
+      Uri.parse('$baseUrl/v1/photos/verify'),
+      headers: _headers,
+      body: jsonEncode({
+        'node_id': nodeId,
+        'node_name': nodeName,
+        'target': target,
+        'ref_images': refImages,
+        'aliases': aliases,
+        'image_b64': imageB64,
+        'mime': 'image/jpeg',
+      }),
+    );
+    _check('사진 판정', res);
+    return PhotoVerdict.fromJson(jsonDecode(utf8.decode(res.bodyBytes)) as Map<String, dynamic>);
+  }
+
   /// 진행 상태 조회 — 앱 재시작·복귀 시 진행도 복원.
   Future<QuestRun> getRun(String runId) async {
     final res = await _http.get(Uri.parse('$baseUrl/v1/runs/$runId'), headers: _headers);
@@ -331,3 +360,32 @@ class ApiException implements Exception {
   @override
   String toString() => message;
 }
+
+/// 사진 판정 결과. verified: true=일치, false=불일치, null=판정 불가(→ 행위 완료 폴백).
+class PhotoVerdict {
+  final bool? verified;
+  final String mode;        // vision | unverified
+  final double confidence;
+  final String textSeen;    // 읽은 글자(현판·안내판) — 도감 캡션에 쓸 수 있다
+  final String npcLine;     // 도깨비 반응 대사
+
+  const PhotoVerdict({
+    required this.verified,
+    required this.mode,
+    required this.confidence,
+    required this.textSeen,
+    required this.npcLine,
+  });
+
+  /// 플레이를 이어가도 되는가 — 일치했거나, 판정이 불가능해 신뢰로 넘기는 경우.
+  bool get passes => verified != false;
+
+  factory PhotoVerdict.fromJson(Map<String, dynamic> j) => PhotoVerdict(
+        verified: j['verified'] as bool?,
+        mode: (j['mode'] ?? 'unverified').toString(),
+        confidence: (j['confidence'] as num?)?.toDouble() ?? 0,
+        textSeen: (j['text_seen'] ?? '').toString(),
+        npcLine: (j['npc_line'] ?? '').toString(),
+      );
+}
+

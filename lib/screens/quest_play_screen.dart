@@ -129,6 +129,14 @@ class _QuestPlayScreenState extends State<QuestPlayScreen> {
           order: obj?.order ?? _line,
           hints: obj?.hints ?? const [],
           total: m?.targetCount ?? 1,
+          // [ar-realtime] 미션 타입별 실시간 AR 연출 + 촬영 미션 검증 재료.
+          // AI가 TourAPI에서 꺼낸 실존 타깃·참조 사진이 여기로 흘러간다(photo_refs.py).
+          missionType: m?.type,
+          targetCount: m?.targetCount,
+          nodeId: widget.node.nodeId,
+          photoTargets: m?.photoTargets ?? const [],
+          photoRefs: m?.photoRefs ?? const [],
+          arReferenceImages: m?.arReferenceImages ?? const [],
         ),
       ),
     );
