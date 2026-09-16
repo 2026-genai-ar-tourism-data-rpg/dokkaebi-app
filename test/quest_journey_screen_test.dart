@@ -1008,7 +1008,7 @@ void main() {
       await tester.tap(find.text('말 걸기'));
       await tester.pump();
 
-      await tester.tap(find.text('"백성을 위한 글이었군요."'));
+      await tester.tap(find.text('"이곳의 기억을 계속 지킬게."')); // 엔딩 데이터가 없는 코스의 기본 갈래
       await tester.pump(const Duration(milliseconds: 100));
       await tester.pump(const Duration(milliseconds: 100));
 
@@ -1232,6 +1232,112 @@ void main() {
         expect(line, isNot(contains('먹내음')));
         expect(line, isNot(contains('처마')));
       }
+    });
+  });
+
+  // 계획 A1·B3·B4 — 피날레·엔딩이 코스와 무관하게 세종대왕·훈민정음·종로였다.
+  // 재료는 AI가 피날레 노드에 붙여 준다(ai #64 attach_endings).
+  group('피날레·엔딩', () {
+    Scenario finaleCourse() => Scenario.fromJson({
+          'scenario_id': 'gyeongju_finale',
+          'title': '경주시의 기억석',
+          'region': '경주시',
+          'node_sequence': [
+            {
+              ..._stone('f1', '월성', finale: true),
+              'npc': {'name': '수호 도깨비'},
+              'mission': {
+                'type': 'DIALOGUE_COLLECT',
+                'order': '월성에서 기억석을 복원하라',
+                'hints': const [],
+                'villain_line': '작은 것들은 곧 잊히는 법이지.',
+                'guardian_line': '아니다. 기억은 누군가 다시 찾을 때 살아나느니라.',
+              },
+              'final_restore_dialogue': '월성에서 모은 조각이 하나의 경주시 기억석으로 이어졌느니라.',
+              'endings': {
+                'A': {
+                  'id': 'A',
+                  'choice_text': '이곳의 기억을 계속 지킬게.',
+                  'ending': '굿 엔딩',
+                  'npc_dialogue': ['그 마음이 경주시의 기억을 오래 지켜 줄 것이니라.'],
+                  'rewards': {
+                    'title': '경주시의 기억 복원자',
+                    'garden_item_final': '경주시 기억석',
+                    'unlock': '경주시의 기억이 복원되었습니다.',
+                  },
+                },
+                'B': {
+                  'id': 'B',
+                  'choice_text': '이제 일상으로 돌아가고 싶어.',
+                  'ending': '노멀 엔딩',
+                  'npc_dialogue': ['쉬고 싶은 마음도 당연하니라.'],
+                  'rewards': {'title': '경주시의 기억 복원자', 'garden_item_final': '경주시 기억석'},
+                },
+              },
+              'final_rewards_common': {
+                'region_stone': {'name': '경주시 기억석', 'desc': '경주시의 기억을 모아 복원한 기억석'},
+              },
+            },
+          ],
+        });
+
+    /// 도착 인증 → 소환 → "말 걸기"까지 눌러 피날레 화면을 연다.
+    Future<void> toFinale(WidgetTester tester, Scenario sc, _FakeQuestServer server) async {
+      await _tapArrival(tester, sc, server);
+      await tester.pump(const Duration(milliseconds: 1600)); // 소환 연출
+      await tester.tap(find.text('말 걸기'));
+      await tester.pump();
+    }
+
+    testWidgets('피날레 화면 — 세종대왕 대신 그 코스의 수호 도깨비와 복원 대사가 뜬다', (tester) async {
+      final sc = finaleCourse();
+      await toFinale(tester, sc, _FakeQuestServer(scenarioId: sc.scenarioId));
+
+      expect(find.text('수호 도깨비'), findsWidgets);
+      expect(find.text('월성에서 모은 조각이 하나의 경주시 기억석으로 이어졌느니라.'), findsOneWidget);
+      expect(find.text('"작은 것들은 곧 잊히는 법이지."'), findsOneWidget, reason: '망각귀 대사(villain_line)');
+      expect(find.text('이곳의 기억을 계속 지킬게.'), findsOneWidget);
+      expect(find.text('이제 일상으로 돌아가고 싶어.'), findsOneWidget);
+      expect(find.text('세종대왕'), findsNothing);
+      expect(find.textContaining('글씨조각 3/4'), findsNothing);
+      expect(find.textContaining('이순신'), findsNothing, reason: '근거 없는 사이드 퀘스트는 삭제했다');
+    });
+
+    testWidgets('엔딩 화면 — 고른 갈래의 대사·지역 기억석과 서버 칭호를 보여준다', (tester) async {
+      final sc = finaleCourse();
+      final server = _FakeQuestServer(
+          scenarioId: sc.scenarioId, expGained: 500, titles: const ['경주시의 기억을 되찾은 자']);
+      await toFinale(tester, sc, server);
+
+      await tester.tap(find.text('이곳의 기억을 계속 지킬게.'));
+      await tester.pump(const Duration(milliseconds: 100));
+      await tester.pump(const Duration(milliseconds: 100));
+
+      expect(find.text('복 원 · 굿 엔딩'), findsOneWidget);
+      expect(find.text('경주시 기억석 복원'), findsOneWidget);
+      expect(find.text('그 마음이 경주시의 기억을 오래 지켜 줄 것이니라.'), findsOneWidget);
+      expect(find.text('경주시의 기억을 되찾은 자'), findsOneWidget, reason: '칭호는 서버가 준 값');
+      expect(find.text('경주시의 기억이 복원되었습니다.'), findsOneWidget);
+      expect(find.text('+500'), findsOneWidget);
+      expect(find.text('종로 글씨 기억석 복원'), findsNothing);
+      expect(find.text('訓'), findsNothing);
+      expect(find.text('집현전 붓'), findsNothing);
+      expect(find.text('다음 지역 — 북촌 해금'), findsNothing);
+      expect(ScenarioStore.I.endingOf(sc.scenarioId), 'good');
+    });
+
+    testWidgets('엔딩 화면 — 다른 갈래를 고르면 노멀 엔딩 대사가 뜬다', (tester) async {
+      final sc = finaleCourse();
+      await toFinale(tester, sc, _FakeQuestServer(scenarioId: sc.scenarioId));
+
+      await tester.tap(find.text('이제 일상으로 돌아가고 싶어.'));
+      await tester.pump(const Duration(milliseconds: 100));
+      await tester.pump(const Duration(milliseconds: 100));
+
+      expect(find.text('복 원 · 노멀 엔딩'), findsOneWidget);
+      expect(find.text('쉬고 싶은 마음도 당연하니라.'), findsOneWidget);
+      expect(find.text('그 마음이 경주시의 기억을 오래 지켜 줄 것이니라.'), findsNothing);
+      expect(ScenarioStore.I.endingOf(sc.scenarioId), 'normal');
     });
   });
 }
