@@ -201,8 +201,10 @@ final class DokkaebiArView: NSObject, FlutterPlatformView, ARSCNViewDelegate, AR
         // ARSCNView.snapshot()은 카메라 프레임 + SceneKit 오버레이를 합친 이미지 — 메인 스레드 전용.
         DispatchQueue.main.async {
           guard let self = self else { result(nil); return }
-          let img = self.sceneView.snapshot()
-          if let data = img.jpegData(compressionQuality: 0.82) {
+          // 화면 해상도 그대로(예: 1170×2532)면 JPEG 1~3MB → base64 ×1.33. OCR엔 긴 변 1600px면
+          // 충분하고(현판·안내판 글자가 잘 남는다) 업로드가 수백 KB로 내려온다.
+          let img = Self.downscaled(self.sceneView.snapshot(), maxSide: 1600)
+          if let data = img.jpegData(compressionQuality: 0.8) {
             result(data.base64EncodedString())
           } else {
             result(FlutterError(code: "snapshot_failed", message: "JPEG 인코딩 실패", details: nil))
@@ -222,6 +224,20 @@ final class DokkaebiArView: NSObject, FlutterPlatformView, ARSCNViewDelegate, AR
     config.planeDetection = [.horizontal]
     sceneView.session.run(config)
     loadReferenceImages()
+  }
+
+  /// 긴 변이 maxSide를 넘으면 비율 유지로 줄인다. 작으면 그대로.
+  private static func downscaled(_ image: UIImage, maxSide: CGFloat) -> UIImage {
+    let w = image.size.width, h = image.size.height
+    let longest = max(w, h)
+    guard longest > maxSide, longest > 0 else { return image }
+    let scale = maxSide / longest
+    let size = CGSize(width: floor(w * scale), height: floor(h * scale))
+    let format = UIGraphicsImageRendererFormat.default()
+    format.scale = 1
+    return UIGraphicsImageRenderer(size: size, format: format).image { _ in
+      image.draw(in: CGRect(origin: .zero, size: size))
+    }
   }
 
   // MARK: - 참조 이미지(Augmented Images)
