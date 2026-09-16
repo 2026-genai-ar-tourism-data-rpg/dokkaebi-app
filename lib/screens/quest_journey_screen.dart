@@ -1,4 +1,13 @@
 // ============================================================
+// [v14] 이동 화면 지도 — 손으로 확대·축소·이동할 수 있게 하고, 내 위치가 아래 카드에 가려
+//       "GPS가 안 잡힌다"로 보이던 것을 고쳤다(실기기 제보).
+// 구현(요약): ① 제스처 차단(IgnorePointer)을 풀고 onCameraMoveEnd로 새 중심·줌을 받아 오버레이를
+//       다시 맞춘다. 이동 "중" 콜백은 없어 만지는 동안에는 오버레이를 감춘다(_gpsUserMoving).
+//       ② 손으로 옮기면 따라가기를 끄고(_gpsFollow) "내 위치" 버튼으로 되돌린다 — 안 그러면
+//       보던 자리가 위치 신호마다 튕겨 나간다. ③ fitBounds에 위·아래 UI 두께를 넘겨(insets)
+//       내 위치 마커가 거리 카드 뒤로 숨지 않게 했다.
+// 구현일: 2026-09-16 | 작성: ljs (gps-map-gestures/ljs/v1)
+// ------------------------------------------------------------
 // [v13] 피날레·엔딩을 코스 데이터로(계획 A1·B3·B4) — 어느 지역 코스를 돌아도 마지막이 세종대왕이고
 //       엔딩이 訓民正音·종로 글씨 기억석·집현전 붓·"북촌 해금"이었다.
 // 구현(요약): 피날레 노드가 주는 AI 엔딩 데이터(ai #64)를 읽는다 — 이름·그림은 그 노드의 도깨비,
@@ -451,11 +460,26 @@ class _QuestJourneyScreenState extends State<QuestJourneyScreen> with TickerProv
   bool _hasPlayerMarker = false;
 
   // ── 이동 화면(_gpsScreen)의 실지도 상태 ──
-  // 인증 반경 링·한자 핀은 Flutter 오버레이다(카카오맵에 원 API가 없다). 그래서 지도 제스처를
-  // 막고 카메라를 코드로만 움직인다 — 움직인 직후 목표의 화면 좌표를 다시 받아 오버레이를 맞춘다.
+  // 인증 반경 링·한자 핀은 Flutter 오버레이다(카카오맵에 원 API가 없다). 손으로 지도를 움직이면
+  // onCameraMoveEnd로 새 중심·줌을 받아 오버레이를 다시 맞춘다 — 움직이는 동안에는 잠깐 감춘다.
   KakaoMapController? _gpsMapController;
   StreamSubscription<Position>? _gpsMapPositionSub;
+  StreamSubscription<CameraMoveEndEvent>? _gpsCameraSub;
   bool _hasGpsPlayerMarker = false;
+
+  /// 내 위치를 따라다니는가. 손으로 지도를 움직이면 꺼지고, "내 위치" 버튼으로 다시 켠다.
+  bool _gpsFollow = true;
+
+  /// 지도를 만지는 중 — 오버레이(목표 핀·반경 링)를 잠시 감춰 어긋나 보이지 않게 한다.
+  bool _gpsUserMoving = false;
+
+  /// 마지막으로 읽은 내 위치 — "내 위치" 버튼이 다시 맞출 때 쓴다.
+  Position? _gpsLastPos;
+
+  /// 지도를 덮는 UI 두께 — 위 추적 칩, 아래 거리 카드. 이만큼 빼고 카메라를 맞춰야
+  /// 내 위치 마커가 카드 뒤로 숨지 않는다.
+  static const _gpsTopInsetPx = 96.0;
+  static const _gpsBottomInsetPx = 210.0;
 
   /// 마지막으로 맞춘 카메라 중심·줌 — 화면 좌표는 이 값으로 직접 계산한다
   /// (toScreenPoint는 iOS 플러그인 미구현이라 항상 null이라 쓸 수 없다).
@@ -1762,6 +1786,9 @@ class _QuestJourneyScreenState extends State<QuestJourneyScreen> with TickerProv
     } catch (e, st) {
       debugPrint('[map-debug] gps 마커 스타일 등록 예외: $e\n$st');
     }
+    // 손으로 움직인 결과(중심·줌)를 받아 오버레이를 다시 맞춘다. 이 패키지에 이동 "중" 콜백은
+    // 없고 멈춘 뒤에만 오므로, 움직이는 동안에는 오버레이를 감춰 둔다(_gpsUserMoving).
+    _gpsCameraSub ??= controller.onCameraMoveEndStream.listen(_onGpsCameraMoved);
     // 초기 카메라는 KakaoMap의 initialPosition/initialLevel(목표 중심, 레벨 17) 그대로다 —
     // 화면 좌표 계산도 같은 값으로 맞춰야 목표 핀이 처음부터 제자리(화면 중앙)에 찍힌다.
     final n = targets[gpsIdx].node;
@@ -1782,9 +1809,20 @@ class _QuestJourneyScreenState extends State<QuestJourneyScreen> with TickerProv
     ).listen(_onGpsPlayerMoved);
   }
 
+  /// 지도가 멈췄다 — 손으로 옮겼든 코드가 옮겼든 여기서 받은 중심·줌이 진짜다.
+  void _onGpsCameraMoved(CameraMoveEndEvent e) {
+    if (!mounted) return;
+    setState(() {
+      _gpsMapCenter = LatLng(latitude: e.latitude, longitude: e.longitude);
+      _gpsMapZoom = e.zoomLevel.round();
+      _gpsUserMoving = false;
+    });
+  }
+
   Future<void> _onGpsPlayerMoved(Position pos) async {
     final controller = _gpsMapController;
     if (controller == null || !mounted) return;
+    _gpsLastPos = pos;
     // 명령형 API라 지우고 새로 찍는다(홈 지도·챕터 진행판과 같은 패턴).
     if (_hasGpsPlayerMarker) await controller.removeMarker(id: _gpsPlayerMarkerId);
     _hasGpsPlayerMarker = true;
@@ -1806,6 +1844,8 @@ class _QuestJourneyScreenState extends State<QuestJourneyScreen> with TickerProv
         _locNeedsSettings = false;
       });
     }
+    // 손으로 지도를 옮긴 뒤에는 따라가지 않는다 — 보던 자리가 튕겨 나가면 지도를 볼 수 없다.
+    if (!_gpsFollow) return;
     // 카메라는 많이 움직였을 때만 다시 맞춘다 — 매 신호마다 맞추면 줌이 계속 흔들린다.
     final last = _gpsLastFitAt;
     if (last == null ||
@@ -1833,6 +1873,8 @@ class _QuestJourneyScreenState extends State<QuestJourneyScreen> with TickerProv
       ],
       viewportSize: viewportSize,
       paddingPx: 90,
+      topInsetPx: _gpsTopInsetPx,
+      bottomInsetPx: _gpsBottomInsetPx,
     );
     try {
       await controller.moveCamera(
@@ -1851,12 +1893,30 @@ class _QuestJourneyScreenState extends State<QuestJourneyScreen> with TickerProv
     }
   }
 
+  /// "내 위치" — 따라가기를 다시 켜고, 마지막으로 읽은 위치로 카메라를 맞춘다.
+  /// 아직 위치를 못 읽었으면 다음 위치 신호가 올 때 맞춰진다.
+  Future<void> _recenterGpsMap() async {
+    setState(() {
+      _gpsFollow = true;
+      _gpsUserMoving = false;
+    });
+    final pos = _gpsLastPos;
+    if (pos == null) return;
+    _gpsLastFitAt = pos;
+    await _fitGpsCamera(pos);
+  }
+
   /// 이동 화면을 벗어날 때 지도·위치 스트림을 정리한다 — 다시 들어오면 새로 마운트된다.
   void _teardownGpsMap() {
     _gpsMapPositionSub?.cancel();
     _gpsMapPositionSub = null;
+    _gpsCameraSub?.cancel();
+    _gpsCameraSub = null;
     _gpsMapController = null;
     _hasGpsPlayerMarker = false;
+    _gpsFollow = true;
+    _gpsUserMoving = false;
+    _gpsLastPos = null;
     _gpsMapCenter = null;
     _gpsMapZoom = null;
     _gpsViewportSize = null;
@@ -2159,10 +2219,18 @@ class _QuestJourneyScreenState extends State<QuestJourneyScreen> with TickerProv
         final overlaySide = _gpsOverlaySideFor(ringPx);
         return Stack(children: [
           if (realMap)
-            // 제스처 차단 — 카메라를 코드로만 움직여야 반경 오버레이가 어긋나지 않는다
-            // (이 패키지에는 카메라 이동 콜백이 없어 사용자 팬·줌을 따라갈 수 없다).
+            // 손으로 확대·축소·이동할 수 있다. 만지는 순간 따라가기를 끄고(_gpsFollow) 오버레이를
+            // 감췄다가, 멈추면 onCameraMoveEnd가 준 중심·줌으로 다시 맞춘다.
             Positioned.fill(
-              child: IgnorePointer(
+              child: Listener(
+                onPointerDown: (_) {
+                  if (_gpsFollow || !_gpsUserMoving) {
+                    setState(() {
+                      _gpsFollow = false;
+                      _gpsUserMoving = true;
+                    });
+                  }
+                },
                 child: KakaoMap(
                   onMapCreated: (c) => _onGpsMapCreated(c, viewportSize),
                   initialPosition:
@@ -2176,7 +2244,7 @@ class _QuestJourneyScreenState extends State<QuestJourneyScreen> with TickerProv
           // 상단 칩
           Positioned(top: 54, left: 0, right: 0, child: Center(child: _pill('● GPS 추적 중 — ${gpsT.name}', border: _blue, textColor: const Color(0xFF9FD4EC)))),
           // 목적지 — 실지도면 실좌표 위에 오버레이로, 데모면 기존 자리에.
-          if (targetPoint != null)
+          if (targetPoint != null && !_gpsUserMoving)
             Positioned(
               left: targetPoint.dx - overlaySide / 2,
               top: targetPoint.dy - overlaySide / 2,
@@ -2205,7 +2273,25 @@ class _QuestJourneyScreenState extends State<QuestJourneyScreen> with TickerProv
             ),
           ],
           // 하단 카드
-          Positioned(left: 12, right: 12, bottom: 18, child: _parchment(child: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.start, children: [
+          Positioned(left: 12, right: 12, bottom: 18, child: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.end, children: [
+            // 손으로 지도를 옮긴 뒤에만 — 다시 내 위치를 따라가게 한다. 거리 카드 바로 위에 둔다.
+            if (realMap && !_gpsFollow) ...[
+              GestureDetector(
+                onTap: _recenterGpsMap,
+                child: Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+                  decoration: BoxDecoration(
+                    color: _inkDeep.withOpacity(0.92),
+                    borderRadius: BorderRadius.circular(999),
+                    border: Border.all(color: _blue.withOpacity(0.55)),
+                  ),
+                  child: const Text('내 위치',
+                      style: TextStyle(fontSize: 12.5, color: Color(0xFF9FD4EC), fontWeight: FontWeight.w900)),
+                ),
+              ),
+              const SizedBox(height: 8),
+            ],
+            _parchment(child: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.start, children: [
             Row(crossAxisAlignment: CrossAxisAlignment.baseline, textBaseline: TextBaseline.alphabetic, children: [
               Text(distLabel, style: dokkaebiTitle(size: 34, color: _parchInk)),
               const SizedBox(width: 10),
@@ -2232,7 +2318,8 @@ class _QuestJourneyScreenState extends State<QuestJourneyScreen> with TickerProv
               const SizedBox(height: 10),
               _cta('GPS 도착 인증', _verifyGps, bg: _tealDeep, fg: const Color(0xFFEAFFF9)),
             ],
-          ]))),
+          ])),
+          ])),
         ]);
       }),
     );

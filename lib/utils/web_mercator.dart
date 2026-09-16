@@ -8,6 +8,11 @@
 //      표준 Web Mercator 타일 좌표계로 직접 계산한다. 카카오맵 SDK의
 //      zoomLevel(관찰된 범위 1~21)은 이 타일 줌 규약과 같다고 보고 구현했다.
 // 구현일: 2026-09-12 | 작성: ljs (explore-radius-first/ljs/v1)
+// ------------------------------------------------------------
+// [v2] fitBounds에 insets 추가 — 이동 화면은 위에 추적 칩, 아래에 거리 카드가 지도를 덮는다.
+//      뷰 전체 기준으로 맞추면 내 위치 마커가 카드 뒤에 들어가 "GPS가 안 잡힌다"로 보였다.
+//      가려지는 부분을 빼고 맞춘 뒤, 그 영역의 한가운데가 되도록 카메라 중심을 옮긴다.
+// 구현일: 2026-09-16 | 작성: ljs (gps-map-gestures/ljs/v1)
 // ============================================================
 import 'dart:math' as math;
 import 'dart:ui';
@@ -68,10 +73,15 @@ typedef MapFit = ({LatLng center, int zoom});
 /// 중심·줌을 계산한다. CameraUpdate.fromBounds(iOS에서 항상 E004) 대체.
 /// 정수로 내림해 실제 화면이 계산값보다 넓게(더 축소되게) 나오는 쪽으로만
 /// 오차가 나게 한다 — 점이 잘려나가는 실패보다 안전하다.
+/// [topInsetPx]·[bottomInsetPx]는 지도를 덮는 UI(위 추적 칩·아래 거리 카드) 두께다.
+/// 그만큼을 뺀 영역에 점들을 넣고, 그 영역의 한가운데에 오도록 카메라 중심을 옮긴다 —
+/// 안 그러면 점이 카드 뒤로 숨어 "지도에 안 보인다"가 된다.
 MapFit fitBounds({
   required List<LatLng> points,
   required Size viewportSize,
   double paddingPx = 60,
+  double topInsetPx = 0,
+  double bottomInsetPx = 0,
   int minZoom = 3,
   int maxZoom = 20,
 }) {
@@ -79,8 +89,10 @@ MapFit fitBounds({
   final ys = points.map((p) => _latToWorldY(p.latitude));
   final minX = xs.reduce(math.min), maxX = xs.reduce(math.max);
   final minY = ys.reduce(math.min), maxY = ys.reduce(math.max);
-  final availW = math.max(viewportSize.width - paddingPx * 2, 1.0);
-  final availH = math.max(viewportSize.height - paddingPx * 2, 1.0);
+  final safeH = math.max(viewportSize.height - topInsetPx - bottomInsetPx, 1.0);
+  final safeW = viewportSize.width;
+  final availW = math.max(safeW - paddingPx * 2, 1.0);
+  final availH = math.max(safeH - paddingPx * 2, 1.0);
   final spanX = maxX - minX, spanY = maxY - minY;
   var zoom = maxZoom.toDouble();
   if (spanX > 0) {
@@ -90,9 +102,12 @@ MapFit fitBounds({
     zoom = math.min(zoom, math.log(availH / (spanY * _tileSize)) / math.ln2);
   }
   final z = zoom.floor().clamp(minZoom, maxZoom).toInt();
+  // 화면 중심과 "안 가려지는 영역"의 중심 차이만큼 카메라를 밀어 준다(projectToScreen의 역산).
+  final scale = _tileSize * math.pow(2, z).toDouble();
+  final dy = viewportSize.height / 2 - (topInsetPx + safeH / 2);
   return (
     center: LatLng(
-      latitude: _worldYToLat((minY + maxY) / 2),
+      latitude: _worldYToLat((minY + maxY) / 2 + dy / scale),
       longitude: _worldXToLng((minX + maxX) / 2),
     ),
     zoom: z,
