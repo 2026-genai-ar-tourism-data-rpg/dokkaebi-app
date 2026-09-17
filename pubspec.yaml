@@ -16,7 +16,7 @@ publish_to: 'none' # Remove this line if you wish to publish to pub.dev
 # https://developer.apple.com/library/archive/documentation/General/Reference/InfoPlistKeyReference/Articles/CoreFoundationKeys.html
 # In Windows, build-name is used as the major, minor, and patch parts
 # of the product and file versions while build-number is used as the build suffix.
-version: 1.0.0+11
+version: 1.0.0+12
 
 environment:
   # Dart SDK 하한만 둔다. Flutter SDK는 팀원 간 버전이 갈려 있어(3.24 ↔ 3.44)
@@ -73,10 +73,6 @@ dependencies:
   # 식음 노드 영수증 촬영 — 카메라 소스로만 연다(갤러리 사진 선택 금지, 검증 우회 방지).
   image_picker: ^1.2.3
 
-  # 도깨비 번호 핀(코스 지도) — 시안(design/pin_and_loading_mockup.html)의 SVG를
-  # 그대로 그린다. 색·번호가 노드마다 달라 정적 에셋 대신 문자열 템플릿으로 만든다.
-  flutter_svg: ^2.3.0
-
 dev_dependencies:
   flutter_test:
     sdk: flutter
@@ -105,6 +101,9 @@ flutter:
   assets:
     - assets/images/my_location.png
     - assets/images/region_pin.png
+    # 코스 진행(quest_journey_screen) 챕터 마커 — 번호별 PNG(1~12), Pillow로 생성
+    # (dart:ui 런타임 인코딩은 네이티브 SDK가 거부해 못 씀, 위 파일의 주석 참고).
+    - assets/images/quest_pins/
 
   # An image asset can refer to one or more resolution-specific "variants", see
   # https://flutter.dev/to/resolution-aware-images

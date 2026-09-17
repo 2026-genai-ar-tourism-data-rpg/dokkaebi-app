@@ -36,7 +36,14 @@
 //      끝낸 장소 → 얻은 것만 요약(다시 플레이하면 진행·보상이 꼬인다) / 나머지 → 코스 진행 화면을
 //      그 장소부터(startNodeId). 들어갈 조건(requires)은 같은 규칙으로 먼저 본다. 식음 노드는 그대로.
 // 구현일: 2026-09-17 | 작성: ljs (play-screen-sync/ljs/v1)
+// ------------------------------------------------------------
+// [v7] 실지도 팬·줌 허용 — map_screen.dart가 이미 onCameraMoveEndStream으로
+//      카메라 변경을 받고 있어([v3] 주석의 "카메라 이동 콜백이 없다"는 이제 틀림),
+//      같은 스트림을 구독해 카메라가 멎을 때마다 중심·줌을 다시 읽어 핀·동선을
+//      재투영한다. IgnorePointer를 걷어내 제스처를 그대로 지도에 흘려보낸다.
+// 구현일: 2026-09-18 | 작성: Claude
 // ============================================================
+import 'dart:async';
 import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
@@ -85,6 +92,10 @@ class _RouteMapState extends State<_RouteMap> with SingleTickerProviderStateMixi
   /// moveCamera 자체가 실패 — 실지도를 접고 기존 정규화 배치로 돌아간다.
   bool _projectionFailed = false;
 
+  /// 사용자가 팬·줌으로 카메라를 움직인 뒤 — 멎을 때마다 중심·줌을 다시 읽어
+  /// 핀·동선을 그 위치로 재투영한다. onMapCreated에서 한 번만 구독한다.
+  StreamSubscription<CameraMoveEndEvent>? _cameraSub;
+
   @override
   void initState() {
     super.initState();
@@ -106,6 +117,7 @@ class _RouteMapState extends State<_RouteMap> with SingleTickerProviderStateMixi
   @override
   void dispose() {
     _pulse.dispose();
+    _cameraSub?.cancel();
     super.dispose();
   }
 
@@ -134,6 +146,14 @@ class _RouteMapState extends State<_RouteMap> with SingleTickerProviderStateMixi
       if (mounted) setState(() => _projectionFailed = true);
       return;
     }
+    // 사용자가 직접 팬·줌한 뒤에도 핀·동선이 그 자리를 따라가게 — 한 번만 구독.
+    _cameraSub ??= controller.onCameraMoveEndStream.listen((e) {
+      if (!mounted) return;
+      setState(() {
+        _mapCenter = LatLng(latitude: e.latitude, longitude: e.longitude);
+        _mapZoom = e.zoomLevel.round();
+      });
+    });
     if (mounted) {
       setState(() {
         _mapCenter = fit.center;
@@ -193,16 +213,14 @@ class _RouteMapState extends State<_RouteMap> with SingleTickerProviderStateMixi
           final doneFlags = pts.map((n) => widget.done.contains(n.nodeId)).toList();
           return Stack(children: [
             if (!_projectionFailed)
-              // 제스처 차단 — 카메라를 코드로만 움직여야 핀·동선이 지도와 어긋나지 않는다
-              // (이 패키지에는 카메라 이동 콜백이 없어 사용자 팬·줌을 따라갈 수 없다).
+              // [v7] 팬·줌 허용 — onCameraMoveEndStream 구독(_fitCamera)이 멎을 때마다
+              // 중심·줌을 다시 읽어 핀·동선을 그 자리로 재투영한다.
               Positioned.fill(
-                child: IgnorePointer(
-                  child: KakaoMap(
-                    onMapCreated: (c) => _fitCamera(c, pts, viewportSize),
-                    initialPosition:
-                        LatLng(latitude: pts.first.mapY!, longitude: pts.first.mapX!),
-                    initialLevel: 14,
-                  ),
+                child: KakaoMap(
+                  onMapCreated: (c) => _fitCamera(c, pts, viewportSize),
+                  initialPosition:
+                      LatLng(latitude: pts.first.mapY!, longitude: pts.first.mapX!),
+                  initialLevel: 14,
                 ),
               ),
             // 좌표를 받기 전에는 그리지 않는다 — 먼저 그리면 지도와 어긋난 자리에 찍힌다.

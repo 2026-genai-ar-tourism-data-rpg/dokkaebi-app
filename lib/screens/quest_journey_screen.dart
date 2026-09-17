@@ -1871,39 +1871,45 @@ class _QuestJourneyScreenState extends State<QuestJourneyScreen> with TickerProv
     return data.buffer.asUint8List(data.offsetInBytes, data.lengthInBytes);
   }
 
-  static const _chapterPinStyleId = 'chapter_pin_style';
+  static const _chapterPinStyleId = 'chapter_pin_style'; // 번호 에셋이 없는 챕터(13번째~) 전용 폴백
+  static const _maxNumberedPin = 12; // assets/images/quest_pins/pin_1.png ~ pin_12.png
 
-  /// 챕터 마커를 실좌표에 찍는다 — 홈 지도(map_screen.dart)가 쓰는 것과
-  /// 같은 `region_pin.png` 에셋을 그대로 재사용한다.
+  /// 챕터 마커를 실좌표에 찍는다 — 번호별 PNG(assets/images/quest_pins/pin_N.png)를
+  /// 미리 만들어 둔 정적 에셋으로 쓴다.
   ///
-  /// 원래는 완료·진행중·잠김을 원형+한자 아이콘으로 구분하려고 dart:ui
-  /// 캔버스로 PNG를 직접 그려 넣었는데, iOS 네이티브 SDK가 그 바이트를
+  /// 원래는 완료·진행중·잠김을 원형+한자 아이콘으로 구분하려고 dart:ui 캔버스로
+  /// PNG를 직접(런타임) 그려 넣었는데, iOS 네이티브 SDK가 그 바이트를
   /// `std::logic_error: invalid image data pixel format`로 거부하며 앱이
   /// 죽었다(에셋 파일 PNG는 되고 Skia가 인코딩한 PNG는 안 되는 것으로 보아
-  /// 색공간/메타데이터 차이로 추정 — 원인 특정엔 네이티브 쪽 추가 조사 필요).
-  /// 그래서 검증된 에셋 하나로 되돌리고, 상태 구분은 HUD·챕터카드 텍스트에
-  /// 맡긴다. 상태별 아이콘이 꼭 필요하면 실제 이미지 파일을 받아 붙이는 쪽이
-  /// 더 안전하다.
+  /// 색공간/메타데이터 차이로 추정). 그래서 번호별 PNG를 Pillow(런타임 아닌
+  /// 빌드 전 스크립트)로 미리 만들어 검증된 에셋 파일로 번들에 넣었다 — 코스가
+  /// 13챕터를 넘어가면(생성 범위 밖) 기존 무번호 region_pin.png로 조용히 대체한다.
   Future<void> _placeChapterMarkers(KakaoMapController controller) async {
-    final pinBytes = await _loadAssetBytes('assets/images/region_pin.png');
-    await controller.registerMarkerStyles(styles: [
-      MarkerStyle(
-        styleId: _chapterPinStyleId,
-        perLevels: [
-          MarkerPerLevelStyle.fromBytes(bytes: pinBytes, level: 1),
-          MarkerPerLevelStyle.fromBytes(bytes: pinBytes, level: 21),
-        ],
-      ),
-    ]);
+    final fallbackBytes = await _loadAssetBytes('assets/images/region_pin.png');
+    final styles = <MarkerStyle>[
+      MarkerStyle(styleId: _chapterPinStyleId, perLevels: [
+        MarkerPerLevelStyle.fromBytes(bytes: fallbackBytes, level: 1),
+        MarkerPerLevelStyle.fromBytes(bytes: fallbackBytes, level: 21),
+      ]),
+    ];
+    for (var n = 1; n <= _maxNumberedPin && n <= targets.length; n++) {
+      final bytes = await _loadAssetBytes('assets/images/quest_pins/pin_$n.png');
+      styles.add(MarkerStyle(styleId: 'chapter_pin_$n', perLevels: [
+        MarkerPerLevelStyle.fromBytes(bytes: bytes, level: 1),
+        MarkerPerLevelStyle.fromBytes(bytes: bytes, level: 21),
+      ]));
+    }
+    await controller.registerMarkerStyles(styles: styles);
     final options = <MarkerOption>[];
     for (var i = 0; i < targets.length; i++) {
       final node = targets[i].node;
       if (node?.mapX == null || node?.mapY == null) continue;
+      final no = i + 1;
       options.add(MarkerOption(
         id: 'chapter_$i',
         latLng: LatLng(latitude: node!.mapY!, longitude: node.mapX!),
         text: targets[i].name,
-        styleId: _chapterPinStyleId,
+        styleId: no <= _maxNumberedPin ? 'chapter_pin_$no' : _chapterPinStyleId,
       ));
     }
     if (options.isNotEmpty) {
