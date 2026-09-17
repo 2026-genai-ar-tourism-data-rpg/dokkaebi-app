@@ -11,6 +11,12 @@
 //            "오래된"으로 둬 문장이 깨지지 않게 한다. 지역명 뒤에 조사를 붙이지 않는 문장으로
 //            바꿔(… 거리를 걷던) 받침에 따라 을/를이 어긋나지 않게 했다.
 // 구현일: 2026-09-13 | 작성: ljs (jongno-hardcode-cleanup/ljs/v1)
+// ------------------------------------------------------------
+// [v3] 초롱 도깨비 NPC를 기본 캐릭터 일러스트(assets/images/dokkaebi_character.png)로 교체.
+// 구현(요약): 벡터로 근사하던 방식을 버리고 실제 이미지 에셋을 표시. NPC 대화창(ar_frame.dart
+//            DokkaebiNpc), AR 2D 폴백(quest_journey_screen.dart _Dokkaebi), AR 삼각뿔 마커
+//            (DokkaebiArView.swift beaconNode)도 같은 이미지로 동일하게 교체.
+// 구현일: 2026-09-17 | 작성: Claude
 // ============================================================
 import 'dart:math' as math;
 
@@ -362,8 +368,7 @@ class _MemoryLight extends StatelessWidget {
   }
 }
 
-/// 초롱 도깨비 — 별도 이미지 에셋 없이 벡터로 구성.
-/// (참고 이미지의 청록 피부·검은 뿔·홍색 한복·금 장식을 이 앱의 기존 팔레트로 재현)
+/// 초롱 도깨비 — 기본 캐릭터 일러스트.
 class _LanternDokkaebi extends StatelessWidget {
   const _LanternDokkaebi({super.key});
   @override
@@ -372,108 +377,15 @@ class _LanternDokkaebi extends StatelessWidget {
       mainAxisSize: MainAxisSize.min,
       children: [
         SizedBox(
-          width: 160,
-          height: 190,
-          child: Stack(
-            alignment: Alignment.center,
-            children: [
-              // 몸(홍색 한복 + 금 테두리)
-              Positioned(
-                bottom: 0,
-                child: Container(
-                  width: 112,
-                  height: 108,
-                  decoration: BoxDecoration(
-                    color: AppColors.vermilion,
-                    borderRadius: BorderRadius.circular(26),
-                    border: Border.all(color: AppColors.gold, width: 2.5),
-                  ),
-                ),
-              ),
-              // 얼굴(청록 피부)
-              Positioned(
-                top: 4,
-                child: Container(
-                  width: 100,
-                  height: 100,
-                  decoration:
-                      const BoxDecoration(color: AppColors.teal, shape: BoxShape.circle),
-                  child: Stack(
-                    children: [
-                      Positioned(left: 12, top: -8, child: _horn()),
-                      Positioned(
-                          right: 12, top: -8, child: Transform.flip(flipX: true, child: _horn())),
-                      const Positioned(left: 24, top: 44, child: _Eye()),
-                      const Positioned(right: 24, top: 44, child: _Eye()),
-                      Positioned(left: 12, top: 64, child: _blush()),
-                      Positioned(right: 12, top: 64, child: _blush()),
-                      Positioned(
-                        left: 0,
-                        right: 0,
-                        top: 68,
-                        child: Center(
-                          child: Container(
-                            width: 18,
-                            height: 8,
-                            decoration: BoxDecoration(
-                                color: const Color(0xFF241C12),
-                                borderRadius: BorderRadius.circular(6)),
-                          ),
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-              ),
-              // 초롱(손에 든 불빛)
-              Positioned(
-                right: -8,
-                bottom: 30,
-                child: Container(
-                  width: 26,
-                  height: 34,
-                  decoration: BoxDecoration(
-                    color: AppColors.gold,
-                    borderRadius: BorderRadius.circular(8),
-                    boxShadow: [
-                      BoxShadow(
-                          color: AppColors.gold.withOpacity(0.75),
-                          blurRadius: 26,
-                          spreadRadius: 5),
-                    ],
-                  ),
-                ),
-              ),
-            ],
-          ),
+          width: 220,
+          height: 270,
+          child: Image.asset('assets/images/dokkaebi_character.png', fit: BoxFit.contain),
         ),
         const SizedBox(height: 8),
         Text('초롱 도깨비', style: dokkaebiTitle(size: 13, color: AppColors.goldDim)),
       ],
     );
   }
-
-  Widget _horn() => Container(
-      width: 14,
-      height: 26,
-      decoration:
-          BoxDecoration(color: const Color(0xFF2A2118), borderRadius: BorderRadius.circular(7)));
-
-  Widget _blush() => Container(
-      width: 14,
-      height: 9,
-      decoration: BoxDecoration(
-          color: AppColors.vermilion.withOpacity(0.55), borderRadius: BorderRadius.circular(6)));
-}
-
-class _Eye extends StatelessWidget {
-  const _Eye();
-  @override
-  Widget build(BuildContext context) => Container(
-      width: 10,
-      height: 12,
-      decoration:
-          BoxDecoration(color: const Color(0xFF241C12), borderRadius: BorderRadius.circular(5)));
 }
 
 class _DialogueBox extends StatelessWidget {

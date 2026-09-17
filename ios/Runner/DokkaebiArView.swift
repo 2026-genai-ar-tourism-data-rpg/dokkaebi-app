@@ -30,6 +30,14 @@
 //            ② snapshot: 지금 카메라+오버레이를 JPEG base64로. 촬영 미션의 셔터이자,
 //               갤러리 사진으로 검증을 속일 수 없게 하는 장치(항상 라이브 프레임).
 // 구현일: 2026-09-16 | 작성: kys (photo-verify/kys/v1)
+// ------------------------------------------------------------
+// [v4] beacon 마커(범용/하위호환) — 발광 피라미드 대신 기본 캐릭터 일러스트를 표시.
+// 구현(요약): 사람 형상 이미지를 입체 지오메트리에 입힐 수 없어, pattern 마커와 같은
+//            빌보드 판(SCNPlane + SCNBillboardConstraint)에 텍스처로 붙였다. 이미지는
+//            Assets.xcassets의 DokkaebiCharacter(Flutter의 assets/images/dokkaebi_character.png와
+//            동일 파일). 상시 회전 대신 은은한 상하 부유로 바꿨다 — 빌보드가 항상 정면을
+//            보므로 Y축 회전 애니메이션과 겹치면 제자리에서 뒤집히는 것처럼 보인다.
+// 구현일: 2026-09-17 | 작성: Claude
 // ============================================================
 import ARKit
 import Flutter
@@ -42,7 +50,7 @@ enum ArMarkerKind: String {
   case part        // RESTORE_AR — 흩어진 부재(주춧돌·기둥)
   case pattern     // PHOTO_FIND — 벽면 문양(수직 판)
   case hidden      // FIND       — 숨은 도깨비 자리의 풀숲
-  case beacon      // 범용 — v1의 피라미드 마커(하위호환 기본값)
+  case beacon      // 범용 — 기본 캐릭터 일러스트 빌보드(하위호환 기본값)
 }
 
 /// 마커 표시 상태 — Dart가 거리·조준을 보고 지시한다.
@@ -420,7 +428,7 @@ final class DokkaebiArView: NSObject, FlutterPlatformView, ARSCNViewDelegate, AR
     case .part: node = partNode(color: color)
     case .pattern: node = patternNode(color: color, label: spec.label)
     case .hidden: node = grassNode(color: color)
-    case .beacon: node = beaconNode(color: color)
+    case .beacon: node = beaconNode()
     }
     // 발자국·문양은 이름표가 오히려 방해된다(바닥에 붙은 자국 위에 글자가 뜬다).
     if spec.kind == .beacon || spec.kind == .part {
@@ -493,19 +501,25 @@ final class DokkaebiArView: NSObject, FlutterPlatformView, ARSCNViewDelegate, AR
     return node
   }
 
-  /// v1의 피라미드 — 범용/하위호환.
-  private func beaconNode(color: UIColor) -> SCNNode {
-    let geo = SCNPyramid(width: 0.22, height: 0.26, length: 0.22)
-    let mat = glowMaterial(color)
-    mat.transparency = 0.92
+  /// 범용/하위호환 — 기본 캐릭터 일러스트를 항상 카메라를 향하는 평면에 텍스처로 붙인다.
+  /// (v1의 피라미드는 사람 형상 이미지를 입체에 입힐 수 없어 빌보드 판으로 교체)
+  private func beaconNode() -> SCNNode {
+    let heightOverWidth: CGFloat = 902.0 / 572.0 // dokkaebi_character.png 원본 픽셀 비율
+    let height: CGFloat = 0.42
+    let geo = SCNPlane(width: height / heightOverWidth, height: height)
+    let mat = SCNMaterial()
+    mat.diffuse.contents = UIImage(named: "DokkaebiCharacter")
+    mat.isDoubleSided = true
+    mat.lightingModel = .constant
     geo.materials = [mat]
     let node = SCNNode(geometry: geo)
-    let spin = CABasicAnimation(keyPath: "rotation")
-    spin.fromValue = NSValue(scnVector4: SCNVector4(0, 1, 0, 0))
-    spin.toValue = NSValue(scnVector4: SCNVector4(0, 1, 0, Float.pi * 2))
-    spin.duration = 6
-    spin.repeatCount = .infinity
-    node.addAnimation(spin, forKey: "spin")
+    let billboard = SCNBillboardConstraint()
+    billboard.freeAxes = .Y
+    node.constraints = [billboard]
+    node.runAction(.repeatForever(.sequence([
+      .moveBy(x: 0, y: 0.04, z: 0, duration: 1.6),
+      .moveBy(x: 0, y: -0.04, z: 0, duration: 1.6),
+    ])))
     return node
   }
 
