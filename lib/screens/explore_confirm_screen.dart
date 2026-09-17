@@ -15,6 +15,8 @@
 //            도착점을 그대로 두면 다른 지역에서 피날레가 엉뚱한 곳으로 잡힌다.
 // 구현일: 2026-08-18 | 작성: kys (explore-input-wiring/kys/v1)
 // ============================================================
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
 
@@ -50,10 +52,25 @@ class _ExploreConfirmScreenState extends State<ExploreConfirmScreen> {
   bool _loading = false;
   String? _error;
 
+  /// 실제 생성 진행률은 서버가 안 준다(단일 응답 호출) — 체감 진행률을 흉내 낸다.
+  /// 90%에서 멈춰 기다리고, 응답이 오면 화면이 바로 다음 화면으로 넘어가 100%를 볼 일이 없다.
+  int _progress = 0;
+  Timer? _progressTimer;
+
   @override
   void dispose() {
     _nameController.dispose();
+    _progressTimer?.cancel();
     super.dispose();
+  }
+
+  void _startFakeProgress() {
+    _progress = 0;
+    _progressTimer?.cancel();
+    _progressTimer = Timer.periodic(const Duration(milliseconds: 300), (_) {
+      if (_progress >= 90) return;
+      setState(() => _progress = (_progress + (_progress < 60 ? 4 : 1)).clamp(0, 90));
+    });
   }
 
   // 위치를 못 얻었을 때만 쓰는 폴백 좌표(종로 MVP 기준점). 성공 경로에서는 안 쓴다.
@@ -64,6 +81,7 @@ class _ExploreConfirmScreenState extends State<ExploreConfirmScreen> {
       _loading = true;
       _error = null;
     });
+    _startFakeProgress();
     final d = widget.draft;
     try {
       // 출발점 = 지금 서 있는 자리. 실패하면 폴백 좌표 + 안내(조용히 넘어가지 않는다).
@@ -102,6 +120,7 @@ class _ExploreConfirmScreenState extends State<ExploreConfirmScreen> {
     } catch (e) {
       setState(() => _error = '생성 실패 — 서버가 켜져 있나요? ($e)');
     } finally {
+      _progressTimer?.cancel();
       if (mounted) setState(() => _loading = false);
     }
   }
@@ -183,10 +202,30 @@ class _ExploreConfirmScreenState extends State<ExploreConfirmScreen> {
               child: FilledButton(
                 onPressed: _loading ? null : _generate,
                 child: _loading
-                    ? const SizedBox(
-                        height: 20,
-                        width: 20,
-                        child: CircularProgressIndicator(strokeWidth: 2))
+                    ? Padding(
+                        padding: const EdgeInsets.symmetric(vertical: 4),
+                        child: Column(mainAxisSize: MainAxisSize.min, children: [
+                          Row(mainAxisSize: MainAxisSize.min, children: [
+                            const SizedBox(
+                                height: 16,
+                                width: 16,
+                                child: CircularProgressIndicator(
+                                    strokeWidth: 2, color: Color(0xFF06231F))),
+                            const SizedBox(width: 10),
+                            Text('나만의 코스 만드는 중… $_progress%'),
+                          ]),
+                          const SizedBox(height: 8),
+                          ClipRRect(
+                            borderRadius: BorderRadius.circular(2),
+                            child: LinearProgressIndicator(
+                              value: _progress / 100,
+                              minHeight: 4,
+                              backgroundColor: const Color(0xFF06231F).withOpacity(0.2),
+                              valueColor: const AlwaysStoppedAnimation(Color(0xFF06231F)),
+                            ),
+                          ),
+                        ]),
+                      )
                     : const Text('나만의 코스 만들기'),
               ),
             ),

@@ -48,6 +48,7 @@ import '../game/run_session.dart';
 import '../store.dart';
 import '../theme.dart';
 import '../utils/web_mercator.dart';
+import '../widgets/dokkaebi_pin.dart';
 import '../widgets/honbul_style.dart';
 import '../widgets/ui.dart';
 import 'quest_journey_screen.dart';
@@ -258,10 +259,15 @@ class _RouteMapState extends State<_RouteMap> with SingleTickerProviderStateMixi
     if (n.isFood) {
       dot = _glowCircle(core, glow, coreGrad, overlay);
     } else if (!isDone && !isNext) {
-      // 빈 원(미방문)
+      // 빈 원(미방문) — 도깨비 핀은 완료·다음에만 쓴다. 전부 다 쓰면 안 가본 곳까지
+      // 시선을 끌어 정작 "다음" 표시가 묻힌다.
       dot = Container(width: core, height: core, decoration: BoxDecoration(shape: BoxShape.circle, border: Border.all(color: hbCream.withOpacity(0.3))));
     } else {
-      dot = _glowCircle(core, glow, coreGrad, overlay);
+      dot = DokkaebiPin(
+        tone: isDone ? DokkaebiPinTone.done : DokkaebiPinTone.next,
+        number: no,
+        size: 34,
+      );
     }
 
     return Column(mainAxisSize: MainAxisSize.min, children: [
