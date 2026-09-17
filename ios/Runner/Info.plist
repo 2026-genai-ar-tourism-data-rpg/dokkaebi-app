@@ -89,7 +89,7 @@
 	<key>NSLocationWhenInUseUsageDescription</key>
 	<string>기억석 조각이 있는 장소에 도착했는지 확인하기 위해 위치 정보가 필요합니다.</string>
 	<key>NSCameraUsageDescription</key>
-	<string>AR로 기억석 조각을 찾기 위해 카메라를 사용합니다.</string>
+	<string>AR로 기억석 조각을 찾거나 영수증을 촬영해 인증하기 위해 카메라를 사용합니다.</string>
 	<key>NSMotionUsageDescription</key>
 	<string>AR 화면에서 조각이 있는 방향을 가리키기 위해 기기의 방향 센서를 사용합니다.</string>
 	<key>NSPhotoLibraryAddUsageDescription</key>

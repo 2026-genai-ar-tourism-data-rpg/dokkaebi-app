@@ -188,6 +188,7 @@
 // 구현일: 2026-08-22 | 작성: kys (play-path-unify/kys/v1)
 // ============================================================
 import 'dart:async';
+import 'dart:convert';
 import 'dart:math' as math;
 import 'dart:typed_data';
 
@@ -196,6 +197,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart' show rootBundle;
 import 'package:geolocator/geolocator.dart'
     show Geolocator, LocationAccuracy, LocationSettings, Position;
+import 'package:image_picker/image_picker.dart';
 import 'package:kakao_maps_flutter/kakao_maps_flutter.dart';
 
 import '../api/api_client.dart';
@@ -389,6 +391,9 @@ class _QuestJourneyScreenState extends State<QuestJourneyScreen> with TickerProv
 
   /// 기록을 기다리는(또는 실패한) 챕터 확정 — 다시 시도·기록 없이 계속이 이어받는다.
   _PendingClaim? _pendingClaim;
+
+  /// 식음 노드 영수증 사진을 AI 비전으로 확인하는 중 — 연타·중복 촬영을 막는다.
+  bool _verifyingReceipt = false;
 
   /// 방금 확정된 조각 — 획득 팝업이 읽는다(확정되면 조각 수가 올라 "지금 챕터"는 다음 장소가 된다).
   _ClaimedReward? _claimed;
@@ -781,10 +786,38 @@ class _QuestJourneyScreenState extends State<QuestJourneyScreen> with TickerProv
     );
     if (!mounted || passed != true) return;
     if (_photoLeadsToTrail) {
-      go('trail');
+      _openArTrail();
     } else {
       _claimCurrentChapter();
     }
+  }
+
+  /// 발자국 추적 — 실제 ARKit 거리 판정(HUNT)으로 연다. 화면 위 고정 아이콘 3개를
+  /// 탭하면 끝나는 예전 목업은 카메라·GPS를 전혀 안 봤다 — 사진 미션(_openArPhoto)과
+  /// 같은 원칙으로 실제 AR 화면을 연다. 통과해 돌아오면 조각을 확정하고,
+  /// 뒤로 나오면 지령 화면에 그대로 남는다(재도전 가능).
+  ///
+  /// 데모 모드(코스 없음)는 이 함수를 타지 않는다 — go('trail')이 예전 목업
+  /// _trailScreen()으로 남아 있다(실제 GPS·미션 데이터가 없어 AR이 의미 없음).
+  Future<void> _openArTrail() async {
+    final n = _curNode!;
+    final steps = _actionAtom('follow')?.steps ?? 3;
+    final passed = await Navigator.push<bool>(
+      context,
+      MaterialPageRoute(
+        builder: (_) => ArSearchScreen(
+          placeName: n.name ?? _target.name,
+          order: _target.obj,
+          hints: n.objective?.hints ?? const [],
+          total: steps,
+          missionType: 'HUNT',
+          targetCount: steps,
+          nodeId: n.nodeId,
+        ),
+      ),
+    );
+    if (!mounted || passed != true) return;
+    _claimCurrentChapter(also: () => fragTaken = true);
   }
 
   /// 사진 다음에 발자국 추적이 이어지는가 — S4(사진→추적→파편)만. 전략이 없으면 PATH_TRACE 폴백.
@@ -1188,6 +1221,45 @@ class _QuestJourneyScreenState extends State<QuestJourneyScreen> with TickerProv
         showReward = true;
       });
     });
+  }
+
+  /// 식음 노드 — 카메라로 영수증을 찍어 AI 비전(서버 /v1/photos/verify, ar_search_screen과 동일
+  /// 엔드포인트)으로 확인한 뒤에만 주문 인증을 확정한다. 갤러리 선택은 검증 우회라 카메라만 연다.
+  /// verified=false면 화면에 남아 다시 찍게 하고, null(판정 불가)은 신뢰로 통과시킨다
+  /// (ar_search_screen._shoot()과 같은 원칙 — 현장에서 모델 장애로 막히면 안 된다).
+  Future<void> _verifyReceiptAndClaim(VoidCallback also) async {
+    if (_verifyingReceipt) return;
+    final photo = await ImagePicker().pickImage(source: ImageSource.camera, imageQuality: 85);
+    if (photo == null || !mounted) return; // 사용자가 취소함
+
+    setState(() => _verifyingReceipt = true);
+    final bytes = await photo.readAsBytes();
+    final b64 = base64Encode(bytes);
+
+    PhotoVerdict verdict;
+    try {
+      verdict = await ApiClient().verifyPhoto(
+        nodeId: _target.node?.nodeId ?? '',
+        nodeName: _target.name,
+        target: '카페·식당에서 결제한 영수증',
+        imageB64: b64,
+      );
+    } catch (_) {
+      verdict = const PhotoVerdict(
+        verified: null, mode: 'unverified', confidence: 0, textSeen: '',
+        npcLine: '허허, 영수증이 잘 안 보이는구나. 네 말을 믿어 보겠느니라.',
+      );
+    }
+    if (!mounted) return;
+    setState(() => _verifyingReceipt = false);
+
+    if (verdict.passes) {
+      _claimCurrentChapter(also: also);
+    } else {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(verdict.npcLine.isNotEmpty ? verdict.npcLine : '영수증이 잘 안 보여. 다시 찍어줘.')),
+      );
+    }
   }
 
   /// 챕터 조각 확정 — 서버 기록(collect·complete)이 성공해야 화면(onClaimed)과 로컬 진행(_grantChapter)에
@@ -3290,11 +3362,15 @@ class _QuestJourneyScreenState extends State<QuestJourneyScreen> with TickerProv
                 ),
                 const SizedBox(height: 12),
                 if (!cafeOrdered)
-                  _cta('영수증 촬영으로 인증하기', () => _claimCurrentChapter(also: () {
-                    cafeOrdered = true;
-                    spent += cafePayN;
-                    coupon = 0;
-                  }), fontSize: 15)
+                  _cta(
+                    _verifyingReceipt ? '영수증 확인하는 중…' : '영수증 촬영으로 인증하기',
+                    () => _verifyReceiptAndClaim(() {
+                      cafeOrdered = true;
+                      spent += cafePayN;
+                      coupon = 0;
+                    }),
+                    fontSize: 15,
+                  )
                 else
                   Container(
                     padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),

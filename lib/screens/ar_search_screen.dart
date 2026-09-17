@@ -111,6 +111,15 @@ class _ArSearchScreenState extends State<ArSearchScreen> with SingleTickerProvid
 
   bool get _isPhotoMission => _mission?.type == ArMissionType.photo;
 
+  // ── 촬영 미션 전용 디지털 줌 ──
+  // 펜스 등으로 실제 사물에 다가갈 수 없는 경우를 위한 확대. HUNT·RESTORE_AR·FIND는
+  // 카메라 프레임을 보지 않고 거리·조준만으로 판정하므로(ar_mission_controller.dart 참고)
+  // 확대해도 판정에 영향이 없다 — 그래서 사진 미션에만 켠다.
+  static const double _zoomMin = 1.0;
+  static const double _zoomMax = 3.0;
+  double _zoom = _zoomMin;
+  double _zoomBase = _zoomMin;
+
   /// 이 미션이 쓰는 마커 — 기존 동작이면 조각·도깨비 2개.
   late final List<ArMarkerDef> _markers;
 
@@ -219,6 +228,17 @@ class _ArSearchScreenState extends State<ArSearchScreen> with SingleTickerProvid
     // verified=false: 화면에 남는다. 대사가 "아닌 듯하구나"를 말하고 셔터는 다시 열려 있다.
   }
 
+  /// 사진 미션에서만 두 손가락 확대·축소를 받는다 — 펜스 등으로 다가갈 수 없는
+  /// 사물을 화면 안에서 키워 본다. 다른 미션은 손대지 않고 그대로 반환한다.
+  Widget _zoomable(Widget child) {
+    if (!_isPhotoMission) return child;
+    return GestureDetector(
+      onScaleStart: (_) => _zoomBase = _zoom,
+      onScaleUpdate: (d) => setState(() => _zoom = (_zoomBase * d.scale).clamp(_zoomMin, _zoomMax)),
+      child: Transform.scale(scale: _zoom, child: child),
+    );
+  }
+
   @override
   void dispose() {
     _mission?.dispose();
@@ -234,7 +254,7 @@ class _ArSearchScreenState extends State<ArSearchScreen> with SingleTickerProvid
         // 배경: 실기기(ARKit 지원)면 실제 카메라+3D 마커, 아니면(시뮬레이터·구형·Android·
         // 확인 중) 검은 placeholder + 아래 2D 고정 마커로 폴백.
         if (_arSupported == true && _mode == 'scan' && !_arError)
-          NativeArView(
+          _zoomable(NativeArView(
             markers: _markers,
             referenceImages: widget.arReferenceImages,
             onMarkerTapped: _onNativeMarkerTapped,
@@ -245,7 +265,8 @@ class _ArSearchScreenState extends State<ArSearchScreen> with SingleTickerProvid
             },
             onTelemetry: _mission?.onTelemetry,
             onImageDetected: _mission?.onImageDetected,
-          )
+            enablePinchZoom: _isPhotoMission,
+          ))
         else if (widget.remote)
           // 원격 체험 배경 — 그 자리에 없으니 카메라 대신 도깨비 기운이 도는 밤 풍경.
           _RemoteBackdrop(anim: _ac)

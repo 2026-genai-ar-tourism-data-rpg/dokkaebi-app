@@ -16,7 +16,7 @@ publish_to: 'none' # Remove this line if you wish to publish to pub.dev
 # https://developer.apple.com/library/archive/documentation/General/Reference/InfoPlistKeyReference/Articles/CoreFoundationKeys.html
 # In Windows, build-name is used as the major, minor, and patch parts
 # of the product and file versions while build-number is used as the build suffix.
-version: 1.0.0+9
+version: 1.0.0+10
 
 environment:
   # Dart SDK 하한만 둔다. Flutter SDK는 팀원 간 버전이 갈려 있어(3.24 ↔ 3.44)
@@ -69,6 +69,9 @@ dependencies:
   # 방법이 없었다. Supabase Auth로 신원을 증명하고 서버(dokkaebi-server)가
   # 같은 user_id를 재발급하도록 다리를 놓는다(진행도는 그대로 서버가 들고 있음).
   supabase_flutter: ^2.17.2
+
+  # 식음 노드 영수증 촬영 — 카메라 소스로만 연다(갤러리 사진 선택 금지, 검증 우회 방지).
+  image_picker: ^1.2.3
 
 dev_dependencies:
   flutter_test:

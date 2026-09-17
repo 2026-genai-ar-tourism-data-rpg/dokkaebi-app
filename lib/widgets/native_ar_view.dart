@@ -16,7 +16,8 @@
 // ============================================================
 import 'dart:io' show Platform;
 
-import 'package:flutter/foundation.dart' show kIsWeb;
+import 'package:flutter/foundation.dart' show Factory, kIsWeb;
+import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
@@ -169,6 +170,13 @@ class NativeArView extends StatefulWidget {
   /// 참조 이미지 인식(인자=참조 이름/URL). PHOTO_FIND의 "AR이 타깃을 봤다" 신호.
   final ValueChanged<String>? onImageDetected;
 
+  /// 두 손가락 확대·축소를 감싼 Flutter 위젯(ar_search_screen._zoomable)까지
+  /// 올려 보낼지. 기본은 false — UiKitView는 기본적으로 자기 영역의 제스처를
+  /// 네이티브가 먼저 가져가므로, 이걸 켜야 ScaleGestureRecognizer가 경쟁에 끼어
+  /// 밖의 GestureDetector.onScaleUpdate가 실제로 불린다. 마커 탭(onMarkerTapped)은
+  /// 그대로 네이티브가 받는다 — 켜져도 한 손가락 탭 인식은 바뀌지 않는다.
+  final bool enablePinchZoom;
+
   const NativeArView({
     super.key,
     required this.markers,
@@ -179,6 +187,7 @@ class NativeArView extends StatefulWidget {
     this.onReady,
     this.referenceImages = const [],
     this.onImageDetected,
+    this.enablePinchZoom = false,
   });
 
   @override
@@ -248,6 +257,9 @@ class _NativeArViewState extends State<NativeArView> {
       },
       creationParamsCodec: const StandardMessageCodec(),
       onPlatformViewCreated: _onPlatformViewCreated,
+      gestureRecognizers: widget.enablePinchZoom
+          ? {Factory<OneSequenceGestureRecognizer>(() => ScaleGestureRecognizer())}
+          : const <Factory<OneSequenceGestureRecognizer>>{},
     );
   }
 }
