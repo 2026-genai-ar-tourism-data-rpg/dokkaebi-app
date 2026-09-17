@@ -499,6 +499,40 @@ void main() {
     });
   });
 
+  // 실기기 제보 — 이동 화면 지도가 손으로 움직이지 않았다(오버레이 정합 때문에 제스처를 막아 뒀다).
+  // 이제 움직일 수 있고, 움직이면 내 위치 따라가기를 끄고 "내 위치"로 되돌린다.
+  group('이동 화면 지도 조작', () {
+    Future<void> toGpsScreen(WidgetTester tester) async {
+      final sc = _course(2);
+      await ScenarioStore.I.add(sc);
+      await _toMap(tester, sc, location: _atSpot);
+      await tester.tap(find.text('이동 시작 — GPS 추적'));
+      await tester.pump(const Duration(milliseconds: 50));
+    }
+
+    testWidgets('지도를 손으로 만지면 따라가기가 꺼지고 «내 위치» 버튼이 나온다', (tester) async {
+      await toGpsScreen(tester);
+      expect(find.text('내 위치'), findsNothing, reason: '처음엔 내 위치를 따라간다');
+
+      await tester.tapAt(const Offset(40, 300)); // 지도 위(칩·카드·목표 핀을 피한 자리)
+      await tester.pump();
+
+      expect(find.text('내 위치'), findsOneWidget);
+    });
+
+    testWidgets('«내 위치»를 누르면 다시 따라가기로 돌아간다', (tester) async {
+      await toGpsScreen(tester);
+      await tester.tapAt(const Offset(40, 300));
+      await tester.pump();
+
+      await tester.tap(find.text('내 위치'));
+      await tester.pump();
+
+      expect(find.text('내 위치'), findsNothing);
+      expect(tester.takeException(), isNull);
+    });
+  });
+
   // NPC 이름(_npcName)은 이미 노드 데이터를 쓰는데 말풍선(_npcLines)은 종로 시안
   // "운현궁" 대사가 고정으로 박혀 있었다 — 이름은 맞는데 내용이 딴 지역 얘기였다.
   group('첫 대사 (dialogue)', () {
