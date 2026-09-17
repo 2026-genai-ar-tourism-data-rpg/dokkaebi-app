@@ -4,7 +4,7 @@
 // 구현(요약): CustomPainter로 홈/퀘스트/도감/프로필 4종을 그린다. filled=false는 외곽선만,
 //            filled=true는 색으로 채우고 세부선은 배경색(AppColors.surface, 네비바 배경과 동일)으로
 //            "펀치아웃"해 입체적인 배지처럼 보이게 한다.
-// 구현일: 2026-09-01 | 작성: Claude (game-ui-polish/ljs/v1)
+// 구현일: 2026-09-01 | 브랜치: game-ui-polish/ljs/v1
 // ============================================================
 import 'package:flutter/material.dart';
 

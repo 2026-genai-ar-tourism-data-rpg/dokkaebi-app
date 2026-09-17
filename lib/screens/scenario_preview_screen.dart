@@ -4,7 +4,7 @@
 // 구현(요약): 생성된 시나리오 요약 + 방문 순서 미리보기. "탐험 시작"을 눌러야
 //            실제 프롤로그/코스 허브(ScenarioScreen)로 들어간다.
 //            예상 시간·난이도는 서버가 안 주는 값이라 draft(사용자가 고른 조건)로 대신 표시.
-// 구현일: 2026-08-05 | 작성: Claude · 시안: dokkaebi-ai/docs/images/10-senario-detail.png
+// 구현일: 2026-08-05 | 시안: dokkaebi-ai/docs/images/10-senario-detail.png
 // ============================================================
 import 'package:flutter/material.dart';
 
