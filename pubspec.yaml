@@ -98,6 +98,8 @@ flutter:
   assets:
     - assets/images/my_location.png
     - assets/images/region_pin.png
+    - assets/images/dokkaebi_character.png
+    - assets/images/dokkaebi_character_bust.png
 
   # An image asset can refer to one or more resolution-specific "variants", see
   # https://flutter.dev/to/resolution-aware-images
