@@ -7,6 +7,8 @@
 //       ② 사진 단계에 들어가면 팀원의 AR 탐색 화면(실제 카메라 + 서버 사진 판정)을 열고, 통과해
 //       돌아오면 예전 사진 화면의 '완료' 뒤 흐름(발자국 또는 조각 확정)을 잇는다. 뒤로 나오면 지령
 //       화면에 남는다. 그림 위 타이머 사진 화면은 데모(코스 없음)에만 남는다.
+//       ③ 앞 장소를 건너뛰고 들어오면 그 장소들이 주는 단서가 없다는 걸 지도 화면에서 한 번 알린다
+//       (_skippedClues). 진행은 막지 않는다. 코스 상세의 스낵바는 화면이 바로 넘어가 안 보여서 뺐다.
 // 구현일: 2026-09-17 | 작성: ljs (play-screen-sync/ljs/v1)
 // ------------------------------------------------------------
 // [v14] 이동 화면 지도 — 손으로 확대·축소·이동할 수 있게 하고, 내 위치가 아래 카드에 가려
@@ -406,6 +408,10 @@ class _QuestJourneyScreenState extends State<QuestJourneyScreen> with TickerProv
 
   /// 지금 플레이 중인 챕터 번호.
   int _chapter = 0;
+
+  /// 앞 장소를 건너뛰고 들어왔을 때 못 받은 단서(단서 이름 · 그 단서를 주는 장소).
+  /// 비어 있지 않으면 지도 화면에서 한 번 알린다. 확인하면 비운다.
+  List<({String clue, String place})> _skippedClues = const [];
   late List<Map<String, dynamic>> enemies = [
     {'id': 1, 'left': .38, 'top': .30, 'size': 96.0, 'dur': 3.0, 'dead': false},
     {'id': 2, 'left': .12, 'top': .48, 'size': 64.0, 'dur': 3.6, 'dead': false},
@@ -826,7 +832,18 @@ class _QuestJourneyScreenState extends State<QuestJourneyScreen> with TickerProv
       ]);
     fragments = _doneChapters.length;
     _chapter = _startChapter();
+    _skippedClues = _cluesSkippedBefore(_chapter);
   }
+
+  /// [chapter]보다 앞인데 안 끝낸 장소가 주는 단서 중 아직 없는 것.
+  /// 순서대로 오면 늘 비어 있다 — 코스 상세에서 뒤 장소를 먼저 골랐을 때만 생긴다.
+  List<({String clue, String place})> _cluesSkippedBefore(int chapter) => [
+        for (var i = 0; i < chapter && i < targets.length; i++)
+          if (!_doneChapters.contains(i) &&
+              targets[i].node?.clueName != null &&
+              !pstate.clues.contains(targets[i].node!.clueName))
+            (clue: targets[i].node!.clueName!, place: targets[i].name),
+      ];
 
   /// 시작 챕터 — 코스 상세에서 고른 장소가 있고 아직 안 끝났으면 거기서, 아니면 안 끝난 첫 장소.
   /// 피날레는 다른 조각을 다 모아야 열리므로, 먼저 고르더라도 안 끝난 첫 장소로 돌린다.
@@ -1330,6 +1347,7 @@ class _QuestJourneyScreenState extends State<QuestJourneyScreen> with TickerProv
       fragments = 0;
       _doneChapters.clear();
       _chapter = 0;
+      _skippedClues = const [];
       coupon = 0;
       spent = 0;
       exp = 0;
@@ -1415,6 +1433,7 @@ class _QuestJourneyScreenState extends State<QuestJourneyScreen> with TickerProv
         if (hintOpen) _hintSheet(),
         if (collOpen) _collSheet(),
         if (branchAt != null) _branchSheet(branchAt!),
+        if (screen == 'map' && _skippedClues.isNotEmpty) _skippedCluesSheet(),
         if (guidance != null) _guidanceSheet(guidance!),
       ]),
     );
@@ -1423,6 +1442,47 @@ class _QuestJourneyScreenState extends State<QuestJourneyScreen> with TickerProv
   // ════════════════════════════════════════════════════
   // 갈림길 (route_tree 분기) — 선택지 렌더
   // ════════════════════════════════════════════════════
+  /// 앞 장소를 건너뛰고 왔다는 안내 — 그 장소들이 주는 단서가 없다는 걸 알린다(진행은 막지 않는다).
+  Widget _skippedCluesSheet() {
+    return Positioned.fill(child: Stack(children: [
+      Container(color: Colors.black.withOpacity(0.62)),
+      Align(alignment: Alignment.bottomCenter, child: Container(
+        width: double.infinity,
+        padding: const EdgeInsets.fromLTRB(20, 16, 20, 36),
+        decoration: const BoxDecoration(
+          gradient: LinearGradient(begin: Alignment.topCenter, end: Alignment.bottomCenter, colors: [_parchTop, _parchBot]),
+          borderRadius: BorderRadius.vertical(top: Radius.circular(26)),
+        ),
+        child: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.start, children: [
+          Center(child: Container(width: 44, height: 5, decoration: BoxDecoration(color: const Color(0xFFC9B88F), borderRadius: BorderRadius.circular(999)))),
+          const SizedBox(height: 14),
+          Text('앞 장소의 단서 없이 왔느니라', style: dokkaebiTitle(size: 20, color: _parchInk)),
+          const SizedBox(height: 8),
+          Text('${_target.name}에 먼저 왔구나. 아래 단서는 앞 장소를 끝내야 얻는다 — 없이 가면 도깨비가 알아보지 못할 수 있느니.',
+              style: dokkaebiTitle(size: 14.5, color: _parchInk, height: 1.6)),
+          const SizedBox(height: 14),
+          for (final s in _skippedClues)
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 11),
+              margin: const EdgeInsets.only(bottom: 8),
+              decoration: BoxDecoration(
+                color: _verm.withOpacity(0.08),
+                borderRadius: BorderRadius.circular(12),
+                border: Border.all(color: _verm.withOpacity(0.45)),
+              ),
+              child: Row(children: [
+                Expanded(child: Text('단서 「${s.clue}」', style: dokkaebiTitle(size: 14.5, color: _parchInk))),
+                Text(s.place, style: const TextStyle(fontSize: 12, color: _bronze, fontWeight: FontWeight.w700)),
+              ]),
+            ),
+          const SizedBox(height: 8),
+          _cta('그래도 여기부터', () => setState(() => _skippedClues = const []), bg: _parchInk, fg: _cream),
+        ]),
+      )),
+    ]));
+  }
+
   Widget _branchSheet(QuestNode bp) {
     final b = bp.branch!;
     return Positioned.fill(child: Stack(children: [

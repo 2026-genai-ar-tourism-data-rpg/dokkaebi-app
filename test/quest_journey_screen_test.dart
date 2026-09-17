@@ -1411,6 +1411,45 @@ void main() {
           reason: '조각 1개를 "다음은 2장"으로 세면 이미 끝낸 장소를 다시 하게 된다');
     });
 
+    Scenario clueChain() => Scenario.fromJson({
+          'scenario_id': 'clue_chain',
+          'title': '종로구의 기억석',
+          'region': '종로구',
+          'node_sequence': [
+            _stone('k1', '운현궁', grants: ['fragment:frag_k1', 'clue:申時']),
+            _stone('k2', '익선동', grants: ['fragment:frag_k2', 'clue:ㄱ']),
+            _stone('k3', '인사동', grants: ['fragment:frag_k3']),
+            _stone('k4', '광화문', finale: true),
+          ],
+        });
+
+    testWidgets('앞 장소를 건너뛰면 못 받은 단서를 알리고, 확인하면 그 장소부터 진행한다', (tester) async {
+      final sc = clueChain();
+      await ScenarioStore.I.add(sc);
+      await _toMap(tester, sc, startNodeId: 'k3');
+
+      expect(find.text('앞 장소의 단서 없이 왔느니라'), findsOneWidget);
+      expect(find.text('단서 「申時」'), findsOneWidget);
+      expect(find.text('단서 「ㄱ」'), findsOneWidget);
+      expect(find.text('운현궁'), findsWidgets);
+
+      await tester.tap(find.text('그래도 여기부터'));
+      await tester.pump();
+
+      expect(find.text('앞 장소의 단서 없이 왔느니라'), findsNothing);
+      expect(find.text('제 3 장 진행 중'), findsOneWidget);
+    });
+
+    testWidgets('앞 장소를 이미 끝냈거나 순서대로 들어오면 단서 안내가 없다', (tester) async {
+      final sc = clueChain();
+      await ScenarioStore.I.add(sc);
+      await ScenarioStore.I.completeNodeWithGrants(sc.scenarioId, sc.nodeSequence[0]);
+      await _toMap(tester, sc, startNodeId: 'k2'); // 앞 장소(운현궁)는 끝냄
+
+      expect(find.text('앞 장소의 단서 없이 왔느니라'), findsNothing);
+      expect(find.text('제 2 장 진행 중'), findsOneWidget);
+    });
+
     testWidgets('건너뛴 장소를 끝내면 다음 차례는 안 끝난 첫 장소로 돌아간다', (tester) async {
       Map<String, dynamic> quizNode(String id, String name) => _rich(id, name, 'QUIZ_FIND', quiz: {
             'q': '$name에서 무엇을 살피더냐?',

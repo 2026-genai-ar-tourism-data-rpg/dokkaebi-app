@@ -443,8 +443,8 @@ class _ScenarioScreenState extends State<ScenarioScreen> {
   }
 
   /// 코스 진행 화면을 이 장소부터 연다 — 코스 상세에서 누른 장소가 곧 플레이할 장소다.
-  /// 들어갈 조건(requires)은 장소 단위 화면과 같은 규칙: 막힌 곳(피날레)은 안내만, 단서 없이
-  /// 가는 곳은 한마디 알려 주고 연다.
+  /// 막힌 곳(피날레)은 장소 단위 화면과 같은 규칙으로 안내만 한다. 앞 장소 단서 없이 가는 경우는
+  /// 코스 진행 화면이 들어가자마자 알린다 — 여기서 알리면 화면이 바로 넘어가 보이지 않는다.
   Future<void> _openJourneyAt(QuestNode n) async {
     final scn = widget.scenario;
     if (n.requires.isNotEmpty) {
@@ -452,9 +452,6 @@ class _ScenarioScreenState extends State<ScenarioScreen> {
       if (check.needsGuidance) {
         await _showGuidance(check);
         return;
-      }
-      if (check.softMissing) {
-        _snack('${check.missing.map((m) => m.label).join('·')} 없이 가면 도깨비가 알아보지 못하느니.');
       }
     }
     if (!mounted) return;
