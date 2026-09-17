@@ -1,4 +1,14 @@
 // ============================================================
+// [v15] 코스 상세와 같은 장소로 열기 + 사진 미션을 실제 AR 카메라로(계획 C2·B10).
+// 구현(요약): ① 진행을 "모은 조각 수 = 다음 챕터 번호"로 세던 것을 "끝낸 챕터 집합"(_doneChapters)과
+//       "지금 챕터"(_chapter)로 바꿨다 — 코스 상세에서 뒤 장소를 먼저 고르면(startNodeId) 조각 수와
+//       챕터 번호가 어긋나 이미 끝낸 장소를 다시 하게 된다. 챕터를 끝내면 안 끝난 첫 장소로 넘어가고,
+//       피날레는 다른 조각을 다 모아야 시작 장소로 고를 수 있다.
+//       ② 사진 단계에 들어가면 팀원의 AR 탐색 화면(실제 카메라 + 서버 사진 판정)을 열고, 통과해
+//       돌아오면 예전 사진 화면의 '완료' 뒤 흐름(발자국 또는 조각 확정)을 잇는다. 뒤로 나오면 지령
+//       화면에 남는다. 그림 위 타이머 사진 화면은 데모(코스 없음)에만 남는다.
+// 구현일: 2026-09-17 | 작성: ljs (play-screen-sync/ljs/v1)
+// ------------------------------------------------------------
 // [v14] 이동 화면 지도 — 손으로 확대·축소·이동할 수 있게 하고, 내 위치가 아래 카드에 가려
 //       "GPS가 안 잡힌다"로 보이던 것을 고쳤다(실기기 제보).
 // 구현(요약): ① 제스처 차단(IgnorePointer)을 풀고 onCameraMoveEnd로 새 중심·줌을 받아 오버레이를
@@ -200,6 +210,7 @@ import '../theme.dart';
 import '../utils/web_mercator.dart';
 import '../widgets/native_ar_view.dart';
 import '../widgets/reward_pop.dart';
+import 'ar_search_screen.dart';
 import 'create_scenario_screen.dart' show haversineMeters;
 
 // ── 실제 GPS 도착 인증 ────────────────────────────────
@@ -322,12 +333,16 @@ class QuestJourneyScreen extends StatefulWidget {
   /// 서버 플레이 세션(run·도착 판정·조각 기록). 테스트가 가짜 서버를 붙인 세션으로 갈아끼운다.
   final RunSession? runSession;
 
+  /// 이 장소부터 연다(코스 상세에서 아직 차례가 아닌 장소를 눌렀을 때). 없으면 안 끝난 첫 장소부터.
+  final String? startNodeId;
+
   const QuestJourneyScreen({
     super.key,
     this.scenario,
     this.locationService = const LocationService(),
     this.apiClient,
     this.runSession,
+    this.startNodeId,
   });
   @override
   State<QuestJourneyScreen> createState() => _QuestJourneyScreenState();
@@ -384,6 +399,13 @@ class _QuestJourneyScreenState extends State<QuestJourneyScreen> with TickerProv
   String? _liveAnswer;
   String quizState = 'idle';
   int fragments = 0, coupon = 0, spent = 0, exp = 0, brush = ScenarioStore.defaultBrush;
+
+  /// 끝낸 챕터(장소) 번호들. 예전엔 "모은 조각 수 = 다음 챕터 번호"로 셌는데, 순서를 건너뛰어
+  /// 뒤 장소를 먼저 끝내면 번호가 어긋난다 — 무엇을 끝냈는지를 직접 들고 다닌다.
+  final Set<int> _doneChapters = {};
+
+  /// 지금 플레이 중인 챕터 번호.
+  int _chapter = 0;
   late List<Map<String, dynamic>> enemies = [
     {'id': 1, 'left': .38, 'top': .30, 'size': 96.0, 'dur': 3.0, 'dead': false},
     {'id': 2, 'left': .12, 'top': .48, 'size': 64.0, 'dur': 3.6, 'dead': false},
@@ -507,7 +529,7 @@ class _QuestJourneyScreenState extends State<QuestJourneyScreen> with TickerProv
       ..repeat(reverse: true);
     _restoreProgress();
     targets = _resolveTargets(widget.scenario);
-    fragments = math.min(_stoneTotal, fragments);   // 코스보다 많은 조각은 표시상 의미 없음
+    _restoreChapters();
     isArSupported().then((ok) {
       if (mounted) setState(() => _arSupported = ok);
     });
@@ -717,7 +739,52 @@ class _QuestJourneyScreenState extends State<QuestJourneyScreen> with TickerProv
   /// 예전엔 힌트 창을 처음 열거나 퀴즈를 틀릴 때에야 만들어져 "멈춰 있으면 힌트1"(idle60) 타이머가 늦게 켜졌다.
   void _enterMission(String stage) {
     _hint ??= _newHint();
+    // 코스가 있으면 사진 미션은 실제 카메라 화면(AR 탐색)에서 찍고 서버가 판정한다.
+    // 예전 사진 화면은 그림 위에서 타이머만 돌았다 — 데모(코스 없음)에만 남긴다.
+    if (stage == 'photo' && widget.scenario != null && _curNode != null) {
+      _openArPhoto();
+      return;
+    }
     go(stage);
+  }
+
+  /// 사진 미션 — AR 탐색 화면을 열고, 통과해 돌아오면 예전 사진 화면의 '완료' 뒤 흐름을 그대로 잇는다
+  /// (발자국이 이어지는 S4면 발자국으로, 아니면 조각 확정). 뒤로 나오면 지령 화면에 그대로 남는다.
+  Future<void> _openArPhoto() async {
+    final n = _curNode!;
+    final m = n.mission;
+    final passed = await Navigator.push<bool>(
+      context,
+      MaterialPageRoute(
+        builder: (_) => ArSearchScreen(
+          placeName: n.name ?? _target.name,
+          order: _target.obj,
+          hints: n.objective?.hints ?? m?.hints ?? const [],
+          total: m?.targetCount ?? 1,
+          missionType: 'PHOTO_FIND', // 사진 단계로 들어왔으니 전략과 무관하게 촬영 미션으로 연다
+          targetCount: m?.targetCount,
+          nodeId: n.nodeId,
+          // AI가 TourAPI에서 고른 실존 촬영 대상이 우선, 없으면 capture 원자의 대상
+          photoTargets: (m?.photoTargets.isNotEmpty ?? false)
+              ? m!.photoTargets
+              : (_actionAtom('capture')?.targets ?? const []),
+          photoRefs: m?.photoRefs ?? const [],
+          arReferenceImages: m?.arReferenceImages ?? const [],
+        ),
+      ),
+    );
+    if (!mounted || passed != true) return;
+    if (_photoLeadsToTrail) {
+      go('trail');
+    } else {
+      _claimCurrentChapter();
+    }
+  }
+
+  /// 사진 다음에 발자국 추적이 이어지는가 — S4(사진→추적→파편)만. 전략이 없으면 PATH_TRACE 폴백.
+  bool get _photoLeadsToTrail {
+    final code = _curNode?.strategy.isNotEmpty == true ? strategyCode(_curNode!.strategy.first) : null;
+    return code == 'S4' || (code == null && _curNode?.mission?.type == 'PATH_TRACE');
   }
 
   @override
@@ -741,7 +808,53 @@ class _QuestJourneyScreenState extends State<QuestJourneyScreen> with TickerProv
   /// 이 코스의 조각 총수 — 실제 밟는 챕터 수. 데모(시나리오 없음)는 기본 4.
   int get _stoneTotal => targets.isEmpty ? _defaultTargets.length : targets.length;
 
-  int get _tIdx => math.min(_stoneTotal - 1, fragments);
+  int get _tIdx => math.min(_stoneTotal - 1, _chapter);
+
+  /// 저장된 진행으로 끝낸 챕터를 되살리고, 시작 챕터를 정한다.
+  /// 코스가 있으면 끝낸 장소(노드 id)로, 데모는 모은 조각 수로 센다.
+  void _restoreChapters() {
+    final s = widget.scenario;
+    final done = s == null ? null : ScenarioStore.I.doneOf(s.scenarioId).toSet();
+    _doneChapters
+      ..clear()
+      ..addAll([
+        for (var i = 0; i < _stoneTotal; i++)
+          if (done != null
+              ? (i < targets.length && targets[i].node != null && done.contains(targets[i].node!.nodeId))
+              : i < fragments)
+            i,
+      ]);
+    fragments = _doneChapters.length;
+    _chapter = _startChapter();
+  }
+
+  /// 시작 챕터 — 코스 상세에서 고른 장소가 있고 아직 안 끝났으면 거기서, 아니면 안 끝난 첫 장소.
+  /// 피날레는 다른 조각을 다 모아야 열리므로, 먼저 고르더라도 안 끝난 첫 장소로 돌린다.
+  int _startChapter() {
+    final id = widget.startNodeId;
+    if (id != null) {
+      final i = targets.indexWhere((t) => t.node?.nodeId == id);
+      final isFinale = i == _stoneTotal - 1;
+      final othersDone = _doneChapters.length >= _stoneTotal - 1;
+      if (i >= 0 && !_doneChapters.contains(i) && (!isFinale || othersDone)) return i;
+    }
+    return _nextOpenChapter();
+  }
+
+  /// 안 끝난 첫 챕터. 다 끝났으면 마지막(피날레).
+  int _nextOpenChapter() {
+    for (var i = 0; i < _stoneTotal; i++) {
+      if (!_doneChapters.contains(i)) return i;
+    }
+    return _stoneTotal - 1;
+  }
+
+  /// 챕터를 끝냈다 — 조각 수를 세고 다음 챕터로 넘어간다.
+  void _markChapterDone(int idx) {
+    _doneChapters.add(idx);
+    fragments = _doneChapters.length;
+    _chapter = _nextOpenChapter();
+  }
   _Target get _target => targets[_tIdx];
 
   /// 지금 챕터의 노드(데모 모드면 null). 퀴즈·NPC 이름·대사의 출처.
@@ -1054,7 +1167,7 @@ class _QuestJourneyScreenState extends State<QuestJourneyScreen> with TickerProv
     _claimChapter(idx, extra: extra, onClaimed: () async {
       setState(() {
         also?.call();
-        fragments = idx + 1;
+        _markChapterDone(idx);
         showReward = true;
       });
     });
@@ -1185,7 +1298,7 @@ class _QuestJourneyScreenState extends State<QuestJourneyScreen> with TickerProv
         ending = resolved;
         _endingChoiceId = choiceId;
         screen = 'ending';
-        fragments = _stoneTotal;
+        _markChapterDone(_stoneTotal - 1);
       });
       final s = widget.scenario;
       if (s != null) await ScenarioStore.I.setEnding(s.scenarioId, resolved);
@@ -1215,6 +1328,8 @@ class _QuestJourneyScreenState extends State<QuestJourneyScreen> with TickerProv
       dlgStep = 0;
       quizState = 'idle';
       fragments = 0;
+      _doneChapters.clear();
+      _chapter = 0;
       coupon = 0;
       spent = 0;
       exp = 0;
@@ -1997,10 +2112,10 @@ class _QuestJourneyScreenState extends State<QuestJourneyScreen> with TickerProv
                           width: 17, height: 17,
                           decoration: BoxDecoration(
                             borderRadius: BorderRadius.circular(4),
-                            gradient: i < fragments ? const LinearGradient(colors: [Color(0xFFF4D98A), _goldDim]) : null,
-                            color: i < fragments ? null : _cream.withOpacity(0.06),
-                            border: Border.all(color: i < fragments ? _verm : _muted.withOpacity(0.4), width: 1.5),
-                            boxShadow: i < fragments ? [BoxShadow(color: _gold.withOpacity(0.55), blurRadius: 12)] : null,
+                            gradient: _doneChapters.contains(i) ? const LinearGradient(colors: [Color(0xFFF4D98A), _goldDim]) : null,
+                            color: _doneChapters.contains(i) ? null : _cream.withOpacity(0.06),
+                            border: Border.all(color: _doneChapters.contains(i) ? _verm : _muted.withOpacity(0.4), width: 1.5),
+                            boxShadow: _doneChapters.contains(i) ? [BoxShadow(color: _gold.withOpacity(0.55), blurRadius: 12)] : null,
                           ),
                         ),
                       ),
@@ -2021,7 +2136,7 @@ class _QuestJourneyScreenState extends State<QuestJourneyScreen> with TickerProv
     // 범위를 벗어나 터지던 것도 여기서 막는다(조각 3개짜리 코스 = RangeError).
     final shown = math.min(targets.length, poiPos.length);
     for (var i = 0; i < shown; i++) {
-      final done = i < fragments;
+      final done = _doneChapters.contains(i);
       final active = i == _tIdx && !done;
       final size = active ? 58.0 : 48.0;
       out.add(Positioned(
@@ -2886,8 +3001,7 @@ class _QuestJourneyScreenState extends State<QuestJourneyScreen> with TickerProv
     final bracket = photoState == 'done' ? _teal : _cream.withOpacity(0.75);
     // S4(사진→추적→파편)만 발자국으로 이어진다 — S5(사진 인증)나 strategy 없는
     // 폴백(PATH_TRACE가 아닌 PHOTO_FIND)은 촬영만으로 끝난다.
-    final code = _curNode?.strategy.isNotEmpty == true ? strategyCode(_curNode!.strategy.first) : null;
-    final hasTrail = code == 'S4' || (code == null && _curNode?.mission?.type == 'PATH_TRACE');
+    final hasTrail = _photoLeadsToTrail;
     // capture 원자가 준 실제 촬영 대상(예: "현판·건물 외관") — 없으면 챕터 지령으로.
     final captureTargets = _actionAtom('capture')?.targets ?? const <String>[];
     final captureLabel = captureTargets.isNotEmpty ? captureTargets.join('·') : _target.obj;
@@ -3269,7 +3383,7 @@ class _QuestJourneyScreenState extends State<QuestJourneyScreen> with TickerProv
         if (isAnswer) {
           // 챕터 번호 하드코딩(옛 4챕터 종로 대본: 인사동=항상 2번) 제거.
           final idx = _tIdx;
-          setState(() { insaPick = t; insaState = 'opened'; fragments = idx + 1; });
+          setState(() { insaPick = t; insaState = 'opened'; _markChapterDone(idx); });
           hint.noteProgress();
           _grantChapter(idx);
         } else {
@@ -3704,7 +3818,7 @@ class _QuestJourneyScreenState extends State<QuestJourneyScreen> with TickerProv
             ],
             Expanded(child: GridView.count(
               crossAxisCount: 2, mainAxisSpacing: 11, crossAxisSpacing: 11, childAspectRatio: 0.92,
-              children: [for (var i = 0; i < targets.length; i++) _collCard(i, targets[i], i < fragments)],
+              children: [for (var i = 0; i < targets.length; i++) _collCard(i, targets[i], _doneChapters.contains(i))],
             )),
           ]),
         ),
