@@ -1,0 +1,326 @@
+<title>도깨비 핀 시안</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@400;500;700;900&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --bg:#0b0a08; --panel:#171310; --panel-2:#211b16;
+    --cream:#f2e4c9; --cream-ink:#3a2a1c;
+    --terracotta:#b5432e; --terracotta-ink:#4a190f;
+    --teal:#2a9d78; --teal-ink:#0c3324;
+    --gold:#d9a441; --gold-ink:#4a3308;
+    --ink:#f2ede3; --ink-dim:#a89c88; --hair:#332b23;
+  }
+  *{box-sizing:border-box}
+  body{
+    background:var(--bg); color:var(--ink);
+    font-family:'Noto Sans KR',system-ui,sans-serif;
+    margin:0; padding:0 16px; padding-block:32px;
+    line-height:1.6;
+  }
+  .wrap{max-width:420px; margin:0 auto}
+  h1{font-size:20px; font-weight:700; margin:0 0 4px; text-wrap:balance}
+  .lede{color:var(--ink-dim); font-size:13px; margin:0 0 28px}
+  h2{font-size:15px; font-weight:700; margin:0 0 4px; display:flex; align-items:baseline; gap:8px}
+  h2 .idx{color:var(--ink-dim); font-weight:400; font-size:12px}
+  .sec-note{color:var(--ink-dim); font-size:12.5px; margin:0 0 14px}
+  section{margin-bottom:40px}
+  section:last-of-type{margin-bottom:0}
+
+  .pin-grid{display:grid; grid-template-columns:1fr 1fr; gap:10px}
+  .pin-card{
+    background:var(--panel); border:0.5px solid var(--hair); border-radius:14px;
+    padding:16px 10px 12px; text-align:center;
+  }
+  .pin-swatch{
+    background:#f4ede0; border-radius:10px; padding:16px 0 10px; margin-bottom:10px;
+  }
+  .pin-card svg{width:72px; height:auto; display:block; margin:0 auto}
+  .pin-name{font-size:13px; font-weight:700; margin:0 0 2px}
+  .pin-desc{font-size:11.5px; color:var(--ink-dim); margin:0}
+
+  .size-row{
+    display:flex; align-items:flex-end; justify-content:center; gap:28px;
+    background:var(--panel); border:0.5px solid var(--hair); border-radius:14px;
+    padding:16px 10px 12px; margin-top:10px;
+  }
+  .size-item{text-align:center}
+  .size-item svg{display:block; margin:0 auto 6px}
+  .size-item p{font-size:11px; color:var(--ink-dim); margin:0}
+
+  .map-mock{
+    position:relative; border-radius:16px; overflow:hidden;
+    border:0.5px solid var(--hair);
+    background:#efe7d6;
+    height:250px;
+  }
+  .map-mock .blob{position:absolute; border-radius:50%}
+  .map-mock .park{background:#b9d99a}
+  .map-mock .water{background:#a9cdd8}
+  .map-mock .bld{position:absolute; background:#e0d8c4; border:0.5px solid #d0c7ae}
+  .map-mock .road{position:absolute; background:#f7f2e6}
+  .map-mock .pinpos{position:absolute; width:34px; transform:translate(-50%,-92%)}
+  .map-mock .pinpos svg{width:100%; display:block}
+
+  .btn-mock{
+    background:var(--panel); border:0.5px solid var(--hair); border-radius:16px;
+    padding:16px; margin-top:14px;
+  }
+  .btn-mock .label{font-size:11px; color:var(--ink-dim); margin:0 0 8px; letter-spacing:.02em}
+  .cta{
+    border-radius:999px; padding:15px 18px; text-align:center;
+    font-weight:700; font-size:15px;
+  }
+  .cta.idle{background:var(--teal); color:var(--teal-ink)}
+  .cta.blank{background:var(--panel-2); border:0.5px dashed var(--hair); color:var(--ink-dim); font-weight:400; font-size:13px}
+  .cta.loading{background:var(--teal); color:var(--teal-ink); display:flex; flex-direction:column; gap:8px}
+  .cta.loading .row{display:flex; align-items:center; justify-content:center; gap:10px}
+  .spinner{
+    width:16px; height:16px; border-radius:50%;
+    border:2px solid rgba(12,51,36,.35); border-top-color:var(--teal-ink);
+    animation:spin .8s linear infinite; flex:none;
+  }
+  @media (prefers-reduced-motion: reduce){ .spinner{animation-duration:2.4s} }
+  @keyframes spin{to{transform:rotate(360deg)}}
+  .track{height:4px; border-radius:2px; background:rgba(12,51,36,.2); overflow:hidden}
+  .fill{height:100%; width:47%; background:var(--teal-ink); border-radius:2px}
+
+  .arrow{color:var(--ink-dim); text-align:center; font-size:12px; margin:10px 0}
+  .compare{
+    display:flex; gap:10px; background:var(--panel); border:0.5px solid var(--hair);
+    border-radius:14px; padding:12px; margin-bottom:14px;
+  }
+  .compare figure{flex:1; margin:0; text-align:center}
+  .compare img{width:100%; border-radius:8px; display:block}
+  .compare figcaption{font-size:11px; color:var(--ink-dim); margin-top:6px}
+  .foot{
+    border-top:0.5px solid var(--hair); margin-top:36px; padding-top:16px;
+    color:var(--ink-dim); font-size:12px;
+  }
+  .tag{
+    display:inline-block; font-size:10.5px; font-weight:700; padding:2px 8px;
+    border-radius:999px; margin-bottom:8px; background:rgba(217,164,65,.18); color:var(--gold);
+  }
+</style>
+
+<div class="wrap">
+  <h1>도깨비 핀 — 5차(뿔 제거)</h1>
+  <p class="lede">뿔이 깃털처럼 보인다는 피드백으로 제거 — 몸통·금장 구름 장식 링·번호 배지는 4차와 동일. 로딩 상태는 승인된 대로 유지.</p>
+
+  <div class="compare">
+    <figure>
+      <img src="reference.jpg" alt="보내주신 레퍼런스">
+      <figcaption>레퍼런스(원본)</figcaption>
+    </figure>
+    <figure>
+      <svg viewBox="0 0 64 80" role="img" aria-label="새로 그린 핀 비교용">
+<defs>
+<linearGradient id="redCmp" x1="0" y1="0" x2="1" y2="1"><stop offset="0%" stop-color="#ff6b5a"/><stop offset="45%" stop-color="#ee2a24"/><stop offset="100%" stop-color="#af1414"/></linearGradient>
+<linearGradient id="goldCmp" x1="0" y1="0" x2="1" y2="1"><stop offset="0%" stop-color="#ffd97a"/><stop offset="100%" stop-color="#c9861f"/></linearGradient>
+<linearGradient id="badgeCmp" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="#8a1414"/><stop offset="100%" stop-color="#6b0f0f"/></linearGradient>
+<g id="cloudCmp"><circle cx="0" cy="0" r="6.5" fill="url(#goldCmp)" stroke="#8a5a1e" stroke-width="1"/><circle cx="5.5" cy="-3.5" r="4" fill="url(#goldCmp)" stroke="#8a5a1e" stroke-width="1"/><circle cx="-4.5" cy="-4.5" r="3.5" fill="url(#goldCmp)" stroke="#8a5a1e" stroke-width="1"/><path d="M-2,-0.5 Q1,-3.5 3.5,-0.8" stroke="#8a5a1e" stroke-width="1" fill="none" stroke-linecap="round"/></g>
+</defs>
+<ellipse cx="32" cy="70" rx="10" ry="2.8" fill="#000" opacity=".28"/>
+<path d="M32,66 C20,54 8,46 8,36 C8,18 18,6 32,6 C46,6 56,18 56,36 C56,46 44,54 32,66 Z" fill="url(#redCmp)" stroke="#7a0d0d" stroke-width="2.5"/>
+<ellipse cx="21" cy="19" rx="9" ry="5.5" fill="#fff" opacity=".28" transform="rotate(-25 21 19)"/>
+<circle cx="32" cy="36" r="21" fill="#c22020"/>
+<circle cx="32" cy="36" r="20" fill="none" stroke="url(#goldCmp)" stroke-width="3"/>
+<use href="#cloudCmp" transform="translate(17.9,21.9)"/>
+<use href="#cloudCmp" transform="translate(17.9,50.1)"/>
+<use href="#cloudCmp" transform="translate(46.1,21.9) scale(-1,1)"/>
+<use href="#cloudCmp" transform="translate(46.1,50.1) scale(-1,1)"/>
+<circle cx="32" cy="36" r="15" fill="url(#badgeCmp)"/>
+<text x="32" y="44" text-anchor="middle" font-size="21" font-weight="800" fill="#5c0c0c">7</text>
+<text x="32" y="43" text-anchor="middle" font-size="21" font-weight="800" fill="#fdf3df">7</text>
+</svg>
+      <figcaption>이번 재현</figcaption>
+    </figure>
+  </div>
+
+  <section>
+    <h2><span class="idx">1</span>새 핀 — 큰 사이즈</h2>
+    <p class="sec-note">글로시 레드 + 이중 테두리 + 금장 구름 장식 링 + 음각 번호 배지 (뿔 제거)</p>
+    <div class="pin-grid" style="grid-template-columns:1fr">
+      <div class="pin-card">
+        <div class="pin-swatch">
+          <svg viewBox="0 0 64 80" role="img" aria-label="도깨비 핀 3">
+<defs>
+<linearGradient id="redBig" x1="0" y1="0" x2="1" y2="1"><stop offset="0%" stop-color="#ff6b5a"/><stop offset="45%" stop-color="#ee2a24"/><stop offset="100%" stop-color="#af1414"/></linearGradient>
+<linearGradient id="goldBig" x1="0" y1="0" x2="1" y2="1"><stop offset="0%" stop-color="#ffd97a"/><stop offset="100%" stop-color="#c9861f"/></linearGradient>
+<linearGradient id="badgeBig" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="#8a1414"/><stop offset="100%" stop-color="#6b0f0f"/></linearGradient>
+<g id="cloudBig"><circle cx="0" cy="0" r="6.5" fill="url(#goldBig)" stroke="#8a5a1e" stroke-width="1"/><circle cx="5.5" cy="-3.5" r="4" fill="url(#goldBig)" stroke="#8a5a1e" stroke-width="1"/><circle cx="-4.5" cy="-4.5" r="3.5" fill="url(#goldBig)" stroke="#8a5a1e" stroke-width="1"/><path d="M-2,-0.5 Q1,-3.5 3.5,-0.8" stroke="#8a5a1e" stroke-width="1" fill="none" stroke-linecap="round"/></g>
+</defs>
+<ellipse cx="32" cy="70" rx="10" ry="2.8" fill="#000" opacity=".28"/>
+<path d="M32,66 C20,54 8,46 8,36 C8,18 18,6 32,6 C46,6 56,18 56,36 C56,46 44,54 32,66 Z" fill="url(#redBig)" stroke="#7a0d0d" stroke-width="2.5"/>
+<ellipse cx="21" cy="19" rx="9" ry="5.5" fill="#fff" opacity=".28" transform="rotate(-25 21 19)"/>
+<circle cx="32" cy="36" r="21" fill="#c22020"/>
+<circle cx="32" cy="36" r="20" fill="none" stroke="url(#goldBig)" stroke-width="3"/>
+<use href="#cloudBig" transform="translate(17.9,21.9)"/>
+<use href="#cloudBig" transform="translate(17.9,50.1)"/>
+<use href="#cloudBig" transform="translate(46.1,21.9) scale(-1,1)"/>
+<use href="#cloudBig" transform="translate(46.1,50.1) scale(-1,1)"/>
+<circle cx="32" cy="36" r="15" fill="url(#badgeBig)"/>
+<text x="32" y="44" text-anchor="middle" font-size="21" font-weight="800" fill="#5c0c0c">3</text>
+<text x="32" y="43" text-anchor="middle" font-size="21" font-weight="800" fill="#fdf3df">3</text>
+</svg>
+        </div>
+        <p class="pin-name">도깨비 핀 · 뿔 제거</p>
+        <p class="pin-desc">레드가 더 선명해져서 지도색과의 대비는 그대로 유지됨</p>
+      </div>
+    </div>
+
+    <div class="size-row">
+      <div class="size-item">
+        <svg width="30" viewBox="0 0 64 80" role="img" aria-label="도깨비 핀 3">
+<defs>
+<linearGradient id="redSmall" x1="0" y1="0" x2="1" y2="1"><stop offset="0%" stop-color="#ff6b5a"/><stop offset="45%" stop-color="#ee2a24"/><stop offset="100%" stop-color="#af1414"/></linearGradient>
+<linearGradient id="goldSmall" x1="0" y1="0" x2="1" y2="1"><stop offset="0%" stop-color="#ffd97a"/><stop offset="100%" stop-color="#c9861f"/></linearGradient>
+<linearGradient id="badgeSmall" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="#8a1414"/><stop offset="100%" stop-color="#6b0f0f"/></linearGradient>
+<g id="cloudSmall"><circle cx="0" cy="0" r="6.5" fill="url(#goldSmall)" stroke="#8a5a1e" stroke-width="1"/><circle cx="5.5" cy="-3.5" r="4" fill="url(#goldSmall)" stroke="#8a5a1e" stroke-width="1"/><circle cx="-4.5" cy="-4.5" r="3.5" fill="url(#goldSmall)" stroke="#8a5a1e" stroke-width="1"/><path d="M-2,-0.5 Q1,-3.5 3.5,-0.8" stroke="#8a5a1e" stroke-width="1" fill="none" stroke-linecap="round"/></g>
+</defs>
+<ellipse cx="32" cy="70" rx="10" ry="2.8" fill="#000" opacity=".28"/>
+<path d="M32,66 C20,54 8,46 8,36 C8,18 18,6 32,6 C46,6 56,18 56,36 C56,46 44,54 32,66 Z" fill="url(#redSmall)" stroke="#7a0d0d" stroke-width="2.5"/>
+<ellipse cx="21" cy="19" rx="9" ry="5.5" fill="#fff" opacity=".28" transform="rotate(-25 21 19)"/>
+<circle cx="32" cy="36" r="21" fill="#c22020"/>
+<circle cx="32" cy="36" r="20" fill="none" stroke="url(#goldSmall)" stroke-width="3"/>
+<use href="#cloudSmall" transform="translate(17.9,21.9)"/>
+<use href="#cloudSmall" transform="translate(17.9,50.1)"/>
+<use href="#cloudSmall" transform="translate(46.1,21.9) scale(-1,1)"/>
+<use href="#cloudSmall" transform="translate(46.1,50.1) scale(-1,1)"/>
+<circle cx="32" cy="36" r="15" fill="url(#badgeSmall)"/>
+<text x="32" y="44" text-anchor="middle" font-size="21" font-weight="800" fill="#5c0c0c">3</text>
+<text x="32" y="43" text-anchor="middle" font-size="21" font-weight="800" fill="#fdf3df">3</text>
+</svg>
+        <p>실제 크기(30px)</p>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <h2><span class="idx">2</span>실제 지도 색 위에서</h2>
+    <p class="sec-note">레드 계열이라 베이지·초록·파랑 어디서도 잘 보임</p>
+    <div class="map-mock">
+      <div class="blob park" style="left:-6%; top:10%; width:46%; height:46%"></div>
+      <div class="blob water" style="left:55%; top:55%; width:60%; height:50%; border-radius:40% 60% 55% 45%"></div>
+      <div class="road" style="left:0; top:64%; width:100%; height:7px; transform:rotate(-4deg)"></div>
+      <div class="bld" style="left:60%; top:12%; width:15%; height:22%; border-radius:3px"></div>
+      <div class="bld" style="left:78%; top:8%; width:12%; height:16%; border-radius:3px"></div>
+
+      <div class="pinpos" style="left:24%; top:34%">
+        <svg viewBox="0 0 64 80" role="img" aria-label="도깨비 핀 1">
+<defs>
+<linearGradient id="redA" x1="0" y1="0" x2="1" y2="1"><stop offset="0%" stop-color="#ff6b5a"/><stop offset="45%" stop-color="#ee2a24"/><stop offset="100%" stop-color="#af1414"/></linearGradient>
+<linearGradient id="goldA" x1="0" y1="0" x2="1" y2="1"><stop offset="0%" stop-color="#ffd97a"/><stop offset="100%" stop-color="#c9861f"/></linearGradient>
+<linearGradient id="badgeA" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="#8a1414"/><stop offset="100%" stop-color="#6b0f0f"/></linearGradient>
+<g id="cloudA"><circle cx="0" cy="0" r="6.5" fill="url(#goldA)" stroke="#8a5a1e" stroke-width="1"/><circle cx="5.5" cy="-3.5" r="4" fill="url(#goldA)" stroke="#8a5a1e" stroke-width="1"/><circle cx="-4.5" cy="-4.5" r="3.5" fill="url(#goldA)" stroke="#8a5a1e" stroke-width="1"/><path d="M-2,-0.5 Q1,-3.5 3.5,-0.8" stroke="#8a5a1e" stroke-width="1" fill="none" stroke-linecap="round"/></g>
+</defs>
+<ellipse cx="32" cy="70" rx="10" ry="2.8" fill="#000" opacity=".28"/>
+<path d="M32,66 C20,54 8,46 8,36 C8,18 18,6 32,6 C46,6 56,18 56,36 C56,46 44,54 32,66 Z" fill="url(#redA)" stroke="#7a0d0d" stroke-width="2.5"/>
+<ellipse cx="21" cy="19" rx="9" ry="5.5" fill="#fff" opacity=".28" transform="rotate(-25 21 19)"/>
+<circle cx="32" cy="36" r="21" fill="#c22020"/>
+<circle cx="32" cy="36" r="20" fill="none" stroke="url(#goldA)" stroke-width="3"/>
+<use href="#cloudA" transform="translate(17.9,21.9)"/>
+<use href="#cloudA" transform="translate(17.9,50.1)"/>
+<use href="#cloudA" transform="translate(46.1,21.9) scale(-1,1)"/>
+<use href="#cloudA" transform="translate(46.1,50.1) scale(-1,1)"/>
+<circle cx="32" cy="36" r="15" fill="url(#badgeA)"/>
+<text x="32" y="44" text-anchor="middle" font-size="21" font-weight="800" fill="#5c0c0c">1</text>
+<text x="32" y="43" text-anchor="middle" font-size="21" font-weight="800" fill="#fdf3df">1</text>
+</svg>
+      </div>
+      <div class="pinpos" style="left:46%; top:22%">
+        <svg viewBox="0 0 64 80" role="img" aria-label="도깨비 핀 2">
+<defs>
+<linearGradient id="redB" x1="0" y1="0" x2="1" y2="1"><stop offset="0%" stop-color="#ff6b5a"/><stop offset="45%" stop-color="#ee2a24"/><stop offset="100%" stop-color="#af1414"/></linearGradient>
+<linearGradient id="goldB" x1="0" y1="0" x2="1" y2="1"><stop offset="0%" stop-color="#ffd97a"/><stop offset="100%" stop-color="#c9861f"/></linearGradient>
+<linearGradient id="badgeB" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="#8a1414"/><stop offset="100%" stop-color="#6b0f0f"/></linearGradient>
+<g id="cloudB"><circle cx="0" cy="0" r="6.5" fill="url(#goldB)" stroke="#8a5a1e" stroke-width="1"/><circle cx="5.5" cy="-3.5" r="4" fill="url(#goldB)" stroke="#8a5a1e" stroke-width="1"/><circle cx="-4.5" cy="-4.5" r="3.5" fill="url(#goldB)" stroke="#8a5a1e" stroke-width="1"/><path d="M-2,-0.5 Q1,-3.5 3.5,-0.8" stroke="#8a5a1e" stroke-width="1" fill="none" stroke-linecap="round"/></g>
+</defs>
+<ellipse cx="32" cy="70" rx="10" ry="2.8" fill="#000" opacity=".28"/>
+<path d="M32,66 C20,54 8,46 8,36 C8,18 18,6 32,6 C46,6 56,18 56,36 C56,46 44,54 32,66 Z" fill="url(#redB)" stroke="#7a0d0d" stroke-width="2.5"/>
+<ellipse cx="21" cy="19" rx="9" ry="5.5" fill="#fff" opacity=".28" transform="rotate(-25 21 19)"/>
+<circle cx="32" cy="36" r="21" fill="#c22020"/>
+<circle cx="32" cy="36" r="20" fill="none" stroke="url(#goldB)" stroke-width="3"/>
+<use href="#cloudB" transform="translate(17.9,21.9)"/>
+<use href="#cloudB" transform="translate(17.9,50.1)"/>
+<use href="#cloudB" transform="translate(46.1,21.9) scale(-1,1)"/>
+<use href="#cloudB" transform="translate(46.1,50.1) scale(-1,1)"/>
+<circle cx="32" cy="36" r="15" fill="url(#badgeB)"/>
+<text x="32" y="44" text-anchor="middle" font-size="21" font-weight="800" fill="#5c0c0c">2</text>
+<text x="32" y="43" text-anchor="middle" font-size="21" font-weight="800" fill="#fdf3df">2</text>
+</svg>
+      </div>
+      <div class="pinpos" style="left:70%; top:44%">
+        <svg viewBox="0 0 64 80" role="img" aria-label="도깨비 핀 3">
+<defs>
+<linearGradient id="redC" x1="0" y1="0" x2="1" y2="1"><stop offset="0%" stop-color="#ff6b5a"/><stop offset="45%" stop-color="#ee2a24"/><stop offset="100%" stop-color="#af1414"/></linearGradient>
+<linearGradient id="goldC" x1="0" y1="0" x2="1" y2="1"><stop offset="0%" stop-color="#ffd97a"/><stop offset="100%" stop-color="#c9861f"/></linearGradient>
+<linearGradient id="badgeC" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="#8a1414"/><stop offset="100%" stop-color="#6b0f0f"/></linearGradient>
+<g id="cloudC"><circle cx="0" cy="0" r="6.5" fill="url(#goldC)" stroke="#8a5a1e" stroke-width="1"/><circle cx="5.5" cy="-3.5" r="4" fill="url(#goldC)" stroke="#8a5a1e" stroke-width="1"/><circle cx="-4.5" cy="-4.5" r="3.5" fill="url(#goldC)" stroke="#8a5a1e" stroke-width="1"/><path d="M-2,-0.5 Q1,-3.5 3.5,-0.8" stroke="#8a5a1e" stroke-width="1" fill="none" stroke-linecap="round"/></g>
+</defs>
+<ellipse cx="32" cy="70" rx="10" ry="2.8" fill="#000" opacity=".28"/>
+<path d="M32,66 C20,54 8,46 8,36 C8,18 18,6 32,6 C46,6 56,18 56,36 C56,46 44,54 32,66 Z" fill="url(#redC)" stroke="#7a0d0d" stroke-width="2.5"/>
+<ellipse cx="21" cy="19" rx="9" ry="5.5" fill="#fff" opacity=".28" transform="rotate(-25 21 19)"/>
+<circle cx="32" cy="36" r="21" fill="#c22020"/>
+<circle cx="32" cy="36" r="20" fill="none" stroke="url(#goldC)" stroke-width="3"/>
+<use href="#cloudC" transform="translate(17.9,21.9)"/>
+<use href="#cloudC" transform="translate(17.9,50.1)"/>
+<use href="#cloudC" transform="translate(46.1,21.9) scale(-1,1)"/>
+<use href="#cloudC" transform="translate(46.1,50.1) scale(-1,1)"/>
+<circle cx="32" cy="36" r="15" fill="url(#badgeC)"/>
+<text x="32" y="44" text-anchor="middle" font-size="21" font-weight="800" fill="#5c0c0c">3</text>
+<text x="32" y="43" text-anchor="middle" font-size="21" font-weight="800" fill="#fdf3df">3</text>
+</svg>
+      </div>
+      <div class="pinpos" style="left:38%; top:78%">
+        <svg viewBox="0 0 64 80" role="img" aria-label="도깨비 핀 4">
+<defs>
+<linearGradient id="redD" x1="0" y1="0" x2="1" y2="1"><stop offset="0%" stop-color="#ff6b5a"/><stop offset="45%" stop-color="#ee2a24"/><stop offset="100%" stop-color="#af1414"/></linearGradient>
+<linearGradient id="goldD" x1="0" y1="0" x2="1" y2="1"><stop offset="0%" stop-color="#ffd97a"/><stop offset="100%" stop-color="#c9861f"/></linearGradient>
+<linearGradient id="badgeD" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="#8a1414"/><stop offset="100%" stop-color="#6b0f0f"/></linearGradient>
+<g id="cloudD"><circle cx="0" cy="0" r="6.5" fill="url(#goldD)" stroke="#8a5a1e" stroke-width="1"/><circle cx="5.5" cy="-3.5" r="4" fill="url(#goldD)" stroke="#8a5a1e" stroke-width="1"/><circle cx="-4.5" cy="-4.5" r="3.5" fill="url(#goldD)" stroke="#8a5a1e" stroke-width="1"/><path d="M-2,-0.5 Q1,-3.5 3.5,-0.8" stroke="#8a5a1e" stroke-width="1" fill="none" stroke-linecap="round"/></g>
+</defs>
+<ellipse cx="32" cy="70" rx="10" ry="2.8" fill="#000" opacity=".28"/>
+<path d="M32,66 C20,54 8,46 8,36 C8,18 18,6 32,6 C46,6 56,18 56,36 C56,46 44,54 32,66 Z" fill="url(#redD)" stroke="#7a0d0d" stroke-width="2.5"/>
+<ellipse cx="21" cy="19" rx="9" ry="5.5" fill="#fff" opacity=".28" transform="rotate(-25 21 19)"/>
+<circle cx="32" cy="36" r="21" fill="#c22020"/>
+<circle cx="32" cy="36" r="20" fill="none" stroke="url(#goldD)" stroke-width="3"/>
+<use href="#cloudD" transform="translate(17.9,21.9)"/>
+<use href="#cloudD" transform="translate(17.9,50.1)"/>
+<use href="#cloudD" transform="translate(46.1,21.9) scale(-1,1)"/>
+<use href="#cloudD" transform="translate(46.1,50.1) scale(-1,1)"/>
+<circle cx="32" cy="36" r="15" fill="url(#badgeD)"/>
+<text x="32" y="44" text-anchor="middle" font-size="21" font-weight="800" fill="#5c0c0c">4</text>
+<text x="32" y="43" text-anchor="middle" font-size="21" font-weight="800" fill="#fdf3df">4</text>
+</svg>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <h2><span class="idx">3</span>코스 생성 로딩 상태</h2>
+    <p class="sec-note">승인됨 — 변경 없음, 참고용으로 유지</p>
+
+    <div class="btn-mock">
+      <p class="label">지금</p>
+      <div class="cta idle">나만의 코스 만들기</div>
+      <div class="arrow">▼ 누르면</div>
+      <div class="cta blank">(버튼·문구 사라지고 빈 화면)</div>
+    </div>
+
+    <div class="btn-mock">
+      <p class="label">제안</p>
+      <div class="cta idle">나만의 코스 만들기</div>
+      <div class="arrow">▼ 누르면</div>
+      <div class="cta loading">
+        <div class="row">
+          <span class="spinner" aria-hidden="true"></span>
+          <span>나만의 코스 만드는 중… 47%</span>
+        </div>
+        <div class="track"><div class="fill"></div></div>
+      </div>
+    </div>
+  </section>
+
+  <p class="foot">뿔 뺀 버전입니다. 이대로 괜찮으면 Flutter 코드(커스텀 마커 이미지)로 옮기겠습니다. 다른 코리안틱 요소(문·기와지붕 등) 다시 얹고 싶으면 말씀해주세요.</p>
+</div>
