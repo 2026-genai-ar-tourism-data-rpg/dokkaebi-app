@@ -37,7 +37,7 @@
 //            Assets.xcassets의 DokkaebiCharacter(Flutter의 assets/images/dokkaebi_character.png와
 //            동일 파일). 상시 회전 대신 은은한 상하 부유로 바꿨다 — 빌보드가 항상 정면을
 //            보므로 Y축 회전 애니메이션과 겹치면 제자리에서 뒤집히는 것처럼 보인다.
-// 구현일: 2026-09-17 | 작성: Claude
+// 구현일: 2026-09-17 | 작성: ljs (character-illustration/ljs/v1)
 // ============================================================
 import ARKit
 import Flutter

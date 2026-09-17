@@ -16,7 +16,7 @@
 // 구현(요약): 벡터로 근사하던 방식을 버리고 실제 이미지 에셋을 표시. NPC 대화창(ar_frame.dart
 //            DokkaebiNpc), AR 2D 폴백(quest_journey_screen.dart _Dokkaebi), AR 삼각뿔 마커
 //            (DokkaebiArView.swift beaconNode)도 같은 이미지로 동일하게 교체.
-// 구현일: 2026-09-17 | 작성: Claude
+// 구현일: 2026-09-17 | 작성: ljs (character-illustration/ljs/v1)
 // ============================================================
 import 'dart:math' as math;
 
