@@ -258,7 +258,7 @@ class _QuestPlayScreenState extends State<QuestPlayScreen> {
         ),
         // 먹 도깨비 (도착 후, 보상·퀴즈 제외)
         if (_arrived && !_collected && !_quizNow)
-          const Align(alignment: Alignment(0, -0.42), child: DokkaebiNpc(size: 150, showBadge: false)),
+          const Align(alignment: Alignment(0, -0.42), child: DokkaebiNpc(size: 210, showBadge: false)),
         // 퀴즈 = 중앙 모달 / 그 외 = 하단 시트
         if (_quizNow) ...[
           Container(color: Colors.black.withOpacity(0.72)),

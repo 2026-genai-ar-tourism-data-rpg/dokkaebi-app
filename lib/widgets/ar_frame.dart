@@ -139,13 +139,13 @@ class ArTopHud extends StatelessWidget {
   }
 }
 
-/// 먹 도깨비 NPC — 검은 blob + 금빛 눈 + 뿔 + Lv 뱃지. 둥실 떠있음.
+/// 도깨비 NPC — 기본 캐릭터 일러스트(상반신) + Lv 뱃지. 둥실 떠있음.
 class DokkaebiNpc extends StatefulWidget {
   final String name;
   final int level;
   final double size;
   final bool showBadge;
-  const DokkaebiNpc({super.key, this.name = '먹 도깨비', this.level = 7, this.size = 132, this.showBadge = true});
+  const DokkaebiNpc({super.key, this.name = '먹 도깨비', this.level = 7, this.size = 190, this.showBadge = true});
   @override
   State<DokkaebiNpc> createState() => _DokkaebiNpcState();
 }
@@ -185,61 +185,11 @@ class _DokkaebiNpcState extends State<DokkaebiNpc> with SingleTickerProviderStat
         if (widget.showBadge) const SizedBox(height: 10),
         SizedBox(
           width: widget.size, height: widget.size,
-          child: Stack(clipBehavior: Clip.none, children: [
-            // 뿔
-            Positioned(top: -12, left: widget.size * .30, child: _horn(-14)),
-            Positioned(top: -8, right: widget.size * .32, child: _horn(12)),
-            // 머리 (먹빛 blob)
-            Container(
-              decoration: BoxDecoration(
-                borderRadius: const BorderRadius.all(Radius.elliptical(66, 62)),
-                gradient: const RadialGradient(
-                  center: Alignment(-0.24, -0.36), radius: 0.9,
-                  colors: [Color(0xFF33291F), Color(0xFF17130F), Color(0xFF0A0806)],
-                  stops: [0.0, 0.55, 1.0],
-                ),
-                boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.6), blurRadius: 40, offset: const Offset(0, 18))],
-              ),
-            ),
-            // 금빛 눈
-            Positioned(top: widget.size * .35, left: widget.size * .27, child: _eye()),
-            Positioned(top: widget.size * .35, right: widget.size * .27, child: _eye()),
-          ]),
+          child: Image.asset('assets/images/dokkaebi_character_bust.png', fit: BoxFit.contain),
         ),
       ]),
     );
   }
-
-  Widget _eye() => Container(
-        width: 14, height: 16,
-        decoration: BoxDecoration(
-          color: AppColors.gold, borderRadius: BorderRadius.circular(8),
-          boxShadow: [BoxShadow(color: AppColors.gold.withOpacity(0.9), blurRadius: 14)],
-        ),
-      );
-
-  Widget _horn(double deg) => Transform.rotate(
-        angle: deg * math.pi / 180,
-        child: CustomPaint(size: const Size(18, 26), painter: _HornPainter()),
-      );
-}
-
-class _HornPainter extends CustomPainter {
-  @override
-  void paint(Canvas c, Size s) {
-    final p = Paint()..color = const Color(0xFF17130F);
-    c.drawPath(
-      Path()
-        ..moveTo(s.width / 2, 0)
-        ..lineTo(0, s.height)
-        ..lineTo(s.width, s.height)
-        ..close(),
-      p,
-    );
-  }
-
-  @override
-  bool shouldRepaint(_) => false;
 }
 
 /// 한지 지령/대화 카드 — 크림 그라디언트 + 빨간 뱃지 슬롯. 하단 고정용.

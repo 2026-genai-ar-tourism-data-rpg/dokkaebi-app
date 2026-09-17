@@ -2701,7 +2701,7 @@ class _QuestJourneyScreenState extends State<QuestJourneyScreen> with TickerProv
                 child: Center(child: _Floaty(anim: _float, child: Column(mainAxisSize: MainAxisSize.min, children: [
                   _pill(finale ? '$_npcName · 수호' : _npcName, border: _goldDim, textColor: _goldDim),
                   const SizedBox(height: 10),
-                  const _Dokkaebi(size: 140),
+                  const _Dokkaebi(size: 190),
                 ]))),
               ),
             Positioned(left: 14, right: 14, bottom: 40, child: Column(mainAxisSize: MainAxisSize.min, children: [
@@ -2748,7 +2748,7 @@ class _QuestJourneyScreenState extends State<QuestJourneyScreen> with TickerProv
             const Spacer(),
             _pill('조각 $fragments/$_stoneTotal', border: _tealDeep, textColor: _teal),
           ])),
-          Positioned(left: 0, right: 0, top: box.maxHeight * .16, child: Center(child: _Floaty(anim: _float, child: const _Dokkaebi(size: 150)))),
+          Positioned(left: 0, right: 0, top: box.maxHeight * .16, child: Center(child: _Floaty(anim: _float, child: const _Dokkaebi(size: 205)))),
           Positioned(left: 14, right: 14, bottom: 34, child: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.stretch, children: [
             // NPC 말풍선
             Stack(clipBehavior: Clip.none, children: [
@@ -2968,7 +2968,7 @@ class _QuestJourneyScreenState extends State<QuestJourneyScreen> with TickerProv
           Align(alignment: const Alignment(0, 0.48), child: ClipPath(clipper: _RoofClipper(), child: Container(height: 120, color: const Color(0xFF0C0A08)))),
           // left: 58 — 좌상단 뒤로가기 버튼 자리를 비켜준다.
           Positioned(top: 58, left: 58, right: 14, child: Row(children: [_pill('${_target.name} · 제 ${_tIdx + 1} 장'), const Spacer(), _pill('조각 $fragments/$_stoneTotal', border: _tealDeep, textColor: _teal)])),
-          Positioned(left: 0, right: 0, top: box.maxHeight * .20, child: Center(child: _Floaty(anim: _float, child: const _Dokkaebi(size: 120)))),
+          Positioned(left: 0, right: 0, top: box.maxHeight * .20, child: Center(child: _Floaty(anim: _float, child: const _Dokkaebi(size: 165)))),
           Positioned(left: 14, right: 14, bottom: 34, child: _parchment(
             padding: const EdgeInsets.fromLTRB(18, 18, 18, 16),
             child: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.start, children: [
@@ -3568,7 +3568,7 @@ class _QuestJourneyScreenState extends State<QuestJourneyScreen> with TickerProv
           Positioned(top: 58, left: 0, right: 0, child: Column(children: [
             _pill('조각 $fragments/$_stoneTotal — 마지막 하나', border: _gold, textColor: _gold),
           ])),
-          Positioned(left: 0, right: 0, top: box.maxHeight * .22, child: Center(child: _Floaty(anim: _float, amplitude: 10, child: const _Dokkaebi(size: 170)))),
+          Positioned(left: 0, right: 0, top: box.maxHeight * .22, child: Center(child: _Floaty(anim: _float, amplitude: 10, child: const _Dokkaebi(size: 230)))),
           Positioned(left: 14, right: 14, bottom: 34, child: Column(mainAxisSize: MainAxisSize.min, children: [
             // 망각귀의 비관 — AI가 피날레 미션에 함께 넣어 준다(없으면 줄을 뺀다).
             if (villain != null && villain.isNotEmpty) ...[
@@ -4024,41 +4024,17 @@ class _Floaty extends StatelessWidget {
       );
 }
 
-/// 먹 도깨비 — 검은 blob + 금빛 눈 + 뿔.
+/// 도깨비 — 기본 캐릭터 일러스트.
 class _Dokkaebi extends StatelessWidget {
   final double size;
-  const _Dokkaebi({this.size = 140});
+  const _Dokkaebi({this.size = 190});
   @override
   Widget build(BuildContext context) {
     return SizedBox(
       width: size, height: size,
-      child: Stack(clipBehavior: Clip.none, children: [
-        Positioned(top: -14, left: size * .28, child: _horn(-14, 20, 30)),
-        Positioned(top: -10, right: size * .30, child: _horn(12, 17, 24)),
-        Container(
-          decoration: BoxDecoration(
-            borderRadius: BorderRadius.all(Radius.elliptical(size * .49, size * .52)),
-            gradient: const RadialGradient(center: Alignment(-0.24, -0.36), radius: 0.9, colors: [Color(0xFF33291F), Color(0xFF17130F), Color(0xFF0A0806)], stops: [0, .55, 1]),
-            boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.65), blurRadius: 44, offset: const Offset(0, 18))],
-          ),
-        ),
-        Positioned(top: size * .34, left: size * .27, child: _eye()),
-        Positioned(top: size * .34, right: size * .27, child: _eye()),
-      ]),
+      child: Image.asset('assets/images/dokkaebi_character.png', fit: BoxFit.contain),
     );
   }
-
-  Widget _eye() => Container(width: 15, height: 17, decoration: BoxDecoration(color: _gold, borderRadius: BorderRadius.circular(9), boxShadow: [BoxShadow(color: _gold.withOpacity(0.9), blurRadius: 16)]));
-  Widget _horn(double deg, double w, double h) => Transform.rotate(angle: deg * math.pi / 180, child: CustomPaint(size: Size(w, h), painter: _HornPainter()));
-}
-
-class _HornPainter extends CustomPainter {
-  @override
-  void paint(Canvas c, Size s) {
-    c.drawPath(Path()..moveTo(s.width / 2, 0)..lineTo(0, s.height)..lineTo(s.width, s.height)..close(), Paint()..color = _ink);
-  }
-  @override
-  bool shouldRepaint(_) => false;
 }
 
 class _MeokShadow extends StatelessWidget {
