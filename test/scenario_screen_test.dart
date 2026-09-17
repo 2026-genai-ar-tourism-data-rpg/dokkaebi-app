@@ -8,8 +8,13 @@
 // ------------------------------------------------------------
 // [v2] 전 조각 복원 배너(B11) — "종로의 기억" 고정 문구 대신 코스 지역명, 지역명이 없으면 지역을 말하지 않는다.
 // 구현일: 2026-09-13 | 작성: ljs (jongno-hardcode-cleanup/ljs/v1)
+// ------------------------------------------------------------
+// [v3] 장소 누르기(C2) — 끝낸 장소는 요약만, 나머지는 코스 진행 화면을 그 장소부터(장소 단위 화면으로 새지 않음).
+// 구현일: 2026-09-17 | 작성: ljs (play-screen-sync/ljs/v1)
 // ============================================================
 import 'package:dokkaebi_app/models/scenario.dart';
+import 'package:dokkaebi_app/screens/quest_journey_screen.dart';
+import 'package:dokkaebi_app/screens/quest_play_screen.dart';
 import 'package:dokkaebi_app/screens/scenario_screen.dart';
 import 'package:dokkaebi_app/store.dart';
 import 'package:flutter/material.dart';
@@ -271,6 +276,50 @@ void main() {
       await _pump(tester, sc);
 
       expect(find.text('기억석 복원 완료 — 잊혀진 기억이 되살아났다.'), findsOneWidget);
+    });
+  });
+
+  // C2 — 코스 상세에서 누른 장소가 코스 진행 화면과 어긋나지 않게 열린다.
+  // 예전엔 지금 차례인 장소만 코스 진행 화면이고, 나머지는 따로 노는 장소 단위 화면으로 갔다.
+  group('장소 누르기', () {
+    testWidgets('끝낸 장소를 누르면 다시 플레이하지 않고 얻은 것만 보여준다', (tester) async {
+      final sc = _jongno();
+      await ScenarioStore.I.add(sc);
+      await ScenarioStore.I.completeNodeWithGrants(sid, sc.nodeSequence[0]);
+      await _pump(tester, sc);
+
+      await tester.tap(_rowText('운현궁'));
+      await _settle(tester);
+
+      expect(find.text('이미 되찾은 기억'), findsOneWidget);
+      expect(find.text('✓ 단서 「申時」'), findsOneWidget);
+      expect(find.byType(QuestJourneyScreen), findsNothing);
+      expect(find.byType(QuestPlayScreen), findsNothing);
+    });
+
+    testWidgets('아직 차례가 아닌 장소를 누르면 코스 진행 화면이 그 장소부터 열린다', (tester) async {
+      final sc = _jongno();
+      await ScenarioStore.I.add(sc);
+      await _pump(tester, sc);
+
+      await tester.tap(_rowText('익선동')); // 지금 차례는 운현궁
+      await _settle(tester);
+
+      expect(find.byType(QuestPlayScreen), findsNothing);
+      final journey = tester.widget<QuestJourneyScreen>(find.byType(QuestJourneyScreen));
+      expect(journey.startNodeId, 'n2');
+    });
+
+    testWidgets('막힌 피날레를 누르면 코스 진행 화면을 열지 않고 안내만 한다', (tester) async {
+      final sc = _jongno();
+      await ScenarioStore.I.add(sc);
+      await _pump(tester, sc);
+
+      await tester.tap(_rowText('광화문'));
+      await _settle(tester);
+
+      expect(find.byType(QuestJourneyScreen), findsNothing);
+      expect(find.text('진행판으로'), findsOneWidget);
     });
   });
 }

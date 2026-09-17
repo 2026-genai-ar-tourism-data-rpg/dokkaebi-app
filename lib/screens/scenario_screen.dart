@@ -29,6 +29,13 @@
 // [v5] 전 조각 복원 배너의 "종로의 기억이 되살아났다" 고정 문구 → 코스 지역명(계획 B11).
 //      지역명이 비어 있으면 "잊혀진 기억"으로 둔다.
 // 구현일: 2026-09-13 | 작성: ljs (jongno-hardcode-cleanup/ljs/v1)
+// ------------------------------------------------------------
+// [v6] 코스 상세의 장소를 누르면 코스 진행 화면과 어긋나지 않게 연다(계획 C2).
+//      예전엔 지금 차례인 장소만 코스 진행 화면이고, 끝났거나 먼 장소는 따로 노는 장소 단위 화면
+//      (QuestPlayScreen)으로 갔다 — 거기에만 팀원의 AR 사진 판정이 붙어 있어 메인 흐름에선 안 보였다.
+//      끝낸 장소 → 얻은 것만 요약(다시 플레이하면 진행·보상이 꼬인다) / 나머지 → 코스 진행 화면을
+//      그 장소부터(startNodeId). 들어갈 조건(requires)은 같은 규칙으로 먼저 본다. 식음 노드는 그대로.
+// 구현일: 2026-09-17 | 작성: ljs (play-screen-sync/ljs/v1)
 // ============================================================
 import 'dart:math' as math;
 
@@ -435,6 +442,56 @@ class _ScenarioScreenState extends State<ScenarioScreen> {
     }
   }
 
+  /// 코스 진행 화면을 이 장소부터 연다 — 코스 상세에서 누른 장소가 곧 플레이할 장소다.
+  /// 막힌 곳(피날레)은 장소 단위 화면과 같은 규칙으로 안내만 한다. 앞 장소 단서 없이 가는 경우는
+  /// 코스 진행 화면이 들어가자마자 알린다 — 여기서 알리면 화면이 바로 넘어가 보이지 않는다.
+  Future<void> _openJourneyAt(QuestNode n) async {
+    final scn = widget.scenario;
+    if (n.requires.isNotEmpty) {
+      final check = scn.checkEntry(n, ScenarioStore.I.stateOf(scn.scenarioId));
+      if (check.needsGuidance) {
+        await _showGuidance(check);
+        return;
+      }
+    }
+    if (!mounted) return;
+    await Navigator.push(
+      context,
+      MaterialPageRoute(builder: (_) => QuestJourneyScreen(scenario: scn, startNodeId: n.nodeId)),
+    );
+  }
+
+  /// 끝낸 장소 — 다시 플레이하지 않고 거기서 얻은 것만 보여준다(다시 하면 진행·보상이 꼬인다).
+  Future<void> _showDoneSummary(QuestNode n) => showModalBottomSheet<void>(
+        context: context,
+        backgroundColor: hbBg,
+        shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(22))),
+        builder: (ctx) => SafeArea(
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(20, 16, 20, 20),
+            child: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.start, children: [
+              Text(n.name ?? '이름 모를 자리', style: hbSerif(20, hbCream, spacing: 0.5)),
+              const SizedBox(height: 4),
+              Text('이미 되찾은 기억', style: hbMono(10, hbTeal2, spacing: 2)),
+              const SizedBox(height: 14),
+              Wrap(spacing: 6, runSpacing: 6, children: [
+                _gateChip(n.stoneNo != null ? '기억석 조각 ${n.stoneNo}' : '기억석 조각', got: true),
+                if (n.clueName != null) _gateChip('단서 「${n.clueName}」', got: true),
+                if (n.npcName.isNotEmpty) _gateChip('만난 도깨비 · ${n.npcName}', got: true),
+              ]),
+              const SizedBox(height: 16),
+              SizedBox(
+                width: double.infinity,
+                child: FilledButton(
+                  onPressed: () => Navigator.pop(ctx),
+                  child: Text('진행판으로', style: hbSerif(14.5, hbBg2, w: FontWeight.w700)),
+                ),
+              ),
+            ]),
+          ),
+        ),
+      );
+
   /// 갈림길 선택 — 고른 갈래를 저장하면 이후 동선(playedPath)이 그 길로 바뀐다.
   Future<void> _askBranch(QuestNode bp) async {
     final b = bp.branch!;
@@ -650,14 +707,13 @@ class _ScenarioScreenState extends State<ScenarioScreen> {
                     isDone: done.contains(n.nodeId),
                     isNext: n.nodeId == next?.nodeId,
                     locked: n.requires.isNotEmpty && !scn.checkEntry(n, state).ok && n.isHardGated,
-                    // "다음 목표" 카드와 같은 규칙 — 지금 밟을 차례인 지점(next)만 코스 진행 화면으로
-                    // 보낸다. 이미 끝났거나 아직 먼 지점은 그대로 장소 단위 화면(QuestPlayScreen)에서 훑어보게 둔다
-                    // (QuestJourneyScreen은 특정 지점을 지정해 열 수 없고 항상 현재 진행
-                    // 지점부터 시작한다 — 다른 지점을 열면 엉뚱한 지점이 뜬다).
-                    onTap: (!n.isFood && n.nodeId == next?.nodeId)
-                        ? () => Navigator.push(context,
-                            MaterialPageRoute(builder: (_) => QuestJourneyScreen(scenario: scn)))
-                        : () => _play(n, carried),
+                    // 코스 진행 화면 하나로 플레이한다(C2) — 끝낸 장소는 요약만, 나머지는 그 장소부터 연다.
+                    // 식음 노드는 코스 진행 화면의 챕터가 아니라 장소 단위 화면에 남긴다.
+                    onTap: n.isFood
+                        ? () => _play(n, carried)
+                        : done.contains(n.nodeId)
+                            ? () => _showDoneSummary(n)
+                            : () => _openJourneyAt(n),
                   )),
             ],
           );
