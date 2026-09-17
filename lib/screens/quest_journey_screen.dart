@@ -202,6 +202,7 @@ import 'package:kakao_maps_flutter/kakao_maps_flutter.dart';
 
 import '../api/api_client.dart';
 import '../debug_flags.dart';
+import '../game/gps_simulator.dart';
 import '../game/hint_ladder_controller.dart';
 import '../game/player_state.dart';
 import '../game/location_service.dart';
@@ -1923,6 +1924,13 @@ class _QuestJourneyScreenState extends State<QuestJourneyScreen> with TickerProv
   /// 이 화면은 이미 실제 걸음 인증(GPS 도착 인증)을 하는 화면이라 홈보다
   /// 오히려 실시간 위치가 더 맞는다(일회성 조회로는 포켓몬고 느낌이 안 남).
   void _startPlayerLocationStream() {
+    if (Session.isAdmin) {
+      // admin은 방향키로 옮긴 자리가 진짜 위치다 — 실외 이동 없이 테스트(gps_simulator.dart).
+      _questMapPositionSub ??=
+          GpsSimulator.stream.map(GpsSimulator.toPosition).listen(
+              (pos) => _placePlayerMarker(LatLng(latitude: pos.latitude, longitude: pos.longitude)));
+      return;
+    }
     _questMapPositionSub ??= Geolocator.getPositionStream(
       locationSettings: const LocationSettings(
           accuracy: LocationAccuracy.best, distanceFilter: 5),
@@ -2051,11 +2059,22 @@ class _QuestJourneyScreenState extends State<QuestJourneyScreen> with TickerProv
         _gpsMapZoom = 17;
       });
     }
+    // admin이고 아직 시뮬레이션을 시작한 적이 없으면 목표 근처에서 시작 — 실외 이동 없이
+    // 방향키로 "걸어서" 도착 인증까지 테스트할 수 있게(gps_simulator.dart).
+    if (Session.isAdmin && !GpsSimulator.isActive && n?.mapX != null && n?.mapY != null) {
+      GpsSimulator.startNear(LatLng(latitude: n!.mapY!, longitude: n.mapX!));
+    }
     _startGpsPlayerStream();
   }
 
   /// 걸으면 지도 위 내 마커가 따라 움직이고, 거리 숫자도 같은 신호로 줄어든다(5m 간격).
   void _startGpsPlayerStream() {
+    if (Session.isAdmin) {
+      // admin은 방향키로 옮긴 자리가 진짜 위치다 — 실외 이동 없이 테스트(gps_simulator.dart).
+      _gpsMapPositionSub ??=
+          GpsSimulator.stream.map(GpsSimulator.toPosition).listen(_onGpsPlayerMoved);
+      return;
+    }
     _gpsMapPositionSub ??= Geolocator.getPositionStream(
       locationSettings: const LocationSettings(
           accuracy: LocationAccuracy.best, distanceFilter: 5),
@@ -2496,6 +2515,9 @@ class _QuestJourneyScreenState extends State<QuestJourneyScreen> with TickerProv
             const Positioned.fill(child: CustomPaint(painter: _GridPainter())),
           // 상단 칩
           Positioned(top: 54, left: 0, right: 0, child: Center(child: _pill('● GPS 추적 중 — ${gpsT.name}', border: _blue, textColor: const Color(0xFF9FD4EC)))),
+          // admin 전용 — 방향키로 위치 이동(실외 없이 테스트). 실제 GPS 판정 모드에서만 의미가 있다.
+          if (Session.isAdmin && real)
+            Positioned(top: 100, right: 12, child: _adminGpsDpad(gpsNode)),
           // 목적지 — 실지도면 실좌표 위에 오버레이로, 데모면 기존 자리에.
           if (targetPoint != null && !_gpsUserMoving)
             Positioned(
@@ -2575,6 +2597,54 @@ class _QuestJourneyScreenState extends State<QuestJourneyScreen> with TickerProv
           ])),
         ]);
       }),
+    );
+  }
+
+  /// admin 전용 방향키 — 탭마다 15m씩 그 방위로 "걸어서" 이동한다(gps_simulator.dart).
+  /// 위치 스트림(_startGpsPlayerStream)이 그대로 받아 마커·거리·도착 판정에 반영하므로
+  /// 여기선 시뮬레이터 위치만 옮기면 된다. 실외 이동 없이 도착 인증까지 테스트하기 위한 것.
+  Widget _adminGpsDpad(QuestNode? node) {
+    Widget btn(String label, double? bearingDeg) => GestureDetector(
+          onTap: () {
+            if (bearingDeg == null) {
+              if (node?.mapX != null && node?.mapY != null) {
+                GpsSimulator.startNear(LatLng(latitude: node!.mapY!, longitude: node.mapX!));
+              }
+            } else {
+              GpsSimulator.move(bearingDeg);
+            }
+          },
+          child: Container(
+            width: 34,
+            height: 34,
+            alignment: Alignment.center,
+            decoration: BoxDecoration(
+              color: _inkDeep.withOpacity(0.92),
+              borderRadius: BorderRadius.circular(8),
+              border: Border.all(color: _blue.withOpacity(0.55)),
+            ),
+            child: Text(label,
+                style: const TextStyle(fontSize: 15, color: Color(0xFF9FD4EC), fontWeight: FontWeight.w900)),
+          ),
+        );
+    return Container(
+      padding: const EdgeInsets.all(8),
+      decoration: BoxDecoration(color: _inkDeep.withOpacity(0.55), borderRadius: BorderRadius.circular(12)),
+      child: Column(mainAxisSize: MainAxisSize.min, children: [
+        const Text('admin 이동', style: TextStyle(fontSize: 9, color: Color(0xFF9FD4EC), fontWeight: FontWeight.w900)),
+        const SizedBox(height: 4),
+        btn('▲', 0),
+        const SizedBox(height: 4),
+        Row(mainAxisSize: MainAxisSize.min, children: [
+          btn('◀', 270),
+          const SizedBox(width: 4),
+          btn('⟲', null),
+          const SizedBox(width: 4),
+          btn('▶', 90),
+        ]),
+        const SizedBox(height: 4),
+        btn('▼', 180),
+      ]),
     );
   }
 

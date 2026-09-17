@@ -23,6 +23,11 @@ class Session {
 
   static bool get isLoggedIn => token != null && token!.isNotEmpty;
 
+  /// 서버(QuestService.verifyLocation)의 QUEST_ADMIN_NICKNAMES 기본값과 동일한 목록.
+  /// GPS 정확도·반경 체크를 서버가 건너뛰는 그 닉네임일 때, 클라이언트도 이동·발자국
+  /// 시뮬레이션(방향키) 컨트롤을 보여준다 — 실외 이동 없이 집에서 전체 흐름 테스트용.
+  static bool get isAdmin => nickname == 'admin' || nickname == '관리자';
+
   /// 앱 시작 시 저장된 세션 복원. 지금 붙는 서버가 발급한 토큰만 인정한다.
   static Future<void> load() async {
     final p = await SharedPreferences.getInstance();

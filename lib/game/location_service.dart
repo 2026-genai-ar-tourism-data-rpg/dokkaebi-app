@@ -16,6 +16,9 @@
 // ============================================================
 import 'package:geolocator/geolocator.dart';
 
+import '../session.dart';
+import 'gps_simulator.dart';
+
 /// 위치 획득 실패 사유 — 화면이 안내와 다음 행동을 고르는 기준.
 enum LocationFailure {
   serviceDisabled,  // 기기 위치 서비스 자체가 꺼짐 → 설정에서 켜야 함
@@ -81,6 +84,11 @@ class LocationService {
   Future<LocationResult> current({
     Duration timeout = const Duration(seconds: 15),
   }) async {
+    // admin이 방향키로 옮겨 둔 자리가 있으면 그게 진짜 위치다 — 실외 이동 없이 테스트.
+    if (Session.isAdmin && GpsSimulator.position != null) {
+      final p = GpsSimulator.position!;
+      return LocationResult.ok(p.latitude, p.longitude, 5);
+    }
     final denied = await checkAccess();
     if (denied != null) return LocationResult.fail(denied);
     try {

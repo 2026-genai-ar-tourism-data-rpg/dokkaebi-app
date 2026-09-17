@@ -30,12 +30,16 @@
 //            네이티브에도 넘긴다(arReferenceImages).
 // 구현일: 2026-09-16 | 작성: kys (photo-verify/kys/v1)
 // ============================================================
+import 'dart:async';
+import 'dart:math' as math;
+
 import 'package:flutter/material.dart';
 
 import '../api/api_client.dart';
 import '../models/scenario.dart';
 
 import '../game/ar_mission_controller.dart';
+import '../session.dart';
 import '../theme.dart';
 import '../widgets/native_ar_view.dart';
 
@@ -123,6 +127,75 @@ class _ArSearchScreenState extends State<ArSearchScreen> with SingleTickerProvid
   /// 이 미션이 쓰는 마커 — 기존 동작이면 조각·도깨비 2개.
   late final List<ArMarkerDef> _markers;
 
+  // ── admin 전용 AR 시뮬레이션 ──
+  // 실외·실기기 없이도 "카메라는 켜진 채로 거리만 좁혀지는" 상태를 테스트하기 위함.
+  // 네이티브(ARKit) 텔레메트리 대신 이 값들로 onTelemetry를 직접 채운다(gps_simulator.dart와
+  // 같은 발상 — Session.isAdmin일 때만). 마커별 시작 거리에서 _adminWalked만큼 뺀 값을 쏜다,
+  // 실제로 앞으로 걸으면 정면의 마커들과의 거리가 고르게 줄어드는 것과 같다.
+  Timer? _adminArTimer;
+  double _adminWalked = 0;
+  Map<String, double> _adminOrigDist = const {};
+
+  void _startAdminArSim() {
+    _adminOrigDist = {
+      for (final m in _markers)
+        m.id: math.sqrt(m.forward * m.forward + m.right * m.right + m.down * m.down),
+    };
+    _adminArTimer = Timer.periodic(const Duration(milliseconds: 200), (_) => _pushAdminTelemetry());
+  }
+
+  void _pushAdminTelemetry() {
+    final readings = <String, ArMarkerReading>{
+      for (final m in _markers)
+        m.id: ArMarkerReading(
+            distance: math.max(0, (_adminOrigDist[m.id] ?? 0) - _adminWalked), aimError: 0),
+    };
+    _mission?.onTelemetry(readings);
+  }
+
+  void _adminWalk(double deltaM) {
+    setState(() => _adminWalked = math.max(0, _adminWalked + deltaM));
+    _pushAdminTelemetry();
+  }
+
+  Widget _adminArPanel() {
+    Widget btn(String label, VoidCallback onTap) => GestureDetector(
+          onTap: onTap,
+          child: Container(
+            width: 34,
+            height: 34,
+            alignment: Alignment.center,
+            decoration: BoxDecoration(
+              color: Colors.black.withValues(alpha: 0.75),
+              borderRadius: BorderRadius.circular(8),
+              border: Border.all(color: AppColors.teal.withValues(alpha: 0.55)),
+            ),
+            child: Text(label,
+                style: const TextStyle(fontSize: 15, color: AppColors.teal, fontWeight: FontWeight.w900)),
+          ),
+        );
+    return Container(
+      padding: const EdgeInsets.all(8),
+      decoration:
+          BoxDecoration(color: Colors.black.withValues(alpha: 0.4), borderRadius: BorderRadius.circular(12)),
+      child: Column(mainAxisSize: MainAxisSize.min, children: [
+        const Text('admin 이동', style: TextStyle(fontSize: 9, color: AppColors.teal, fontWeight: FontWeight.w900)),
+        const SizedBox(height: 4),
+        Text('${_adminWalked.toStringAsFixed(1)}m',
+            style: const TextStyle(fontSize: 10, color: Colors.white70)),
+        const SizedBox(height: 4),
+        btn('▲', () => _adminWalk(1.0)),
+        const SizedBox(height: 4),
+        btn('⟲', () {
+          setState(() => _adminWalked = 0);
+          _pushAdminTelemetry();
+        }),
+        const SizedBox(height: 4),
+        btn('▼', () => _adminWalk(-1.0)),
+      ]),
+    );
+  }
+
   @override
   void initState() {
     super.initState();
@@ -165,6 +238,9 @@ class _ArSearchScreenState extends State<ArSearchScreen> with SingleTickerProvid
       )..addListener(() {
           if (mounted) setState(() {});
         });
+      // remote(원격 체험)는 애초에 카메라를 켜지 않으니 admin 시뮬레이션도 의미가 없다 —
+      // 켜 두면 화면이 안 보이는 채로 몇 초 뒤 onComplete가 조용히 화면을 닫아 버린다.
+      if (Session.isAdmin && !widget.remote) _startAdminArSim();
     }
     if (widget.remote) {
       // 원격 체험은 카메라를 아예 켜지 않는다 — 권한 팝업도 띄우지 않는다.
@@ -241,6 +317,7 @@ class _ArSearchScreenState extends State<ArSearchScreen> with SingleTickerProvid
 
   @override
   void dispose() {
+    _adminArTimer?.cancel();
     _mission?.dispose();
     _ac.dispose();
     super.dispose();
@@ -263,7 +340,9 @@ class _ArSearchScreenState extends State<ArSearchScreen> with SingleTickerProvid
               _arController = c;
               _mission?.attach(c);
             },
-            onTelemetry: _mission?.onTelemetry,
+            // admin은 실기기 텔레메트리 대신 방향키로 넣은 값만 쓴다 — 안 끊으면 실측(제자리라
+            // 거리 그대로)이 10Hz로 덮어써서 방향키 조작이 즉시 지워진다.
+            onTelemetry: Session.isAdmin ? null : _mission?.onTelemetry,
             onImageDetected: _mission?.onImageDetected,
             enablePinchZoom: _isPhotoMission,
           ))
@@ -297,6 +376,10 @@ class _ArSearchScreenState extends State<ArSearchScreen> with SingleTickerProvid
         // "가까이 가야 하는 줄" 자체를 모른 채 헤맨다.
         if (_mission != null && _arSupported == true && _mode == 'scan' && !_arError)
           _MissionHud(progress: _mission!.progress, statusOverride: _verdictLine),
+
+        // admin 전용 — 방향키로 "다가가기/물러서기"(실외 이동 없이 발자국·AR 미션 테스트).
+        if (_mission != null && Session.isAdmin && _arSupported == true && _mode == 'scan' && !_arError)
+          Positioned(right: 12, top: 130, child: _adminArPanel()),
 
         // 촬영 미션 셔터 — 찾기 단계가 끝난 뒤에만. 검증 중엔 눌리지 않는다.
         if (_isPhotoMission && _photoReady && _arSupported == true && _mode == 'scan' && !_arError)
