@@ -94,5 +94,19 @@
 	<string>AR 화면에서 조각이 있는 방향을 가리키기 위해 기기의 방향 센서를 사용합니다.</string>
 	<key>NSPhotoLibraryAddUsageDescription</key>
 	<string>탐험 중 찍은 사진을 사진첩에 저장합니다.</string>
+
+	<!-- 카카오·네이버 로그인(Supabase OAuth) — 브라우저에서 로그인 후 앱으로
+	     돌아오는 딥링크. 번들 ID 역순 스킴이라 다른 앱과 충돌하지 않는다. -->
+	<key>CFBundleURLTypes</key>
+	<array>
+		<dict>
+			<key>CFBundleURLName</key>
+			<string>$(PRODUCT_BUNDLE_IDENTIFIER)</string>
+			<key>CFBundleURLSchemes</key>
+			<array>
+				<string>com.dokkaebi.dokkaebiApp</string>
+			</array>
+		</dict>
+	</array>
 </dict>
 </plist>

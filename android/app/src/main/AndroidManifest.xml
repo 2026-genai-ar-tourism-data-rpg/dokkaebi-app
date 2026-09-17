@@ -42,6 +42,14 @@
                 <action android:name="android.intent.action.MAIN"/>
                 <category android:name="android.intent.category.LAUNCHER"/>
             </intent-filter>
+            <!-- 카카오·네이버 로그인(Supabase OAuth) — 브라우저에서 로그인 후
+                 앱으로 돌아오는 딥링크. iOS Info.plist의 CFBundleURLSchemes와 동일 스킴. -->
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW"/>
+                <category android:name="android.intent.category.DEFAULT"/>
+                <category android:name="android.intent.category.BROWSABLE"/>
+                <data android:scheme="com.dokkaebi.dokkaebiApp"/>
+            </intent-filter>
         </activity>
         <!-- Don't delete the meta-data below.
              This is used by the Flutter tool to generate GeneratedPluginRegistrant.java -->

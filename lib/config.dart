@@ -58,5 +58,12 @@ class AppConfig {
   /// 애초에 클라이언트 앱에 그대로 박아 넣도록 설계된 값이라(RLS가 실제 데이터를
   /// 보호), 시크릿 파일 관리 절차를 하나 더 늘릴 이유가 없다.
   static const String supabaseUrl = 'https://gkzewjrjexmodgqtuban.supabase.co';
-  static const String supabasePublishableKey = 'sb_publishable_iDKzkSoH-asgsvlfiox2Jw_2vGaDjqg';
+  static const String supabasePublishableKey =
+      'sb_publishable_iDKzkSoH-asgsvlfiox2Jw_2vGaDjqg';
+
+  /// 카카오·네이버 로그인 후 브라우저가 앱으로 돌아오는 딥링크.
+  /// ios/Runner/Info.plist의 CFBundleURLSchemes·android/…/AndroidManifest.xml의
+  /// intent-filter data scheme과 반드시 같은 스킴이어야 한다.
+  static const String oauthRedirectUrl =
+      'com.dokkaebi.dokkaebiApp://login-callback';
 }
