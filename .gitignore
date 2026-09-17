@@ -38,3 +38,6 @@ dart_defines.local.json
 .vscode/
 .idea/
 *.iml
+
+# --- assign_testflight_group.py용 venv ---
+.venv/
