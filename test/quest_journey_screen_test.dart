@@ -56,6 +56,7 @@ import 'package:dokkaebi_app/debug_flags.dart';
 import 'package:dokkaebi_app/game/location_service.dart';
 import 'package:dokkaebi_app/game/run_session.dart';
 import 'package:dokkaebi_app/models/scenario.dart';
+import 'package:dokkaebi_app/screens/ar_search_screen.dart';
 import 'package:dokkaebi_app/screens/quest_journey_screen.dart';
 import 'package:dokkaebi_app/session.dart';
 import 'package:dokkaebi_app/store.dart';
@@ -243,10 +244,14 @@ Scenario _jongno() => Scenario.fromJson({
 
 /// 위치는 기본으로 "못 읽음" 스텁을 준다 — 코스가 있으면 화면이 실제 GPS를 읽으려 하기 때문.
 Future<void> _pump(WidgetTester tester, Scenario? sc,
-    {ApiClient? apiClient, RunSession? runSession, LocationService location = _noFix}) async {
+    {ApiClient? apiClient, RunSession? runSession, LocationService location = _noFix, String? startNodeId}) async {
   await tester.pumpWidget(MaterialApp(
     home: QuestJourneyScreen(
-        scenario: sc, apiClient: apiClient, runSession: runSession, locationService: location),
+        scenario: sc,
+        apiClient: apiClient,
+        runSession: runSession,
+        locationService: location,
+        startNodeId: startNodeId),
   ));
   await tester.pump(const Duration(milliseconds: 400));
 }
@@ -255,16 +260,18 @@ Future<void> _pump(WidgetTester tester, Scenario? sc,
 /// app#26에서 '새 여정 꾸리기(setup)' 화면이 사라지고 map이 첫 화면이 됐다 —
 /// 예전에는 여기서 '도깨비에게 길 묻기'를 눌러 넘어갔다(그 버튼은 이제 없다).
 Future<void> _toMap(WidgetTester tester, Scenario? sc,
-    {ApiClient? apiClient, RunSession? runSession, LocationService location = _noFix}) async {
-  await _pump(tester, sc, apiClient: apiClient, runSession: runSession, location: location);
+    {ApiClient? apiClient, RunSession? runSession, LocationService location = _noFix, String? startNodeId}) async {
+  await _pump(tester, sc,
+      apiClient: apiClient, runSession: runSession, location: location, startNodeId: startNodeId);
   await tester.pump(const Duration(milliseconds: 500));
 }
 
 /// 코스를 저장하고 지도 → 이동 화면을 연 뒤 "GPS 도착 인증"을 누른다(실제 GPS 모드).
 Future<void> _tapArrival(WidgetTester tester, Scenario sc, _FakeQuestServer server,
-    {ApiClient? apiClient, LocationService location = _atSpot}) async {
+    {ApiClient? apiClient, LocationService location = _atSpot, String? startNodeId}) async {
   await ScenarioStore.I.add(sc);
-  await _toMap(tester, sc, apiClient: apiClient, runSession: server.session(), location: location);
+  await _toMap(tester, sc,
+      apiClient: apiClient, runSession: server.session(), location: location, startNodeId: startNodeId);
   await tester.tap(find.text('이동 시작 — GPS 추적'));
   await tester.pump(const Duration(milliseconds: 50)); // 이동 화면 진입 + 거리 갱신
   await tester.tap(find.text('GPS 도착 인증'));
@@ -496,6 +503,40 @@ void main() {
       await tester.pump(const Duration(milliseconds: 140));
 
       expect(find.text('걷는 중…'), findsOneWidget);
+    });
+  });
+
+  // 실기기 제보 — 이동 화면 지도가 손으로 움직이지 않았다(오버레이 정합 때문에 제스처를 막아 뒀다).
+  // 이제 움직일 수 있고, 움직이면 내 위치 따라가기를 끄고 "내 위치"로 되돌린다.
+  group('이동 화면 지도 조작', () {
+    Future<void> toGpsScreen(WidgetTester tester) async {
+      final sc = _course(2);
+      await ScenarioStore.I.add(sc);
+      await _toMap(tester, sc, location: _atSpot);
+      await tester.tap(find.text('이동 시작 — GPS 추적'));
+      await tester.pump(const Duration(milliseconds: 50));
+    }
+
+    testWidgets('지도를 손으로 만지면 따라가기가 꺼지고 «내 위치» 버튼이 나온다', (tester) async {
+      await toGpsScreen(tester);
+      expect(find.text('내 위치'), findsNothing, reason: '처음엔 내 위치를 따라간다');
+
+      await tester.tapAt(const Offset(40, 300)); // 지도 위(칩·카드·목표 핀을 피한 자리)
+      await tester.pump();
+
+      expect(find.text('내 위치'), findsOneWidget);
+    });
+
+    testWidgets('«내 위치»를 누르면 다시 따라가기로 돌아간다', (tester) async {
+      await toGpsScreen(tester);
+      await tester.tapAt(const Offset(40, 300));
+      await tester.pump();
+
+      await tester.tap(find.text('내 위치'));
+      await tester.pump();
+
+      expect(find.text('내 위치'), findsNothing);
+      expect(tester.takeException(), isNull);
     });
   });
 
@@ -1338,6 +1379,201 @@ void main() {
       expect(find.text('쉬고 싶은 마음도 당연하니라.'), findsOneWidget);
       expect(find.text('그 마음이 경주시의 기억을 오래 지켜 줄 것이니라.'), findsNothing);
       expect(ScenarioStore.I.endingOf(sc.scenarioId), 'normal');
+    });
+  });
+
+  // C2 — 코스 상세에서 누른 장소부터 코스 진행 화면을 연다. 진행은 "모은 조각 수"가 아니라
+  // "끝낸 장소"로 센다 — 조각 수로 세면 뒤 장소를 먼저 끝냈을 때 엉뚱한 장소가 차례가 된다.
+  group('시작 장소', () {
+    testWidgets('고른 장소부터 열린다 — 앞 장소가 안 끝났어도', (tester) async {
+      final sc = _course(3);
+      await ScenarioStore.I.add(sc);
+      await _toMap(tester, sc, startNodeId: 'c2');
+
+      expect(find.text('제 2 장 진행 중'), findsOneWidget);
+    });
+
+    testWidgets('피날레를 골라도 다른 조각이 남았으면 안 끝난 첫 장소부터', (tester) async {
+      final sc = _course(3);
+      await ScenarioStore.I.add(sc);
+      await _toMap(tester, sc, startNodeId: 'c3');
+
+      expect(find.text('제 1 장 진행 중'), findsOneWidget);
+    });
+
+    testWidgets('뒤 장소만 끝났으면 안 끝난 첫 장소가 차례다', (tester) async {
+      final sc = _course(3);
+      await ScenarioStore.I.add(sc);
+      await ScenarioStore.I.completeNodeWithGrants(sc.scenarioId, sc.nodeSequence[1]);
+      await _toMap(tester, sc);
+
+      expect(find.text('제 1 장 진행 중'), findsOneWidget,
+          reason: '조각 1개를 "다음은 2장"으로 세면 이미 끝낸 장소를 다시 하게 된다');
+    });
+
+    Scenario clueChain() => Scenario.fromJson({
+          'scenario_id': 'clue_chain',
+          'title': '종로구의 기억석',
+          'region': '종로구',
+          'node_sequence': [
+            _stone('k1', '운현궁', grants: ['fragment:frag_k1', 'clue:申時']),
+            _stone('k2', '익선동', grants: ['fragment:frag_k2', 'clue:ㄱ']),
+            _stone('k3', '인사동', grants: ['fragment:frag_k3']),
+            _stone('k4', '광화문', finale: true),
+          ],
+        });
+
+    testWidgets('앞 장소를 건너뛰면 못 받은 단서를 알리고, 확인하면 그 장소부터 진행한다', (tester) async {
+      final sc = clueChain();
+      await ScenarioStore.I.add(sc);
+      await _toMap(tester, sc, startNodeId: 'k3');
+
+      expect(find.text('앞 장소의 단서 없이 왔느니라'), findsOneWidget);
+      expect(find.text('단서 「申時」'), findsOneWidget);
+      expect(find.text('단서 「ㄱ」'), findsOneWidget);
+      expect(find.text('운현궁'), findsWidgets);
+
+      await tester.tap(find.text('그래도 여기부터'));
+      await tester.pump();
+
+      expect(find.text('앞 장소의 단서 없이 왔느니라'), findsNothing);
+      expect(find.text('제 3 장 진행 중'), findsOneWidget);
+    });
+
+    testWidgets('앞 장소를 이미 끝냈거나 순서대로 들어오면 단서 안내가 없다', (tester) async {
+      final sc = clueChain();
+      await ScenarioStore.I.add(sc);
+      await ScenarioStore.I.completeNodeWithGrants(sc.scenarioId, sc.nodeSequence[0]);
+      await _toMap(tester, sc, startNodeId: 'k2'); // 앞 장소(운현궁)는 끝냄
+
+      expect(find.text('앞 장소의 단서 없이 왔느니라'), findsNothing);
+      expect(find.text('제 2 장 진행 중'), findsOneWidget);
+    });
+
+    testWidgets('건너뛴 장소를 끝내면 다음 차례는 안 끝난 첫 장소로 돌아간다', (tester) async {
+      Map<String, dynamic> quizNode(String id, String name) => _rich(id, name, 'QUIZ_FIND', quiz: {
+            'q': '$name에서 무엇을 살피더냐?',
+            'options': ['별', '물', '바람'],
+            'answer': 0,
+            'wrong_hint': '하늘을 보거라',
+          });
+      final sc = Scenario.fromJson({
+        'scenario_id': 'jump_course',
+        'title': '경주시의 기억석',
+        'region': '경주시',
+        'node_sequence': [quizNode('j1', '첨성대'), quizNode('j2', '대릉원'), _rich('j3', '월성', 'RESTORE_AR')],
+      });
+      final server = _FakeQuestServer(scenarioId: sc.scenarioId);
+      await _tapArrival(tester, sc, server, startNodeId: 'j2');
+      await tester.pump(const Duration(milliseconds: 1600));
+      await tester.tap(find.text('말 걸기'));
+      await tester.pump();
+      await tester.tap(find.text('"그냥 빨리 찾겠소."'));
+      await tester.pump();
+      await tester.tap(find.text('계속 — 도깨비의 시험'));
+      await tester.pump();
+      await tester.tap(find.text('별'));
+      await tester.pump();
+
+      await tester.tap(find.text('계속하기'));
+      await tester.pump(const Duration(milliseconds: 100));
+      await tester.pump(const Duration(milliseconds: 100));
+
+      expect(ScenarioStore.I.doneOf(sc.scenarioId), ['j2']);
+
+      await tester.tap(find.text('가방에 넣기 — 지도로'));
+      for (var i = 0; i < 6; i++) {
+        await tester.pump(const Duration(milliseconds: 100));
+      }
+      expect(find.text('제 1 장 진행 중'), findsOneWidget,
+          reason: '2장을 먼저 끝냈으면 다음은 3장이 아니라 안 끝난 1장이다');
+    });
+  });
+
+  // 사진 미션 — 코스 진행 화면이 팀원의 AR 탐색 화면(실제 카메라 + 서버 사진 판정)을 연다.
+  // 예전엔 그림 위에서 타이머만 도는 사진 화면이었다.
+  group('사진 미션 → AR 탐색 화면', () {
+    Scenario photoCourse() => Scenario.fromJson({
+          'scenario_id': 'photo_ar_course',
+          'title': '천안시의 기억석',
+          'region': '천안시',
+          'node_sequence': [
+            {
+              ..._stone('p1', '명락사'),
+              'mission': {
+                'type': 'PHOTO_FIND',
+                'order': '명락사 현판을 담아라',
+                'hints': const [],
+                'photo_targets': ['청룡동 명락사 현판'],
+              },
+            },
+            _stone('p2', '성거산', finale: true),
+          ],
+        });
+
+    Future<void> toPhotoCta(WidgetTester tester, Scenario sc) async {
+      await _toDialogue(tester, sc);
+      await tester.tap(find.text('"그냥 빨리 찾겠소."'));
+      await tester.pump();
+      await tester.tap(find.text('계속 — 지령 받기'));
+      await tester.pump();
+      await tester.tap(find.text('지령 받기 — 사진 인증 시작'));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 400)); // 화면 전환
+    }
+
+    testWidgets('사진 인증을 시작하면 AR 탐색 화면이 촬영 대상과 함께 열린다', (tester) async {
+      await toPhotoCta(tester, photoCourse());
+
+      final ar = tester.widget<ArSearchScreen>(find.byType(ArSearchScreen));
+      expect(ar.nodeId, 'p1');
+      expect(ar.photoTargets, ['청룡동 명락사 현판']);
+      expect(ar.missionType, 'PHOTO_FIND');
+      expect(find.text('셔터를 누르면 도깨비가 살펴본다'), findsNothing, reason: '예전 그림 사진 화면이 아니다');
+    });
+
+    Future<void> settle(WidgetTester tester) async {
+      for (var i = 0; i < 10; i++) {
+        await tester.pump(const Duration(milliseconds: 100));
+      }
+    }
+
+    testWidgets('AR 화면에서 통과하고 돌아오면 조각 확정으로 이어진다', (tester) async {
+      final sc = photoCourse();
+      await toPhotoCta(tester, sc);
+
+      Navigator.of(tester.element(find.byType(ArSearchScreen))).pop(true);
+      await settle(tester);
+
+      expect(ScenarioStore.I.doneOf(sc.scenarioId), ['p1']);
+      expect(find.text('획 득'), findsOneWidget);
+    });
+
+    testWidgets('뒤로 나왔다가 다시 들어가 통과해도 조각이 확정된다', (tester) async {
+      final sc = photoCourse();
+      await toPhotoCta(tester, sc);
+      Navigator.of(tester.element(find.byType(ArSearchScreen))).pop(false);
+      await settle(tester);
+
+      await tester.tap(find.text('지령 받기 — 사진 인증 시작'));
+      await settle(tester);
+      Navigator.of(tester.element(find.byType(ArSearchScreen))).pop(true);
+      await settle(tester);
+
+      expect(ScenarioStore.I.doneOf(sc.scenarioId), ['p1']);
+      expect(find.text('획 득'), findsOneWidget);
+    });
+
+    testWidgets('통과하지 않고 뒤로 나오면 조각을 주지 않고 지령 화면에 남는다', (tester) async {
+      final sc = photoCourse();
+      await toPhotoCta(tester, sc);
+
+      Navigator.of(tester.element(find.byType(ArSearchScreen))).pop(false);
+      await settle(tester);
+
+      expect(ScenarioStore.I.doneOf(sc.scenarioId), isEmpty);
+      expect(find.text('획 득'), findsNothing);
+      expect(find.text('지령 받기 — 사진 인증 시작'), findsOneWidget, reason: '다시 찍으러 들어갈 수 있어야 한다');
     });
   });
 }
