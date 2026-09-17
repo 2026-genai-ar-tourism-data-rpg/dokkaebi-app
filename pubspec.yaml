@@ -65,6 +65,11 @@ dependencies:
   # 프로필 > 설정 화면의 앱 버전 표시.
   package_info_plus: ^10.2.1
 
+  # 로그인(이메일 등) — 게스트 로그인은 매번 새 계정이라 재로그인 시 이어할
+  # 방법이 없었다. Supabase Auth로 신원을 증명하고 서버(dokkaebi-server)가
+  # 같은 user_id를 재발급하도록 다리를 놓는다(진행도는 그대로 서버가 들고 있음).
+  supabase_flutter: ^2.17.2
+
 dev_dependencies:
   flutter_test:
     sdk: flutter

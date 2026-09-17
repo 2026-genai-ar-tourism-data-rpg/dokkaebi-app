@@ -51,4 +51,12 @@ class AppConfig {
     'KAKAO_NATIVE_APP_KEY',
     defaultValue: '',
   );
+
+  /// Supabase 프로젝트("dk") URL·publishable key — 로그인(이메일 등) 전용.
+  ///
+  /// 카카오 키와 달리 dart-define으로 안 감춘다: Supabase의 publishable key는
+  /// 애초에 클라이언트 앱에 그대로 박아 넣도록 설계된 값이라(RLS가 실제 데이터를
+  /// 보호), 시크릿 파일 관리 절차를 하나 더 늘릴 이유가 없다.
+  static const String supabaseUrl = 'https://gkzewjrjexmodgqtuban.supabase.co';
+  static const String supabasePublishableKey = 'sb_publishable_iDKzkSoH-asgsvlfiox2Jw_2vGaDjqg';
 }

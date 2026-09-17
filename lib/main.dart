@@ -10,6 +10,7 @@
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:kakao_maps_flutter/kakao_maps_flutter.dart';
+import 'package:supabase_flutter/supabase_flutter.dart' hide Session;
 
 import 'config.dart';
 import 'nav.dart';
@@ -36,6 +37,16 @@ void main() async {
     } catch (e) {
       debugPrint('KakaoMapsFlutter.init 실패 — 지도 탭만 비활성: $e');
     }
+  }
+  // 로그인 화면의 이메일 로그인용. 실패해도 게스트 로그인은 그대로 동작해야
+  // 하므로(카카오 init과 같은 원칙) 실패는 로그만 남기고 계속 간다.
+  try {
+    await Supabase.initialize(
+      url: AppConfig.supabaseUrl,
+      publishableKey: AppConfig.supabasePublishableKey,
+    );
+  } catch (e) {
+    debugPrint('Supabase.initialize 실패 — 이메일 로그인만 비활성: $e');
   }
   await Session.load(); // 저장된 로그인 복원
   if (Session.isLoggedIn) await ScenarioStore.I.load(); // 내 탐험 복원

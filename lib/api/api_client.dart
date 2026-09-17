@@ -74,6 +74,22 @@ class ApiClient {
     await Session.save(d['token'] as String, d['user_id'] as String, d['nickname'] as String);
   }
 
+  /// Supabase 로그인(이메일 등) — 같은 Supabase 계정이면 서버가 같은 user_id를
+  /// 재발급해 진행도가 이어진다(게스트는 매번 새 user_id).
+  /// [nickname]은 최초 가입 시에만 쓰이고, 이미 있는 계정이면 무시된다.
+  Future<void> supabaseLogin(String supabaseAccessToken, {String? nickname}) async {
+    final res = await _http.post(
+      Uri.parse('$baseUrl/v1/auth/supabase'),
+      headers: {'Content-Type': 'application/json'},
+      body: jsonEncode({'access_token': supabaseAccessToken, if (nickname != null) 'nickname': nickname}),
+    );
+    if (res.statusCode >= 400) {
+      throw ApiException.from('로그인', res);
+    }
+    final d = jsonDecode(utf8.decode(res.bodyBytes)) as Map<String, dynamic>;
+    await Session.save(d['token'] as String, d['user_id'] as String, d['nickname'] as String);
+  }
+
   /// 분기 대화 한 턴 — 선택마다 호출. inventory로 연계(이전 단서 인지).
   ///
   /// [branch]는 갈림길 노드의 `node.branch` 그대로. AI는 시나리오를 들고 있지 않아
