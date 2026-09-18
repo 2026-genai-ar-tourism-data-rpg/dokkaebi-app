@@ -60,6 +60,7 @@ import 'package:dokkaebi_app/screens/ar_search_screen.dart';
 import 'package:dokkaebi_app/screens/quest_journey_screen.dart';
 import 'package:dokkaebi_app/session.dart';
 import 'package:dokkaebi_app/store.dart';
+import 'package:dokkaebi_app/widgets/memory_stone_restore.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:google_fonts/google_fonts.dart';
@@ -1088,6 +1089,13 @@ void main() {
       expect(find.text('「첨성대」의 기억석 조각'), findsOneWidget);
       expect(find.text('경주시의 기억석 · 1/2 조각'), findsOneWidget);
       expect(find.text('단서 「별빛」'), findsOneWidget);
+      // 코드로 그린 한자 조각 대신 조각 그림 — 큰 그림 1 + 모은 조각 칸 2(모은 1·남은 1).
+      expect(
+          find.byWidgetPredicate((w) =>
+              w is Image && w.image is AssetImage && (w.image as AssetImage).assetName == kMemoryFragmentAsset),
+          findsNWidgets(3));
+      expect(find.byKey(const ValueKey('frag-slot-0-true')), findsOneWidget, reason: '첨성대 조각은 모았다');
+      expect(find.byKey(const ValueKey('frag-slot-1-false')), findsOneWidget, reason: '남은 조각은 흐리게');
       expect(find.text('글씨조각 「훈(訓)」'), findsNothing);
       expect(find.textContaining('申時'), findsNothing);
       expect(find.textContaining('익선동'), findsNothing);
@@ -1362,6 +1370,14 @@ void main() {
           ],
         });
 
+    /// 엔딩 갈래를 고른 뒤 복원 연출을 끝까지 보고 '계속'으로 엔딩 화면에 간다.
+    Future<void> throughRestore(WidgetTester tester) async {
+      await tester.pump(kRestoreDuration);
+      await tester.tap(find.text('계속'));
+      await tester.pump(const Duration(milliseconds: 100));
+      await tester.pump(const Duration(milliseconds: 100));
+    }
+
     /// 도착 인증 → 소환 → "말 걸기"까지 눌러 피날레 화면을 연다.
     Future<void> toFinale(WidgetTester tester, Scenario sc, _FakeQuestServer server) async {
       await _tapArrival(tester, sc, server);
@@ -1407,6 +1423,7 @@ void main() {
       await tester.tap(find.text('이곳의 기억을 계속 지킬게.'));
       await tester.pump(const Duration(milliseconds: 100));
       await tester.pump(const Duration(milliseconds: 100));
+      await throughRestore(tester);
 
       expect(find.text('복 원 · 굿 엔딩'), findsOneWidget);
       expect(find.text('경주시 기억석 복원'), findsOneWidget);
@@ -1421,6 +1438,29 @@ void main() {
       expect(ScenarioStore.I.endingOf(sc.scenarioId), 'good');
     });
 
+    testWidgets('엔딩을 고르면 바로 엔딩이 아니라 조각이 모이는 복원 연출이 먼저 뜬다', (tester) async {
+      final sc = finaleCourse();
+      await toFinale(tester, sc, _FakeQuestServer(scenarioId: sc.scenarioId));
+
+      await tester.tap(find.text('이곳의 기억을 계속 지킬게.'));
+      await tester.pump(const Duration(milliseconds: 100));
+      await tester.pump(const Duration(milliseconds: 100));
+
+      expect(find.byType(MemoryStoneRestore), findsOneWidget);
+      expect(find.text('복 원 · 굿 엔딩'), findsNothing, reason: '엔딩은 연출 뒤');
+      expect(find.text('「경주시 기억석」'), findsOneWidget, reason: '피날레 노드의 region_stone 이름');
+
+      await throughRestore(tester);
+      await tester.pump(const Duration(seconds: 1)); // 화면 전환(크로스페이드)이 끝나야 연출 화면이 빠진다
+      expect(find.byType(MemoryStoneRestore), findsNothing);
+      expect(find.text('복 원 · 굿 엔딩'), findsOneWidget);
+      expect(
+          find.byWidgetPredicate((w) =>
+              w is Image && w.image is AssetImage && (w.image as AssetImage).assetName == kMemoryStoneAsset),
+          findsOneWidget,
+          reason: '엔딩의 기억석은 완성체 그림');
+    });
+
     testWidgets('엔딩 화면 — 다른 갈래를 고르면 노멀 엔딩 대사가 뜬다', (tester) async {
       final sc = finaleCourse();
       await toFinale(tester, sc, _FakeQuestServer(scenarioId: sc.scenarioId));
@@ -1428,6 +1468,7 @@ void main() {
       await tester.tap(find.text('이제 일상으로 돌아가고 싶어.'));
       await tester.pump(const Duration(milliseconds: 100));
       await tester.pump(const Duration(milliseconds: 100));
+      await throughRestore(tester);
 
       expect(find.text('복 원 · 노멀 엔딩'), findsOneWidget);
       expect(find.text('쉬고 싶은 마음도 당연하니라.'), findsOneWidget);

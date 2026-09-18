@@ -1,8 +1,11 @@
 // ============================================================
-// [v16] 도깨비 그림을 노드 도깨비 이름에 맞춘다(lib/game/npc_art.dart) + 발자국 → 엽전.
+// [v16] 도깨비 그림을 노드 도깨비 이름에 맞춘다(lib/game/npc_art.dart) + 발자국 → 엽전 + 조각 보상 연출.
 // 구현(요약): 등장·AR 마커=전신, 대화=말하는 상반신, 지령=기본 상반신, 피날레=수호 도깨비 전신.
 //       전엔 모든 장소에 같은 기본 캐릭터 한 장이 떴다. 발자국 추적은 도깨비가 흘린 엽전 줍기로
 //       문구·데모 그림을 바꿨다(실제 AR은 ar_mission_controller.dart v2).
+//       조각 획득 팝업은 코드로 그린 한자 조각 대신 조각 그림 + 모은 조각 칸. 피날레 선택 뒤엔
+//       복원 연출 화면('restore', memory_stone_restore.dart)을 거쳐 엔딩으로 가고, 엔딩의 기억석은
+//       완성체 그림. 엔딩의 종로 시안 대체값(訓民正音·'종로 글씨 기억석'·사백 년의 먹)은 걷어냈다.
 // 구현일: 2026-09-18 | 작성: ljs (npc-character-set/ljs/v1)
 // ------------------------------------------------------------
 // [v15] 코스 상세와 같은 장소로 열기 + 사진 미션을 실제 AR 카메라로(계획 C2·B10).
@@ -221,6 +224,7 @@ import '../session.dart';
 import '../store.dart';
 import '../theme.dart';
 import '../utils/web_mercator.dart';
+import '../widgets/memory_stone_restore.dart';
 import '../widgets/native_ar_view.dart';
 import '../widgets/reward_pop.dart';
 import 'ar_search_screen.dart';
@@ -944,6 +948,14 @@ class _QuestJourneyScreenState extends State<QuestJourneyScreen> with TickerProv
     return null;
   }
 
+  /// 복원한 기억석 이름 — 피날레 노드가 준 것(AI region_stone), 없으면 지역명으로 짓는다.
+  String get _stoneName {
+    final named = _finaleNode?.regionStoneName;
+    if (named != null && named.isNotEmpty) return named;
+    final region = widget.scenario?.region ?? _defaultRegion;
+    return region.isEmpty ? '기억석' : '$region 기억석';
+  }
+
   /// 서버가 이번 피날레에 준 칭호 — 없으면(기록 실패·재플레이) null.
   String? get _serverTitle {
     final titles = _claimed?.reward?.titles ?? const <String>[];
@@ -1398,7 +1410,7 @@ class _QuestJourneyScreenState extends State<QuestJourneyScreen> with TickerProv
       setState(() {
         ending = resolved;
         _endingChoiceId = choiceId;
-        screen = 'ending';
+        screen = 'restore'; // 조각이 모여 기억석이 되는 연출 → '계속' → 엔딩
         _markChapterDone(_stoneTotal - 1);
       });
       final s = widget.scenario;
@@ -1745,6 +1757,12 @@ class _QuestJourneyScreenState extends State<QuestJourneyScreen> with TickerProv
         return _insaScreen();
       case 'sejong':
         return _finaleScreen();
+      case 'restore':
+        return MemoryStoneRestore(
+          fragmentCount: _stoneTotal,
+          stoneName: _stoneName,
+          onContinue: () => setState(() => screen = 'ending'),
+        );
       case 'ending':
         return _endingScreen();
     }
@@ -3723,18 +3741,16 @@ class _QuestJourneyScreenState extends State<QuestJourneyScreen> with TickerProv
             width: 200, height: 200, alignment: Alignment.center,
             child: Stack(alignment: Alignment.center, children: [
               AnimatedBuilder(animation: _glow, builder: (_, __) => Container(width: 200, height: 200, decoration: BoxDecoration(shape: BoxShape.circle, gradient: RadialGradient(colors: [_gold.withOpacity(0.35 * (0.55 + _glow.value * 0.45)), Colors.transparent], stops: const [0, 0.66])))),
-              Container(width: 164, height: 164, padding: const EdgeInsets.all(22), decoration: BoxDecoration(shape: BoxShape.circle, gradient: const RadialGradient(center: Alignment(-0.2, -0.36), colors: [Color(0xFF4A4034), Color(0xFF2A2318), Color(0xFF17120C)], stops: [0, .55, 1]), border: Border.all(color: _gold.withOpacity(0.55), width: 2), boxShadow: [BoxShadow(color: _gold.withOpacity(0.4), blurRadius: 44)]),
-                child: stone != null
-                    ? Center(child: Text(stone, textAlign: TextAlign.center, style: dokkaebiTitle(size: 22, color: const Color(0xFFFFE9B0), height: 1.3)))
-                    : GridView.count(crossAxisCount: 2, physics: const NeverScrollableScrollPhysics(), children: [for (final c in ['訓', '民', '正', '音']) Center(child: Text(c, style: dokkaebiTitle(size: 32, color: const Color(0xFFFFE9B0))))])),
+              // 완성된 기억석 — 복원 연출(memory_stone_restore.dart)의 끝 장면과 같은 그림.
+              Image.asset(kMemoryStoneAsset, width: 180),
             ]),
           )))),
           Positioned(left: 0, right: 0, top: box.maxHeight * .41, child: Column(children: [
             Text('복 원 · ${e?.label ?? (good ? '굿 엔딩' : '노멀 엔딩')}', style: const TextStyle(fontSize: 12, letterSpacing: 4, color: Color(0xFFA87F2C), fontWeight: FontWeight.w900)),
             const SizedBox(height: 8),
-            Text('${stone ?? '종로 글씨 기억석'} 복원', textAlign: TextAlign.center, style: dokkaebiTitle(size: 25, color: _cream)),
+            Text('$_stoneName 복원', textAlign: TextAlign.center, style: dokkaebiTitle(size: 25, color: _cream)),
             const SizedBox(height: 8),
-            Text(lines ?? '"백성의 글이 다시 깨어났다.\n그대의 걸음이 사백 년의 먹을 되살렸느니."',
+            Text(lines ?? '"흩어진 기억이 다시 하나가 되었느니라.\n그대의 걸음이 이 땅의 기억을 되살렸느니."',
                 textAlign: TextAlign.center, style: dokkaebiTitle(size: 13, color: const Color(0xFFB3A892), height: 1.7)),
           ])),
           Positioned(left: 20, right: 20, bottom: 34, child: Column(mainAxisSize: MainAxisSize.min, children: [
@@ -3853,8 +3869,15 @@ class _QuestJourneyScreenState extends State<QuestJourneyScreen> with TickerProv
               decoration: BoxDecoration(gradient: const LinearGradient(begin: Alignment.topCenter, end: Alignment.bottomCenter, colors: [Color(0xFFF4EDDA), Color(0xFFEADFC4)]), borderRadius: BorderRadius.circular(22), border: Border.all(color: const Color(0xFFD8C9A4)), boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.7), blurRadius: 70)]),
               child: Column(mainAxisSize: MainAxisSize.min, children: [
                 const SizedBox(height: 8),
-                _FragShard(glyph: t.hanja, size: 104, fontSize: 48),
-                const SizedBox(height: 14),
+                // 받은 조각 그림 — 뒤에 복원 빛을 깔고 커지며 등장한다.
+                RewardPopIn(child: SizedBox(
+                  width: 150, height: 150,
+                  child: Stack(alignment: Alignment.center, children: [
+                    Opacity(opacity: 0.55, child: Image.asset(kMemoryRestoreFxAsset, width: 150)),
+                    Image.asset(kMemoryFragmentAsset, width: 112),
+                  ]),
+                )),
+                const SizedBox(height: 10),
                 Text('「${t.name}」의 기억석 조각',
                     textAlign: TextAlign.center,
                     maxLines: 2,
@@ -3863,6 +3886,16 @@ class _QuestJourneyScreenState extends State<QuestJourneyScreen> with TickerProv
                 const SizedBox(height: 4),
                 Text('${region.isEmpty ? '' : '$region의 '}기억석 · ${c.chapterIdx + 1}/$_stoneTotal 조각',
                     style: const TextStyle(fontSize: 13, color: _bronze, fontWeight: FontWeight.w700)),
+                const SizedBox(height: 10),
+                // 모은 조각 칸 — 모은 장소는 조각 그림, 남은 장소는 흐리게.
+                Wrap(spacing: 4, runSpacing: 4, alignment: WrapAlignment.center, children: [
+                  for (var i = 0; i < _stoneTotal; i++)
+                    Opacity(
+                      key: ValueKey('frag-slot-$i-${_doneChapters.contains(i)}'),
+                      opacity: _doneChapters.contains(i) ? 1 : 0.22,
+                      child: Image.asset(kMemoryFragmentAsset, width: 26),
+                    ),
+                ]),
                 const SizedBox(height: 14),
                 // 경험치·도감·칭호는 서버가 계산해 실제로 지급한 값 — 로컬 추정이 아니다.
                 if (reward != null)

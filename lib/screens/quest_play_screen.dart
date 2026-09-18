@@ -26,7 +26,7 @@
 // 구현일: 2026-08-19 | 작성: kys (dialogue-rework/kys/v1)
 // ------------------------------------------------------------
 // [v5] 도깨비 상반신·말풍선 이름표를 노드 도깨비로(전엔 그림은 기본 캐릭터, 이름표는 '먹 도깨비' 고정).
-//      미션 브리핑의 '발자국 따라가기'는 '흘린 엽전 줍기'로.
+//      미션 브리핑의 '발자국 따라가기'는 '흘린 엽전 줍기'로. 조각 획득 카드에 조각 그림.
 // 구현일: 2026-09-18 | 작성: ljs (npc-character-set/ljs/v1)
 // ============================================================
 import 'package:flutter/material.dart';
@@ -39,6 +39,7 @@ import '../models/scenario.dart';
 import '../store.dart';
 import '../theme.dart';
 import '../widgets/ar_frame.dart';
+import '../widgets/memory_stone_restore.dart' show kMemoryFragmentAsset;
 import '../widgets/reward_pop.dart';
 import 'ar_search_screen.dart';
 import 'location_verify_screen.dart';
@@ -559,7 +560,7 @@ class _QuestPlayScreenState extends State<QuestPlayScreen> {
         child: ParchmentCard(
         child: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.start, children: [
           Row(children: [
-            const Text('✦', style: TextStyle(color: Hanji.badge, fontSize: 22)),
+            Image.asset(kMemoryFragmentAsset, width: 44),
             const SizedBox(width: 8),
             Text('기억석 조각 획득', style: dokkaebiTitle(size: 18, color: Hanji.ink)),
           ]),
