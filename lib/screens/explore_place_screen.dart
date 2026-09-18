@@ -29,6 +29,11 @@
 //            거짓이었다. 앱은 서버가 몇 건까지 받아오는지 알 수 없으니 숫자를 박지 않고,
 //            반경 밖을 몇 건 숨겼는지만 알린다(_searchLimit 제거).
 // 구현일: 2026-09-13 | 작성: ljs (search-hint-fix/ljs/v1)
+// ------------------------------------------------------------
+// [v5] '선택한 장소' → '위시 리스트' — '내 주변 탐험'의 +로 담은 장소(ScenarioStore 위시리스트)가
+//      여기 모이고, 그중 이번 코스에 넣을 곳을 고른다(최대 kMaxWishlistCount곳). 검색으로 담은 장소는
+//      이번 코스에만 쓰고 위시리스트엔 남기지 않는다. 반경 밖 위시는 '반경 밖'으로 두고 못 고른다.
+// 구현일: 2026-09-19 | 작성: ljs (wishlist-course/ljs/v1)
 // ============================================================
 import 'dart:async';
 
@@ -39,9 +44,10 @@ import '../api/api_client.dart';
 import '../game/location_service.dart';
 import '../models/explore_draft.dart';
 import '../models/scenario.dart';
+import '../store.dart';
 import '../theme.dart';
 import '../widgets/ui.dart';
-import 'create_scenario_screen.dart' show haversineMeters;
+import 'create_scenario_screen.dart' show haversineMeters, kMaxWishlistCount;
 import 'explore_confirm_screen.dart';
 
 class ExplorePlaceScreen extends StatefulWidget {
@@ -119,6 +125,32 @@ class _ExplorePlaceScreenState extends State<ExplorePlaceScreen> {
   /// 반경 밖이라 숨긴 후보 수.
   int get _hiddenCount => _results.length - _shown.length;
 
+  /// 고른 반경 안인가 — 위치를 모르거나 좌표 없는 장소는 판정할 수 없어 안으로 본다(_shown과 같은 규칙).
+  bool _inRadius(SearchCandidate c) {
+    final lat = _lat, lng = _lng;
+    if (lat == null || lng == null || c.lat == null || c.lng == null) return true;
+    return haversineMeters(lat, lng, c.lat!, c.lng!) <= _draft.radiusM;
+  }
+
+  bool _isPicked(SearchCandidate c) => _draft.places.any((s) => s.contentId == c.contentId);
+
+  /// 코스 하나엔 kMaxWishlistCount곳까지 — 넘으면 알리고 false.
+  bool _roomForOneMore() {
+    if (_draft.places.length < kMaxWishlistCount) return true;
+    ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('코스 하나엔 최대 $kMaxWishlistCount곳까지 고를 수 있어요.')));
+    return false;
+  }
+
+  /// 위시리스트 장소를 이번 코스에 넣기/빼기.
+  void _toggleWish(SearchCandidate w) {
+    if (_isPicked(w)) {
+      setState(() => _draft.places.removeWhere((s) => s.contentId == w.contentId));
+    } else if (_roomForOneMore()) {
+      setState(() => _draft.places.add(w));
+    }
+  }
+
   static const _tagOptions = ['고궁', '역사', '한옥', '전통문화', '카페', '맛집', '한적한 곳', '사진 명소'];
 
   @override
@@ -160,7 +192,7 @@ class _ExplorePlaceScreenState extends State<ExplorePlaceScreen> {
   }
 
   void _pick(SearchCandidate c) {
-    if (!_draft.places.any((s) => s.contentId == c.contentId)) {
+    if (!_isPicked(c) && _roomForOneMore()) {
       setState(() => _draft.places.add(c));
     }
     setState(() {
@@ -168,6 +200,45 @@ class _ExplorePlaceScreenState extends State<ExplorePlaceScreen> {
       _searched = false;
       _search.clear();
     });
+  }
+
+  /// 위시 리스트 — 위시리스트 장소(골라 넣기) + 검색으로 이번 코스에만 담은 장소(빼기).
+  Widget _wishlistBlock() {
+    return ListenableBuilder(
+      listenable: ScenarioStore.I,
+      builder: (context, _) {
+        final wishes = ScenarioStore.I.wishlist;
+        final searchPicks =
+            _draft.places.where((c) => !wishes.any((w) => w.contentId == c.contentId)).toList();
+        if (wishes.isEmpty && searchPicks.isEmpty) {
+          return Container(
+            width: double.infinity,
+            padding: const EdgeInsets.all(14),
+            decoration: BoxDecoration(
+              border: Border.all(color: AppColors.border),
+              borderRadius: BorderRadius.circular(12),
+            ),
+            child: const Text('장소를 검색하거나 "내 주변 탐험"에서 + 로 담아 주세요',
+                style: TextStyle(color: AppColors.textMuted, fontSize: 13)),
+          );
+        }
+        return Wrap(spacing: 6, runSpacing: 6, children: [
+          for (final w in wishes)
+            FilterChip(
+              key: ValueKey('wizard-wish-${w.contentId}'),
+              label: Text(_inRadius(w) ? (w.name ?? w.contentId) : '${w.name ?? w.contentId} · 반경 밖'),
+              selected: _isPicked(w),
+              // 반경 밖은 새로 고를 수 없다(이미 골라 둔 건 뺄 수 있게).
+              onSelected: _inRadius(w) || _isPicked(w) ? (_) => _toggleWish(w) : null,
+            ),
+          for (final c in searchPicks)
+            Chip(
+              label: Text(c.name ?? c.contentId),
+              onDeleted: () => setState(() => _draft.places.remove(c)),
+            ),
+        ]);
+      },
+    );
   }
 
   Future<void> _skip() async {
@@ -312,31 +383,13 @@ class _ExplorePlaceScreenState extends State<ExplorePlaceScreen> {
                       ),
                     ),
                   const SizedBox(height: 20),
-                  const Text('선택한 장소',
+                  const Text('위시 리스트',
                       style: TextStyle(color: AppColors.textPrimary, fontWeight: FontWeight.bold)),
+                  const SizedBox(height: 4),
+                  const Text('이번 코스에 넣을 곳을 골라 주세요 (최대 $kMaxWishlistCount곳)',
+                      style: TextStyle(color: AppColors.textMuted, fontSize: 12.5)),
                   const SizedBox(height: 8),
-                  if (_draft.places.isEmpty)
-                    Container(
-                      width: double.infinity,
-                      padding: const EdgeInsets.all(14),
-                      decoration: BoxDecoration(
-                        border: Border.all(color: AppColors.border),
-                        borderRadius: BorderRadius.circular(12),
-                      ),
-                      child: const Text('장소를 검색해 주세요',
-                          style: TextStyle(color: AppColors.textMuted, fontSize: 13)),
-                    )
-                  else
-                    Wrap(
-                      spacing: 6,
-                      runSpacing: 6,
-                      children: _draft.places
-                          .map((c) => Chip(
-                                label: Text(c.name ?? c.contentId),
-                                onDeleted: () => setState(() => _draft.places.remove(c)),
-                              ))
-                          .toList(),
-                    ),
+                  _wishlistBlock(),
                   const SizedBox(height: 20),
                   const Text('추천 취향',
                       style: TextStyle(color: AppColors.textPrimary, fontWeight: FontWeight.bold)),

@@ -14,6 +14,10 @@
 //            end(집)는 보내지 않는다 — 왕복(시작=끝)이 서버 기본값이고, 종로 고정
 //            도착점을 그대로 두면 다른 지역에서 피날레가 엉뚱한 곳으로 잡힌다.
 // 구현일: 2026-08-18 | 작성: kys (explore-input-wiring/kys/v1)
+// ------------------------------------------------------------
+// [v3] autoGenerate — 퀘스트 탭 위시리스트의 '코스 생성'은 조건을 묻지 않고 바로 만든다.
+//      같은 생성·진행률·오류·결과 화면을 쓰려고, 이 화면을 열자마자 생성을 시작한다.
+// 구현일: 2026-09-19 | 작성: ljs (wishlist-course/ljs/v1)
 // ============================================================
 import 'dart:async';
 
@@ -36,11 +40,15 @@ class ExploreConfirmScreen extends StatefulWidget {
   /// HTTP 실행기 주입 지점 — 테스트가 실제 서버 없이 요청 본문을 확인한다.
   final http.Client? httpClient;
 
+  /// 열자마자 생성을 시작한다(위시리스트 '코스 생성' — 조건을 묻지 않고 기본값으로 바로).
+  final bool autoGenerate;
+
   const ExploreConfirmScreen({
     super.key,
     required this.draft,
     this.locationService = const LocationService(),
     this.httpClient,
+    this.autoGenerate = false,
   });
   @override
   State<ExploreConfirmScreen> createState() => _ExploreConfirmScreenState();
@@ -56,6 +64,12 @@ class _ExploreConfirmScreenState extends State<ExploreConfirmScreen> {
   /// 90%에서 멈춰 기다리고, 응답이 오면 화면이 바로 다음 화면으로 넘어가 100%를 볼 일이 없다.
   int _progress = 0;
   Timer? _progressTimer;
+
+  @override
+  void initState() {
+    super.initState();
+    if (widget.autoGenerate) WidgetsBinding.instance.addPostFrameCallback((_) => _generate());
+  }
 
   @override
   void dispose() {

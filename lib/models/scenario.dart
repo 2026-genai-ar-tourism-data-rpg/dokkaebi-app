@@ -1,4 +1,7 @@
 // ============================================================
+// [v4] 위시리스트 — SearchCandidate.toJson(저장), NearbyPlace.contentId/toWish(주변 장소 → 위시 항목).
+// 구현일: 2026-09-19 | 작성: ljs (wishlist-course/ljs/v1)
+// ------------------------------------------------------------
 // [v3] 생성 코스 엔딩(ai #64) — 피날레 노드의 final_restore_dialogue · endings(A/B) ·
 //      final_rewards_common.region_stone을 읽는다. 엔딩 화면이 종로 고정값(訓民正音·집현전 붓)
 //      대신 이 값을 쓴다(계획 A1·B3·B4). 저장된 코스에서도 남도록 toJson에 함께 넣는다.
@@ -542,6 +545,15 @@ class SearchCandidate {
         lat: (j['lat'] as num?)?.toDouble(),
         lng: (j['lng'] as num?)?.toDouble(),
       );
+
+  /// 위시리스트 저장용(fromJson과 같은 키).
+  Map<String, dynamic> toJson() => {
+        'content_id': contentId,
+        if (name != null) 'name': name,
+        if (addr != null) 'addr': addr,
+        if (lat != null) 'lat': lat,
+        if (lng != null) 'lng': lng,
+      };
 }
 
 /// 주변 장소 갈래 — 목록 아이콘·필터칩의 기준.
@@ -586,6 +598,21 @@ class NearbyPlace {
     this.category = NearbyCategory.other,
     this.summary,
   });
+
+  /// TourAPI 콘텐츠 ID — 위시리스트(코스 생성 앵커)에 필요하다. AI가 node_id를
+  /// 'tour_<contentid>'로 만든다(dokkaebi-ai tourapi/client.py). 그 밖(OSM 등)은 null.
+  String? get contentId {
+    const prefix = 'tour_';
+    if (!nodeId.startsWith(prefix) || nodeId.length == prefix.length) return null;
+    return nodeId.substring(prefix.length);
+  }
+
+  /// 위시리스트 항목으로 — content_id가 없으면 null(담을 수 없다).
+  SearchCandidate? toWish() {
+    final id = contentId;
+    if (id == null) return null;
+    return SearchCandidate(contentId: id, name: name, addr: addr, lat: lat, lng: lng);
+  }
 
   /// 목록에 보여줄 거리 표기(1km 이상은 km).
   String get distLabel {
