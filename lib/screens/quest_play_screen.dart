@@ -28,6 +28,9 @@
 // [v5] 도깨비 상반신·말풍선 이름표를 노드 도깨비로(전엔 그림은 기본 캐릭터, 이름표는 '먹 도깨비' 고정).
 //      미션 브리핑의 '발자국 따라가기'는 '흘린 엽전 줍기'로. 조각 획득 카드에 조각 그림.
 // 구현일: 2026-09-18 | 작성: ljs (npc-character-set/ljs/v1)
+// ------------------------------------------------------------
+// [v6] 조각 획득 카드 — 식별자('관악구_stone_1of5') 대신 '첫째 조각 · 장소'(fragmentDisplayName).
+// 구현일: 2026-09-19 | 작성: ljs (reward-ui-polish/ljs/v1)
 // ============================================================
 import 'package:flutter/material.dart';
 
@@ -566,7 +569,8 @@ class _QuestPlayScreenState extends State<QuestPlayScreen> {
           ]),
           if (_granted.isNotEmpty) ...[
             const SizedBox(height: 6),
-            Text(_granted.join(', '), style: const TextStyle(color: Hanji.bronze, fontSize: 12)),
+            Text(fragmentDisplayName(n.stoneNo, n.name, fallback: _granted.join(', ')),
+                style: const TextStyle(color: Hanji.bronze, fontSize: 12)),
           ],
           // 서버가 계산한 보상 — 로컬 추정이 아니라 실제 지급된 값이다.
           if (_reward != null) ...[

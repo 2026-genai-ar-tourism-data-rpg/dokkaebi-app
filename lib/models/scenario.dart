@@ -1,4 +1,8 @@
 // ============================================================
+// [v5] 기억석 조각 표시 이름 — '관악구_stone_1of5'(AI 식별자) 대신 '첫째 조각 · 자매공원'.
+//      식별자는 서버 조각 기록 키라 그대로 두고, 화면에만 코스 데이터(순서·장소)로 이름을 짓는다.
+// 구현일: 2026-09-19 | 작성: ljs (reward-ui-polish/ljs/v1)
+// ------------------------------------------------------------
 // [v4] 위시리스트 — SearchCandidate.toJson(저장), NearbyPlace.contentId/toWish(주변 장소 → 위시 항목).
 // 구현일: 2026-09-19 | 작성: ljs (wishlist-course/ljs/v1)
 // ------------------------------------------------------------
@@ -633,6 +637,17 @@ class NearbyPlace {
       );
 }
 
+const _koreanOrdinals = ['첫째', '둘째', '셋째', '넷째', '다섯째', '여섯째', '일곱째', '여덟째', '아홉째', '열째', '열한째', '열두째'];
+
+/// 기억석 조각의 화면 이름 — '첫째 조각 · 자매공원'. 순서를 모르면 '기억석 조각 · 장소',
+/// 장소도 모르면 [fallback](보통 fragment_id).
+String fragmentDisplayName(int? stoneNo, String? place, {required String fallback}) {
+  final hasPlace = place != null && place.isNotEmpty;
+  if (stoneNo == null || stoneNo < 1) return hasPlace ? '기억석 조각 · $place' : fallback;
+  final ordinal = stoneNo <= _koreanOrdinals.length ? '${_koreanOrdinals[stoneNo - 1]} 조각' : '$stoneNo번째 조각';
+  return hasPlace ? '$ordinal · $place' : ordinal;
+}
+
 /// 코스 오프닝 프롤로그 대본 한 줄. speaker="beat"면 text 없이 연출 트리거(beat)만 있다.
 /// 서버(dokkaebi-ai PrologueLineSchema)와 1:1 — speaker: narration|npc|player|beat.
 class PrologueLine {
@@ -685,6 +700,15 @@ class Scenario {
 
   /// 기억석 조각 노드만(식음 제외). 진행률·조각수 표시는 전부 이걸 기준으로.
   List<QuestNode> get stoneNodes => nodeSequence.where((n) => n.isStone).toList();
+
+  /// 조각 식별자(fragment_id) → 화면 이름('첫째 조각 · 자매공원'). 코스에 없는 조각이면 식별자 그대로.
+  /// 갈림길 대체 장소는 본선과 같은 조각을 주므로, [played](끝낸 노드 id) 중 그 조각을 준 곳을 먼저 쓴다.
+  String fragmentLabel(String fragmentId, {Set<String> played = const {}}) {
+    final givers = nodeSequence.where((n) => n.fragmentId == fragmentId).toList();
+    if (givers.isEmpty) return fragmentId;
+    final n = givers.firstWhere((g) => played.contains(g.nodeId), orElse: () => givers.first);
+    return fragmentDisplayName(n.stoneNo, n.name, fallback: fragmentId);
+  }
 
   /// 조각 총수 — 서버값 우선, 없으면 관광 노드 수로 폴백.
   int get stoneTotal => _stoneTotal ?? stoneNodes.length;
