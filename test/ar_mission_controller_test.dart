@@ -20,6 +20,14 @@ import 'package:dokkaebi_app/widgets/native_ar_view.dart';
 ArMarkerDef _m(String id, {ArMarkerKind kind = ArMarkerKind.beacon}) =>
     ArMarkerDef(id: id, label: id, color: const Color(0xFF2E7E76), kind: kind);
 
+/// 네이티브로 보낸 지시를 기록하는 가짜 뷰.
+class _FakeView extends ArViewController {
+  final sent = <String>[];
+  @override
+  Future<void> setMarkerState(String id, ArMarkerState state, {double scale = 1.0}) async =>
+      sent.add('$id:${state.name}');
+}
+
 /// 거리·조준각을 한 번에 먹이는 헬퍼. aim 기본값은 정면(0).
 Map<String, ArMarkerReading> _read(Map<String, double> dists, {double aim = 0}) =>
     dists.map((k, d) => MapEntry(k, ArMarkerReading(distance: d, aimError: aim)));
@@ -285,6 +293,32 @@ void main() {
       c.onImageDetected('x');
       expect(c.progress.imageDetected, isFalse);
       expect(c.progress.done, 0);
+    });
+  });
+
+  // admin 이동은 AR 뷰가 뜨기 전부터 거리를 보낸다 — 그때 지시가 '보낸 것'으로 기록돼
+  // 뷰가 붙은 뒤 상태가 같으면 다시 안 보내, 엽전이 끝까지 안 보였다.
+  group('뷰 연결 전후', () {
+    test('뷰가 붙기 전 지시는 기록하지 않아, 붙은 뒤 같은 거리여도 보낸다', () {
+      final c = ArMissionController(type: ArMissionType.hunt, markers: [_m('f1')]);
+      c.onTelemetry(_read({'f1': 4.0})); // 뷰 없음
+
+      final view = _FakeView();
+      c.attach(view);
+      c.onTelemetry(_read({'f1': 4.0})); // 거리 그대로
+      expect(view.sent, ['f1:ghost']);
+    });
+
+    test('마커 배치 직후 resync하면 바뀐 게 없어도 지금 상태를 다시 보낸다', () {
+      final view = _FakeView();
+      final c = ArMissionController(type: ArMissionType.hunt, markers: [_m('f1')])..attach(view);
+      c.onTelemetry(_read({'f1': 4.0}));
+      c.onTelemetry(_read({'f1': 4.0}));
+      expect(view.sent, ['f1:ghost'], reason: '같은 상태·크기는 한 번만');
+
+      c.resync();
+      c.onTelemetry(_read({'f1': 4.0}));
+      expect(view.sent, ['f1:ghost', 'f1:ghost']);
     });
   });
 

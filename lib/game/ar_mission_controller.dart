@@ -17,6 +17,8 @@
 // 구현(요약): 다가가면 엽전이 흐릿하게 보이다가 반짝이고, 반짝일 때 탭하거나 바로 앞까지
 //            가면 줍는다(주운 엽전은 사라진다). 다 주우면 완료. 전엔 다 켜지기만 하면 끝났다.
 //            가까울수록 크게(coinScaleFor) — 크기가 바뀌면 상태가 같아도 다시 보낸다.
+//            엽전은 허리께 높이에 떠 있고(바닥이면 발밑이라 폰을 숙여야 보였다) 2.4m 앞부터 놓는다.
+//            뷰가 붙기 전 지시는 기록하지 않고, 마커 배치 직후 resync로 다시 보낸다.
 // 구현일: 2026-09-18 | 작성: ljs (npc-character-set/ljs/v1)
 // ============================================================
 import 'dart:ui' show Color;
@@ -163,6 +165,9 @@ class ArMissionController extends ChangeNotifier {
   final Map<String, ArMarkerState> _sent = {};
   final Map<String, double> _sentScale = {};
 
+  /// HUNT: 지금 반짝이는(탭으로 주울 수 있는) 엽전 — 네이티브 전송 기록과 따로 든다.
+  final Set<String> _shining = {};
+
   double _ratio = 0;
   String _status = '둘러보는 중…';
   double? _nearest;
@@ -183,6 +188,13 @@ class ArMissionController extends ChangeNotifier {
       );
 
   void attach(ArViewController view) => _view = view;
+
+  /// 네이티브가 마커를 막 놓았을 때 화면이 부른다. 그 전에 보낸 지시는 받을 마커가 없어
+  /// 사라졌으니, 보낸 기록을 비워 다음 텔레메트리에 지금 상태를 다시 보내게 한다.
+  void resync() {
+    _sent.clear();
+    _sentScale.clear();
+  }
 
   /// 네이티브 10Hz 텔레메트리 진입점.
   void onTelemetry(Map<String, ArMarkerReading> readings) {
@@ -231,7 +243,7 @@ class ArMissionController extends ChangeNotifier {
       _collect(markerId);
     } else if (type == ArMissionType.hunt) {
       // 반짝이는(가까운) 엽전만 줍는다 — 멀리서 흐릿한 걸 탭해 건너뛰지 못하게.
-      if (_sent[markerId] == ArMarkerState.solid) {
+      if (_shining.contains(markerId)) {
         _pickCoin(markerId);
       } else {
         _status = '더 가까이 가야 주울 수 있느니라';
@@ -257,7 +269,12 @@ class ArMissionController extends ChangeNotifier {
           : (d <= kTrailWakeM ? ArMarkerState.ghost : ArMarkerState.hidden);
       // 멀수록 흐리고 작게, 가까울수록 크게 — 거리 자체가 원근 연출이 된다.
       _push(m.id, state, scale: coinScaleFor(d));
-      if (state == ArMarkerState.solid) shining++;
+      if (state == ArMarkerState.solid) {
+        _shining.add(m.id);
+        shining++;
+      } else {
+        _shining.remove(m.id);
+      }
     }
     if (_complete) return; // 방금 마지막 엽전을 주웠다 — _finish 문구를 덮지 않는다
     _ratio = _markers.isEmpty ? 0 : _done.length / _markers.length;
@@ -269,6 +286,7 @@ class ArMissionController extends ChangeNotifier {
 
   /// 엽전 하나를 줍는다 — 사라지게 하고 센다(다 주우면 _collect가 완료시킨다).
   void _pickCoin(String id) {
+    _shining.remove(id);
     _push(id, ArMarkerState.hidden);
     _collect(id);
   }
@@ -377,6 +395,9 @@ class ArMissionController extends ChangeNotifier {
   /// 같은 상태를 10Hz로 반복 전송하면 채널만 먹는다 — 상태나 크기가 바뀔 때만 보낸다.
   /// (전엔 ghost일 때만 크기를 다시 보내, 반짝이는(solid) 엽전은 다가가도 커지지 않았다.)
   void _push(String id, ArMarkerState state, {double scale = 1.0}) {
+    // 뷰가 아직 없으면 보내지도 기록하지도 않는다 — 기록만 남으면 뷰가 붙은 뒤 상태가 같아
+    // 다시 안 보내, 마커가 끝까지 숨은 채로 남았다(admin 이동은 뷰보다 먼저 거리를 보낸다).
+    if (_view == null) return;
     final prevScale = _sentScale[id];
     final changed = _sent[id] != state || prevScale == null || (prevScale - scale).abs() > _kScaleEpsilon;
     _sent[id] = state;
@@ -414,9 +435,10 @@ List<ArMarkerDef> buildArMarkers({
             color: primary,
             kind: ArMarkerKind.coin,
             image: kCoinImageAsset,
-            forward: 1.4 + i * 1.3,
+            // 첫 엽전이 폰을 들고만 있어도 화면에 들어오는 거리부터.
+            forward: 2.4 + i * 1.3,
             right: (i.isEven ? -0.22 : 0.22),
-            down: 1.35, // 눈높이에서 바닥까지 — 평면을 찾으면 그 높이로 다시 앉는다
+            down: 0.9, // 눈높이에서 허리께 — 평면을 찾으면 네이티브가 바닥+띄움 높이로 옮긴다
             state: ArMarkerState.hidden,
           ),
       ];

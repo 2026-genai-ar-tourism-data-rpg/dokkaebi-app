@@ -44,6 +44,7 @@
 //            판에 붙이고, 판 비율도 그 그림에 맞춘다. image가 없거나 못 읽으면 v4의 기본 캐릭터.
 //            HUNT는 바닥의 발자국 대신 도깨비가 흘리고 간 엽전(빌보드 판, 바닥에 세움).
 //            도깨비 판은 키 0.42→1.0m로 키우고 발끝을 바닥에 맞췄다(가운데가 바닥이라 반이 묻혔다).
+//            엽전은 바닥 위 kCoinHoverM에 띄워 오르내리고, 흐릿할 때도 kCoinGhostOpacity로 진하게.
 // 구현일: 2026-09-18 | 작성: ljs (npc-character-set/ljs/v1)
 // ============================================================
 import ARKit
@@ -66,6 +67,12 @@ enum ArMarkerState: String {
   case ghost       // 흐릿함 (기척만)
   case solid       // 완전히 드러남
 }
+
+/// 엽전이 바닥 위로 떠 있는 높이(m) — 바닥에 두면 발밑이라 폰을 숙여야 보였다.
+private let kCoinHoverM: Float = 0.6
+
+/// 흐릿한(ghost) 엽전의 불투명도 — 다른 마커(0.28)보다 진하게, 카메라 배경에 묻히지 않게.
+private let kCoinGhostOpacity: CGFloat = 0.5
 
 /// 마커 1개 정의 — Dart 쪽에서 creationParams로 전달.
 private struct ArMarkerSpec {
@@ -372,19 +379,19 @@ final class DokkaebiArView: NSObject, FlutterPlatformView, ARSCNViewDelegate, AR
         right: spec.right,
         down: spec.down
       )
-      // 바닥을 이미 찾았으면 바닥에 앉힌다(엽전·부재는 공중에 뜨면 안 된다).
-      if let y = floorY, spec.kind != .pattern { pos.y = y }
+      // 바닥을 이미 찾았으면 바닥에 앉힌다(부재·도깨비는 공중에 뜨면 안 된다. 엽전은 바닥 위로 띄운다).
+      if let y = floorY, spec.kind != .pattern { pos.y = floorHeight(y, for: spec.kind) }
 
       let node = markerNode(spec: spec)
       node.simdPosition = pos
       node.name = "marker:\(spec.id)"
       sceneView.scene.rootNode.addChildNode(node)
       markerPositions[spec.id] = pos
-      applyState(node: node, state: spec.state, scale: 1.0)
+      applyState(node: node, state: spec.state, scale: 1.0, kind: spec.kind)
 
-      // 등장 애니메이션. 엽전은 바닥에 떨어진 것이라 부유시키지 않는다.
+      // 등장 애니메이션 + 은은한 오르내림(떠 있는 것들).
       node.runAction(.scale(to: CGFloat(spec.state == .hidden ? 0.01 : 1.0), duration: 0.4))
-      if spec.kind == .beacon || spec.kind == .part {
+      if spec.kind == .beacon || spec.kind == .part || spec.kind == .coin {
         node.runAction(.repeatForever(.sequence([
           .moveBy(x: 0, y: 0.06, z: 0, duration: 1.1),
           .moveBy(x: 0, y: -0.06, z: 0, duration: 1.1),
@@ -399,23 +406,28 @@ final class DokkaebiArView: NSObject, FlutterPlatformView, ARSCNViewDelegate, AR
     for spec in markerSpecs where spec.kind != .pattern {
       guard let node = sceneView.scene.rootNode.childNode(withName: "marker:\(spec.id)", recursively: false) else { continue }
       var p = node.simdPosition
-      p.y = y
+      p.y = floorHeight(y, for: spec.kind)
       node.simdPosition = p
       markerPositions[spec.id] = p
     }
   }
 
+  /// 바닥 높이 y에 이 종류의 마커를 둘 높이 — 엽전만 바닥 위로 띄운다.
+  private func floorHeight(_ y: Float, for kind: ArMarkerKind) -> Float {
+    kind == .coin ? y + kCoinHoverM : y
+  }
+
   private func setMarkerState(id: String, state: ArMarkerState, scale: Float) {
     guard let node = sceneView.scene.rootNode.childNode(withName: "marker:\(id)", recursively: false) else { return }
-    applyState(node: node, state: state, scale: scale)
+    applyState(node: node, state: state, scale: scale, kind: markerKinds[id])
   }
 
   /// 표시 상태를 실제 재질·크기에 반영. 상태 판단은 전부 Dart에 있다.
-  private func applyState(node: SCNNode, state: ArMarkerState, scale: Float) {
+  private func applyState(node: SCNNode, state: ArMarkerState, scale: Float, kind: ArMarkerKind?) {
     let opacity: CGFloat
     switch state {
     case .hidden: opacity = 0.0
-    case .ghost: opacity = 0.28
+    case .ghost: opacity = kind == .coin ? kCoinGhostOpacity : 0.28
     case .solid: opacity = 1.0
     }
     node.runAction(.group([

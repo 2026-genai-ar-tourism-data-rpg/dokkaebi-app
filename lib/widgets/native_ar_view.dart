@@ -175,6 +175,9 @@ class NativeArView extends StatefulWidget {
   /// 참조 이미지 인식(인자=참조 이름/URL). PHOTO_FIND의 "AR이 타깃을 봤다" 신호.
   final ValueChanged<String>? onImageDetected;
 
+  /// 네이티브가 마커를 놓은 직후. 그 전에 보낸 상태 지시는 받을 마커가 없어 사라졌다.
+  final VoidCallback? onMarkersPlaced;
+
   /// 두 손가락 확대·축소를 감싼 Flutter 위젯(ar_search_screen._zoomable)까지
   /// 올려 보낼지. 기본은 false — UiKitView는 기본적으로 자기 영역의 제스처를
   /// 네이티브가 먼저 가져가므로, 이걸 켜야 ScaleGestureRecognizer가 경쟁에 끼어
@@ -193,6 +196,7 @@ class NativeArView extends StatefulWidget {
     this.referenceImages = const [],
     this.onImageDetected,
     this.enablePinchZoom = false,
+    this.onMarkersPlaced,
   });
 
   @override
@@ -242,7 +246,8 @@ class _NativeArViewState extends State<NativeArView> {
       case 'markerAnchored':
         return; // 마커가 인식된 이미지 위치로 옮겨졌다 — 텔레메트리에 자연히 반영된다
       case 'markersPlaced':
-        return; // 진행 로그용 — 현재 UI는 별도 반응 없음
+        widget.onMarkersPlaced?.call();
+        return;
     }
   }
 

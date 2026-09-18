@@ -31,7 +31,8 @@
 // 구현일: 2026-09-16 | 작성: kys (photo-verify/kys/v1)
 // ------------------------------------------------------------
 // [v5] HUNT 엽전 줍기 — 주울 때마다 엽전 획득 효과를 화면 가운데 잠깐 띄우고,
-//      마지막 엽전은 효과가 보이도록 잠시 뒤에 닫는다.
+//      마지막 엽전은 효과가 보이도록 잠시 뒤에 닫는다. 마커 배치 직후 상태를 다시 보내고
+//      (admin에서 엽전이 안 보이던 원인), admin 방향키 한 칸은 1m→0.5m.
 // 구현일: 2026-09-18 | 작성: ljs (npc-character-set/ljs/v1)
 // ============================================================
 import 'dart:async';
@@ -160,6 +161,10 @@ class _ArSearchScreenState extends State<ArSearchScreen> with SingleTickerProvid
     _mission?.onTelemetry(readings);
   }
 
+  /// admin 방향키 한 칸(m). 1m면 엽전 줍기 반경(1.2m)과 간격(1.3m)보다 커서 반짝이는 걸
+  /// 보기도 전에 한 칸에 하나씩 주워졌다.
+  static const double _adminStepM = 0.5;
+
   void _adminWalk(double deltaM) {
     setState(() => _adminWalked = math.max(0, _adminWalked + deltaM));
     _pushAdminTelemetry();
@@ -191,14 +196,14 @@ class _ArSearchScreenState extends State<ArSearchScreen> with SingleTickerProvid
         Text('${_adminWalked.toStringAsFixed(1)}m',
             style: const TextStyle(fontSize: 10, color: Colors.white70)),
         const SizedBox(height: 4),
-        btn('▲', () => _adminWalk(1.0)),
+        btn('▲', () => _adminWalk(_adminStepM)),
         const SizedBox(height: 4),
         btn('⟲', () {
           setState(() => _adminWalked = 0);
           _pushAdminTelemetry();
         }),
         const SizedBox(height: 4),
-        btn('▼', () => _adminWalk(-1.0)),
+        btn('▼', () => _adminWalk(-_adminStepM)),
       ]),
     );
   }
@@ -360,6 +365,12 @@ class _ArSearchScreenState extends State<ArSearchScreen> with SingleTickerProvid
             onTelemetry: Session.isAdmin ? null : _mission?.onTelemetry,
             onImageDetected: _mission?.onImageDetected,
             enablePinchZoom: _isPhotoMission,
+            // 배치 전에 보낸 상태는 사라졌다 — 다시 보내게 하고, admin은 거리 값을 바로 다시 넣는다
+            // (실기기 텔레메트리는 배치 뒤에 오지만 admin 이동은 뷰가 뜨기 전부터 돈다).
+            onMarkersPlaced: () {
+              _mission?.resync();
+              if (Session.isAdmin && !widget.remote) _pushAdminTelemetry();
+            },
           ))
         else if (widget.remote)
           // 원격 체험 배경 — 그 자리에 없으니 카메라 대신 도깨비 기운이 도는 밤 풍경.
