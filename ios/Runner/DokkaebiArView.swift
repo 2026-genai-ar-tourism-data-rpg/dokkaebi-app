@@ -45,6 +45,7 @@
 //            HUNT는 바닥의 발자국 대신 도깨비가 흘리고 간 엽전(빌보드 판, 바닥에 세움).
 //            도깨비 판은 키 0.42→1.0m로 키우고 발끝을 바닥에 맞췄다(가운데가 바닥이라 반이 묻혔다).
 //            엽전은 바닥 위 kCoinHoverM에 띄워 오르내리고, 흐릿할 때도 kCoinGhostOpacity로 진하게.
+//            폴백 그림 DokkaebiCharacter도 새 세트의 기본 소년 도깨비(빨간 youth)로 바꿨다.
 // 구현일: 2026-09-18 | 작성: ljs (npc-character-set/ljs/v1)
 // ============================================================
 import ARKit
@@ -539,12 +540,12 @@ final class DokkaebiArView: NSObject, FlutterPlatformView, ARSCNViewDelegate, AR
 
   /// 범용/하위호환 — 캐릭터 그림을 항상 카메라를 향하는 평면에 텍스처로 붙인다.
   /// (v1의 피라미드는 사람 형상 이미지를 입체에 입힐 수 없어 빌보드 판으로 교체)
-  /// imageAsset(장소 도깨비)을 못 읽으면 기본 캐릭터 DokkaebiCharacter.
+  /// imageAsset(장소 도깨비)을 못 읽으면 기본 캐릭터 DokkaebiCharacter(기본 소년 도깨비와 같은 그림).
   /// 판의 발끝을 마커 위치(바닥)에 맞춘다 — 전엔 판 가운데가 바닥이라 아래 절반이 바닥에 묻혔다.
   private func beaconNode(imageAsset: String?) -> SCNNode {
     let image = imageAsset.flatMap { flutterAssetImage($0) } ?? UIImage(named: "DokkaebiCharacter")
     let heightOverWidth: CGFloat = image.map { $0.size.height / max($0.size.width, 1) }
-      ?? 902.0 / 572.0 // dokkaebi_character.png 원본 픽셀 비율
+      ?? 768.0 / 573.0 // DokkaebiCharacter.png(기본 소년 도깨비) 픽셀 비율
     let height: CGFloat = 1.0  // 도깨비 키(m) — 아이 키만큼 보여야 눈에 띈다
     let geo = SCNPlane(width: height / heightOverWidth, height: height)
     let mat = SCNMaterial()

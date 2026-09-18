@@ -1378,7 +1378,8 @@ void main() {
 
       expect(tester.takeException(), isNull);
       expect(assetImage('assets/game/characters/food_sutbul/full_idle.webp'), findsOneWidget);
-      expect(assetImage('assets/images/dokkaebi_character.png'), findsNothing, reason: '고정 기본 캐릭터가 아니다');
+      expect(assetImage('assets/game/characters/base_youth/full_idle.webp'), findsNothing,
+          reason: '기본 도깨비가 아니라 이 장소의 숯불 도깨비');
     });
 
     testWidgets('대화 화면 — 그 도깨비의 말하는 상반신', (tester) async {
@@ -1483,7 +1484,7 @@ void main() {
               (w.image as AssetImage).assetName == 'assets/game/characters/guardian_suho/full_idle.webp'),
           findsWidgets, reason: '화면 전환 중엔 소환 화면과 피날레 화면이 함께 그려진다 — 둘 다 수호 도깨비');
       expect(find.byWidgetPredicate((w) => w is Image && w.image is AssetImage &&
-          (w.image as AssetImage).assetName == 'assets/images/dokkaebi_character.png'), findsNothing);
+          (w.image as AssetImage).assetName == 'assets/game/characters/base_youth/full_idle.webp'), findsNothing);
     });
 
     testWidgets('엔딩 화면 — 고른 갈래의 대사·지역 기억석과 서버 칭호를 보여준다', (tester) async {

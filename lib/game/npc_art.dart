@@ -3,7 +3,8 @@
 // pipeline: 모바일 클라이언트 / 게임
 // 구현(요약): AI가 장소마다 붙이는 도깨비 이름('먹 도깨비')의 접두로 그림 폴더
 //            (assets/game/characters/<폴더>/)를 고른다. 피날레는 수호 도깨비,
-//            초롱 도깨비는 프롤로그와 같은 기존 그림, 표에 없는 이름은 기본 소년 도깨비.
+//            표에 없는 이름(초롱 도깨비 포함)은 기본 소년 도깨비(빨간 youth).
+//            전엔 초롱 도깨비만 예전 만화풍 그림이었다 — 새 세트로 통일.
 // 구현일: 2026-09-18
 // ============================================================
 
@@ -43,19 +44,11 @@ class NpcArt {
   static const String guardianFolder = 'guardian_suho';
   static const String _dir = 'assets/game/characters';
 
-  /// 프롤로그의 초롱 도깨비 — 새 세트에 없어 기존 그림을 그대로 쓴다(말하기 표정 없음).
-  static const NpcArt lantern = NpcArt._(
-    'assets/images/dokkaebi_character.png',
-    'assets/images/dokkaebi_character_bust.png',
-    'assets/images/dokkaebi_character_bust.png',
-  );
-
   /// [npcName] 도깨비의 그림. [isFinale]이면 이름과 무관하게 수호 도깨비다 —
   /// 종로 시연 코스처럼 피날레 이름이 표와 다를 때('글빛 수호 도깨비')도 같은 수호신이 나온다.
   factory NpcArt.of(String npcName, {bool isFinale = false}) {
     if (isFinale) return _inFolder(guardianFolder);
     final prefix = npcName.trim().replaceFirst(RegExp(r'\s*도깨비$'), '');
-    if (prefix == '초롱') return lantern;
     return _inFolder(folderByPrefix[prefix] ?? baseFolder);
   }
 

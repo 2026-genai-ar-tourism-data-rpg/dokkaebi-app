@@ -31,13 +31,8 @@ void main() {
       expect(NpcArt.of('', isFinale: true).full, '$_dir/guardian_suho/full_idle.webp');
     });
 
-    test('초롱 도깨비는 프롤로그와 같은 기존 그림이다', () {
-      expect(NpcArt.of('초롱 도깨비'), same(NpcArt.lantern));
-      expect(NpcArt.lantern.full, 'assets/images/dokkaebi_character.png');
-    });
-
-    test('표에 없거나 빈 이름은 기본 소년 도깨비로 폴백한다', () {
-      for (final name in ['온기 도깨비', '붓장수 도깨비', '', '도깨비']) {
+    test('표에 없거나 빈 이름은 기본 소년 도깨비로 폴백한다 — 초롱 도깨비도', () {
+      for (final name in ['초롱 도깨비', '온기 도깨비', '붓장수 도깨비', '', '도깨비']) {
         expect(NpcArt.of(name).full, '$_dir/base_youth/full_idle.webp', reason: name);
       }
     });
@@ -52,9 +47,6 @@ void main() {
         for (final file in ['full_idle', 'bust_idle', 'bust_talk']) {
           expect(File('$_dir/$f/$file.webp').existsSync(), isTrue, reason: '$f/$file');
         }
-      }
-      for (final path in [NpcArt.lantern.full, NpcArt.lantern.bust]) {
-        expect(File(path).existsSync(), isTrue, reason: path);
       }
     });
 
