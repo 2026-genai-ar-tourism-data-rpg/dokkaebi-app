@@ -1,4 +1,9 @@
 // ============================================================
+// [v5] 위시리스트 영속 — '내 주변 탐험'의 +로 담은 가고 싶은 장소(최대 wishlistMax=30곳).
+// 구현(요약): 퀘스트 탭 '위시리스트'와 코스 만들기 마법사 '위시 리스트'가 같은 목록을 쓴다.
+//            코스를 만들어도 비우지 않는다. 유저별 같은 키에 함께 저장, 전체 초기화 때 비운다.
+// 구현일: 2026-09-19 | 작성: ljs (wishlist-course/ljs/v1)
+// ------------------------------------------------------------
 // [v4] 코스별 남은 붓털 영속 — 화면에 다시 들어올 때마다 3개로 돌아가던 것(계획 B7).
 // 구현(요약): 힌트를 앞당겨 여는 붓털이 코스 진행 화면의 지역 변수라, 뒤로 갔다 다시 들어오면
 //            항상 3개로 초기화됐다(써도 줄지 않는 것처럼 보인 원인). scenarioId→남은 붓털을
@@ -47,6 +52,10 @@ class ScenarioStore extends ChangeNotifier {
   final Set<String> _prologueSeen = {}; // 프롤로그를 본 scenarioId — 코스별로 최초 1회만.
   final Map<String, String> _runs = {}; // scenarioId -> 서버 run_id(재시작·코스 전환 후 이어 쓰기)
   final Map<String, int> _brush = {}; // scenarioId -> 남은 붓털(힌트를 앞당겨 여는 데 쓴다)
+  final List<SearchCandidate> _wishlist = []; // 가고 싶은 장소 — '내 주변 탐험'의 +로 담는다
+
+  /// 위시리스트에 담을 수 있는 최대 장소 수(코스 하나에 넣는 건 kMaxWishlistCount=5곳).
+  static const wishlistMax = 30;
 
   /// 코스를 처음 시작할 때 주는 붓털 수.
   static const defaultBrush = 3;
@@ -54,6 +63,10 @@ class ScenarioStore extends ChangeNotifier {
   String get _key => 'store_${Session.userId ?? 'guest'}';
 
   // ── 조회 ──
+  /// 위시리스트(담은 순서). 코스를 만들어도 비우지 않는다 — 다른 조합으로 또 쓸 수 있게.
+  List<SearchCandidate> get wishlist => List.unmodifiable(_wishlist);
+  bool isWished(String contentId) => _wishlist.any((c) => c.contentId == contentId);
+
   List<String> doneOf(String scenarioId) => _doneNodes[scenarioId] ?? const [];
   List<String> inventoryOf(String scenarioId) => _inventory[scenarioId] ?? const [];
   int progressOf(Scenario s) => doneOf(s.scenarioId).length;
@@ -150,6 +163,7 @@ class ScenarioStore extends ChangeNotifier {
     _prologueSeen.clear();
     _runs.clear();
     _brush.clear();
+    _wishlist.clear();
     final raw = p.getString(_key);
     if (raw != null && raw.isNotEmpty) {
       final d = jsonDecode(raw) as Map<String, dynamic>;
@@ -167,8 +181,28 @@ class ScenarioStore extends ChangeNotifier {
           ((d['prologueSeen'] ?? []) as List).map((e) => e.toString()));
       (d['runs'] as Map<String, dynamic>? ?? {}).forEach((k, v) => _runs[k] = v.toString());
       (d['brush'] as Map<String, dynamic>? ?? {}).forEach((k, v) => _brush[k] = (v as num).toInt());
+      for (final e in (d['wishlist'] ?? []) as List) {
+        _wishlist.add(SearchCandidate.fromJson(e as Map<String, dynamic>));
+      }
     }
     notifyListeners();
+  }
+
+  /// 위시리스트에 담는다. 이미 있으면 그대로 true, 가득(wishlistMax) 찼으면 false.
+  Future<bool> addWish(SearchCandidate c) async {
+    if (isWished(c.contentId)) return true;
+    if (_wishlist.length >= wishlistMax) return false;
+    _wishlist.add(c);
+    notifyListeners();
+    await _persist();
+    return true;
+  }
+
+  /// 위시리스트에서 뺀다.
+  Future<void> removeWish(String contentId) async {
+    _wishlist.removeWhere((c) => c.contentId == contentId);
+    notifyListeners();
+    await _persist();
   }
 
   /// 새 탐험 추가.
@@ -289,6 +323,7 @@ class ScenarioStore extends ChangeNotifier {
     _prologueSeen.clear();
     _runs.clear();
     _brush.clear();
+    _wishlist.clear();
     notifyListeners();
     await _persist();
   }
@@ -304,6 +339,7 @@ class ScenarioStore extends ChangeNotifier {
       'prologueSeen': _prologueSeen.toList(),
       'runs': _runs,
       'brush': _brush,
+      'wishlist': _wishlist.map((c) => c.toJson()).toList(),
     }));
   }
 }

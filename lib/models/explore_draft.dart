@@ -14,6 +14,9 @@
 //            인원수가 없으면 4인 총예산을 1인 예산으로 오인한다.
 //            region은 월드맵에서 고른 지역. 'auto'면 AI가 좌표 근처 주소로 시군구를 정한다.
 // 구현일: 2026-08-18 | 작성: kys (explore-input-wiring/kys/v1)
+// ------------------------------------------------------------
+// [v3] wishlistOnly — 퀘스트 탭 위시리스트 '코스 생성'은 고른 장소로만 만든다.
+// 구현일: 2026-09-19 | 작성: ljs (wishlist-course/ljs/v1)
 // ============================================================
 import 'scenario.dart';
 
@@ -38,6 +41,10 @@ class ExploreDraft {
   /// 서버에 그대로 보내면 AI가 탐험시간 기반 자동 반경 계산을 건너뛰고 이 값을 그대로 쓴다
   /// (generator.py: `radius = base_radius if req.radius_m else radius_for(...)`).
   int radiusKm = 3;
+
+  /// 위시 장소로만 코스를 짠다(다른 장소로 채우지 않음) — 퀘스트 탭 위시리스트 '코스 생성'만 켠다.
+  /// 마법사('새 코스 만들기')는 끈 채로 위시 장소에 다른 장소를 더해 만든다.
+  bool wishlistOnly = false;
 
   /// 서버로 보낼 반경(m).
   int get radiusM => radiusKm * 1000;
