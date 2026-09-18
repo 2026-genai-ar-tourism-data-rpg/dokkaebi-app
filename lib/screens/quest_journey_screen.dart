@@ -1,4 +1,17 @@
 // ============================================================
+// [v16] 도깨비 그림을 노드 도깨비 이름에 맞춘다(lib/game/npc_art.dart) + 발자국 → 엽전 + 조각 보상 연출.
+// 구현(요약): 등장·AR 마커=전신, 대화=말하는 상반신, 지령=기본 상반신, 피날레=수호 도깨비 전신.
+//       전엔 모든 장소에 같은 기본 캐릭터 한 장이 떴다. 발자국 추적은 도깨비가 흘린 엽전 줍기로
+//       문구·데모 그림을 바꿨다(실제 AR은 ar_mission_controller.dart v2).
+//       조각 획득 팝업은 코드로 그린 한자 조각 대신 조각 그림 + 모은 조각 칸. 피날레 선택 뒤엔
+//       복원 연출 화면('restore', memory_stone_restore.dart)을 거쳐 엔딩으로 가고, 엔딩의 기억석은
+//       완성체 그림. 엔딩의 종로 시안 대체값(訓民正音·'종로 글씨 기억석'·사백 년의 먹)은 걷어냈다.
+//       수집 단계(S1·S6)는 떠 있는 조각(종로 한자) 탭 대신 빛 순서 기억하기 미니게임
+//       (memory_sequence_game.dart) — AR 엽전 줍기와 같은 '모으기'로 보였다.
+//       AR 소환은 도깨비를 비춰 잡아야(summon_sighting.dart) '말 걸기'가 열린다 — 전엔 1.5초 뒤
+//       무조건 열려 안 비춰도 대화가 됐다. AR이 없거나 멈추면 예전처럼 바로 등장.
+// 구현일: 2026-09-18 | 작성: ljs (npc-character-set/ljs/v1)
+// ------------------------------------------------------------
 // [v15] 코스 상세와 같은 장소로 열기 + 사진 미션을 실제 AR 카메라로(계획 C2·B10).
 // 구현(요약): ① 진행을 "모은 조각 수 = 다음 챕터 번호"로 세던 것을 "끝낸 챕터 집합"(_doneChapters)과
 //       "지금 챕터"(_chapter)로 바꿨다 — 코스 상세에서 뒤 장소를 먼저 고르면(startNodeId) 조각 수와
@@ -202,17 +215,22 @@ import 'package:kakao_maps_flutter/kakao_maps_flutter.dart';
 
 import '../api/api_client.dart';
 import '../debug_flags.dart';
+import '../game/ar_mission_controller.dart' show kCoinImageAsset;
 import '../game/gps_simulator.dart';
 import '../game/hint_ladder_controller.dart';
 import '../game/player_state.dart';
 import '../game/location_service.dart';
+import '../game/npc_art.dart';
 import '../game/run_session.dart';
+import '../game/summon_sighting.dart';
 import '../models/run.dart';
 import '../models/scenario.dart';
 import '../session.dart';
 import '../store.dart';
 import '../theme.dart';
 import '../utils/web_mercator.dart';
+import '../widgets/memory_sequence_game.dart';
+import '../widgets/memory_stone_restore.dart';
 import '../widgets/native_ar_view.dart';
 import '../widgets/reward_pop.dart';
 import 'ar_search_screen.dart';
@@ -303,10 +321,10 @@ const _defaultRegion = '종로';
 /// 코스 데이터 없는 데모 모드의 여비(원). 실제 코스는 코스 예산을 쓰고, 예산이 없으면 여비를 숨긴다.
 const _demoBudget = 20000;
 
-/// 발자국 추적 단계별 도깨비 귀띔 — AI가 준 자취 묘사([clue])와 거쳐갈 지점([steps])을 쓴다.
+/// 엽전 줍기 단계별 도깨비 귀띔 — AI가 준 자취 묘사([clue])와 거쳐갈 지점([steps])을 쓴다.
 ///
-/// [step]은 지금까지 밟은 발자국 수(0..[total]). 0이면 자취 묘사를, 그 뒤로는 방금 닿은 지점을 보여주고,
-/// 마지막 발자국에 닿으면 조각을 거두라는 말을 붙인다. 데이터가 없으면 지역 색 없는 기본 문구를 쓴다
+/// [step]은 지금까지 주운 엽전 수(0..[total]). 0이면 자취 묘사를, 그 뒤로는 방금 닿은 지점을 보여주고,
+/// 마지막 엽전을 주우면 조각을 거두라는 말을 붙인다. 데이터가 없으면 지역 색 없는 기본 문구를 쓴다
 /// (예전엔 "먹내음·처마" 같은 종로 대본 4줄이 모든 코스에 고정으로 떴다).
 @visibleForTesting
 String trailWhisper({
@@ -317,7 +335,7 @@ String trailWhisper({
 }) {
   if (step <= 0) {
     final c = clue?.trim() ?? '';
-    return c.isEmpty ? '"발자국이 이어져 있느니라. 하나씩 밟아 보거라."' : '"$c"';
+    return c.isEmpty ? '"도깨비가 흘린 엽전이 이어져 있느니라. 하나씩 주워 보거라."' : '"$c"';
   }
   final reached = step - 1 < steps.length ? steps[step - 1].trim() : '';
   if (step >= total) {
@@ -429,8 +447,9 @@ class _QuestJourneyScreenState extends State<QuestJourneyScreen> with TickerProv
   // defeat/tap 원자의 이름·개수로 다시 채운다.
   String huntLabel = '먹그림자 처치';
   // S1(대화→수집)·S6(수집 누적) 전용 — 전투 없는 탭 수집 화면(_gatherScreen).
-  List<Map<String, dynamic>> gatherItems = [];
-  String gatherLabel = '글씨조각 수집';
+  int gatherTotal = 1; // 빛 순서 기억하기의 조각 수(tap 원자 개수)
+  bool gatherCleared = false;
+  String gatherLabel = '글씨조각의 기억';
   String photoState = 'idle';
   int scan = 0;
   int trail = 0;
@@ -484,6 +503,12 @@ class _QuestJourneyScreenState extends State<QuestJourneyScreen> with TickerProv
   late final AnimationController _glow;
 
   Timer? _walkTimer, _scanTimer, _summonTimer;
+
+  /// 소환 화면 — AR로 도깨비를 비춰 잡았는지(잡아야 '말 걸기'가 열린다).
+  SummonSighting _sighting = SummonSighting();
+
+  /// 소환 화면이 실제 AR 카메라로 도는지(아니면 2D 연출 — 비출 카메라가 없다).
+  bool get _summonUsesAr => _arSupported == true && !_arError;
 
   // ── 챕터 진행판(_mapScreen)의 실지도 상태 ──
   // 지도는 screen=='map'일 때만 마운트되므로(다른 스테이지로 가면 unmount),
@@ -698,21 +723,12 @@ class _QuestJourneyScreenState extends State<QuestJourneyScreen> with TickerProv
   }
 
   /// 수집 화면(_gatherScreen)을 이 챕터의 실제 데이터로 다시 채운다 — S1/S6은
-  /// 전투 없이 tap 원자 대상·개수만 있다(_prepareHuntEnemies와 갈래만 다름).
+  /// 전투 없이 tap 원자 대상·개수만 있다. 그 개수로 빛 순서 기억하기를 한다.
   void _prepareGatherItems() {
     final tap = _actionAtom('tap');
-    final count = (tap?.countTarget ?? 1).clamp(1, _huntPositions.length);
-    gatherLabel = '${tap?.target ?? '글씨조각'} 수집';
-    gatherItems = [
-      for (var i = 0; i < count; i++)
-        {
-          'id': i,
-          'left': _huntPositions[i].$1,
-          'top': _huntPositions[i].$2,
-          'size': 64.0,
-          'collected': false,
-        },
-    ];
+    gatherTotal = tap?.countTarget ?? 1;
+    gatherCleared = false;
+    gatherLabel = '${tap?.target ?? '글씨조각'}의 기억';
   }
 
   /// 현재 챕터의 힌트 사다리 컨트롤러(문구=노드 hint_ladder, 없으면 시안 문구).
@@ -936,6 +952,14 @@ class _QuestJourneyScreenState extends State<QuestJourneyScreen> with TickerProv
     return null;
   }
 
+  /// 복원한 기억석 이름 — 피날레 노드가 준 것(AI region_stone), 없으면 지역명으로 짓는다.
+  String get _stoneName {
+    final named = _finaleNode?.regionStoneName;
+    if (named != null && named.isNotEmpty) return named;
+    final region = widget.scenario?.region ?? _defaultRegion;
+    return region.isEmpty ? '기억석' : '$region 기억석';
+  }
+
   /// 서버가 이번 피날레에 준 칭호 — 없으면(기록 실패·재플레이) null.
   String? get _serverTitle {
     final titles = _claimed?.reward?.titles ?? const <String>[];
@@ -948,6 +972,9 @@ class _QuestJourneyScreenState extends State<QuestJourneyScreen> with TickerProv
     final n = _curNode?.npcName ?? '';
     return n.isEmpty ? '도깨비' : n;
   }
+
+  /// 이 장소 도깨비의 그림 — 이름에 맞는 캐릭터(없으면 기본 도깨비).
+  NpcArt get _art => NpcArt.of(_curNode?.npcName ?? '', isFinale: _curNode?.isFinale ?? false);
 
   // ── 스캔 진행(사진·인사동) ──
   void _startScan(String key) {
@@ -1138,9 +1165,20 @@ class _QuestJourneyScreenState extends State<QuestJourneyScreen> with TickerProv
       screen = 'summon';
       summonFor = t.after == 'summon-sejong' ? 'sejong' : 'meok';
       summonPhase = 'scan';
+      _sighting = SummonSighting();
     });
     _summonTimer?.cancel();
-    _summonTimer = Timer(const Duration(milliseconds: 1500), () => setState(() => summonPhase = 'appear'));
+    // 실제 AR이면 도깨비를 비춰 잡아야 등장(_onSummonTelemetry) — 시간이 지났다고 열지 않는다.
+    // 2D 연출(AR 미지원·오류)은 비출 카메라가 없으니 예전처럼 잠시 뒤 등장.
+    _summonTimer = Timer(const Duration(milliseconds: 1500), () {
+      if (!_summonUsesAr) setState(() => summonPhase = 'appear');
+    });
+  }
+
+  /// 소환 AR 텔레메트리 — 도깨비를 화면 가운데 근처에 잠시 잡으면 등장(말 걸기 열림).
+  void _onSummonTelemetry(Map<String, ArMarkerReading> readings) {
+    if (summonPhase != 'scan') return;
+    if (_sighting.onReading(readings['summon'])) setState(() => summonPhase = 'appear');
   }
 
   /// 이 챕터 노드의 requires 판정. 시나리오/노드가 없으면 null(게이팅 없음).
@@ -1387,7 +1425,7 @@ class _QuestJourneyScreenState extends State<QuestJourneyScreen> with TickerProv
       setState(() {
         ending = resolved;
         _endingChoiceId = choiceId;
-        screen = 'ending';
+        screen = 'restore'; // 조각이 모여 기억석이 되는 연출 → '계속' → 엔딩
         _markChapterDone(_stoneTotal - 1);
       });
       final s = widget.scenario;
@@ -1734,6 +1772,12 @@ class _QuestJourneyScreenState extends State<QuestJourneyScreen> with TickerProv
         return _insaScreen();
       case 'sejong':
         return _finaleScreen();
+      case 'restore':
+        return MemoryStoneRestore(
+          fragmentCount: _stoneTotal,
+          stoneName: _stoneName,
+          onContinue: () => setState(() => screen = 'ending'),
+        );
       case 'ending':
         return _endingScreen();
     }
@@ -2711,7 +2755,8 @@ class _QuestJourneyScreenState extends State<QuestJourneyScreen> with TickerProv
     final scanning = summonPhase == 'scan';
     // 실제 AR 경로: 카메라 배경 + 3D 도깨비 마커. 2D 연출 요소(그라데이션 배경·지붕·
     // 먹웅덩이·그림 도깨비)는 카메라를 가리므로 AR일 땐 그리지 않는다.
-    // 마커 탭 = '말 걸기'와 동일(스캔 중이면 대기를 건너뛰고 바로 등장).
+    // 마커 탭 = '말 걸기'와 동일(스캔 중이면 발견으로 치고 바로 등장).
+    // 실제 AR에선 도깨비를 비춰 잡아야(SummonSighting) 등장하고 '말 걸기'가 열린다.
     final bool realAr = _arSupported == true && !_arError;
     return Container(
       decoration: realAr ? null : BoxDecoration(gradient: finale ? _finaleBg : _dialBg),
@@ -2725,10 +2770,14 @@ class _QuestJourneyScreenState extends State<QuestJourneyScreen> with TickerProv
                     id: 'summon',
                     label: _npcName,
                     color: finale ? _gold : AppColors.teal,
-                    forward: 1.8,
-                    down: 0.1,
+                    // 키 1m 도깨비가 발끝까지 한 화면에 들어오는 거리. 바닥을 찾기 전엔 눈높이보다
+                    // 1m 아래(허리께)에 발을 두고, 찾으면 네이티브가 바닥으로 내려앉힌다.
+                    forward: 2.3,
+                    down: 1.0,
+                    image: _art.full,
                   ),
                 ],
+                // 도깨비를 직접 탭한 것도 발견이다(화면에 보여야 탭할 수 있다).
                 onMarkerTapped: (_) => setState(() {
                   if (summonPhase == 'scan') {
                     _summonTimer?.cancel();
@@ -2737,7 +2786,12 @@ class _QuestJourneyScreenState extends State<QuestJourneyScreen> with TickerProv
                     go(finale ? 'sejong' : 'dialogue');
                   }
                 }),
-                onError: () => setState(() => _arError = true),
+                onTelemetry: _onSummonTelemetry,
+                // AR이 멈추면 비출 수 없다 — 막히지 않게 바로 등장시킨다.
+                onError: () => setState(() {
+                  _arError = true;
+                  if (summonPhase == 'scan') summonPhase = 'appear';
+                }),
               ),
             )
           else
@@ -2761,7 +2815,7 @@ class _QuestJourneyScreenState extends State<QuestJourneyScreen> with TickerProv
               ))),
             ),
             Positioned(left: 0, right: 0, top: box.maxHeight * .74, child: Center(child: Text(
-              realAr ? '천천히 주변을 비춰 보거라…' : '기운이 모여든다…',
+              realAr ? '주변을 천천히 비춰 도깨비를 찾아보거라…' : '기운이 모여든다…',
               style: dokkaebiTitle(size: 15, color: const Color(0xFFE8DCC4))))),
           ] else ...[
             // 실제 AR에서는 도깨비가 카메라 공간의 3D 마커로 떠 있으므로 그림을 겹치지 않는다.
@@ -2771,7 +2825,7 @@ class _QuestJourneyScreenState extends State<QuestJourneyScreen> with TickerProv
                 child: Center(child: _Floaty(anim: _float, child: Column(mainAxisSize: MainAxisSize.min, children: [
                   _pill(finale ? '$_npcName · 수호' : _npcName, border: _goldDim, textColor: _goldDim),
                   const SizedBox(height: 10),
-                  const _Dokkaebi(size: 190),
+                  _Dokkaebi(size: 240, asset: _art.full),
                 ]))),
               ),
             Positioned(left: 14, right: 14, bottom: 40, child: Column(mainAxisSize: MainAxisSize.min, children: [
@@ -2818,7 +2872,7 @@ class _QuestJourneyScreenState extends State<QuestJourneyScreen> with TickerProv
             const Spacer(),
             _pill('조각 $fragments/$_stoneTotal', border: _tealDeep, textColor: _teal),
           ])),
-          Positioned(left: 0, right: 0, top: box.maxHeight * .16, child: Center(child: _Floaty(anim: _float, child: const _Dokkaebi(size: 205)))),
+          Positioned(left: 0, right: 0, top: box.maxHeight * .16, child: Center(child: _Floaty(anim: _float, child: _Dokkaebi(size: 250, asset: _art.bustTalk)))),
           Positioned(left: 14, right: 14, bottom: 34, child: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.stretch, children: [
             // NPC 말풍선
             Stack(clipBehavior: Clip.none, children: [
@@ -3038,7 +3092,7 @@ class _QuestJourneyScreenState extends State<QuestJourneyScreen> with TickerProv
           Align(alignment: const Alignment(0, 0.48), child: ClipPath(clipper: _RoofClipper(), child: Container(height: 120, color: const Color(0xFF0C0A08)))),
           // left: 58 — 좌상단 뒤로가기 버튼 자리를 비켜준다.
           Positioned(top: 58, left: 58, right: 14, child: Row(children: [_pill('${_target.name} · 제 ${_tIdx + 1} 장'), const Spacer(), _pill('조각 $fragments/$_stoneTotal', border: _tealDeep, textColor: _teal)])),
-          Positioned(left: 0, right: 0, top: box.maxHeight * .20, child: Center(child: _Floaty(anim: _float, child: const _Dokkaebi(size: 165)))),
+          Positioned(left: 0, right: 0, top: box.maxHeight * .20, child: Center(child: _Floaty(anim: _float, child: _Dokkaebi(size: 210, asset: _art.bust)))),
           Positioned(left: 14, right: 14, bottom: 34, child: _parchment(
             padding: const EdgeInsets.fromLTRB(18, 18, 18, 16),
             child: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.start, children: [
@@ -3143,44 +3197,31 @@ class _QuestJourneyScreenState extends State<QuestJourneyScreen> with TickerProv
   // 8-2. GATHER — 전투 없는 탭 수집 (S1 대화→수집 · S6 수집 누적)
   // ════════════════════════════════════════════════════
   Widget _gatherScreen() {
-    final gatherTotal = gatherItems.length;
-    final gatherCount = gatherItems.where((e) => e['collected'] == true).length;
-    final done = gatherCount >= gatherTotal;
+    final done = gatherCleared;
     return Container(
       decoration: BoxDecoration(gradient: _dialBg),
       child: LayoutBuilder(builder: (ctx, box) {
         return Stack(children: [
           Align(alignment: const Alignment(0, 0.52), child: ClipPath(clipper: _RoofClipper(), child: Container(height: 130, color: const Color(0xFF0C0A08)))),
-          // 상단 카운터 — 사냥 화면과 같은 틀이지만 전투 색(주홍) 대신 수집 색(청록).
+          // 상단 이름표 — 사냥 화면과 같은 틀이지만 전투 색(주홍) 대신 수집 색(청록).
           Positioned(top: 58, left: 0, right: 0, child: Column(children: [
             Container(
               padding: const EdgeInsets.symmetric(horizontal: 22, vertical: 10),
               decoration: BoxDecoration(color: _inkDeep.withOpacity(0.8), borderRadius: BorderRadius.circular(16), border: Border.all(color: _tealDeep.withOpacity(0.6))),
-              child: Row(mainAxisSize: MainAxisSize.min, children: [
-                Text(gatherLabel, style: const TextStyle(fontSize: 13, color: _teal, fontWeight: FontWeight.w700)),
-                const SizedBox(width: 12),
-                RichText(text: TextSpan(children: [
-                  TextSpan(text: '$gatherCount', style: dokkaebiTitle(size: 26, color: _cream)),
-                  TextSpan(text: ' / $gatherTotal', style: const TextStyle(fontSize: 16, color: _muted)),
-                ])),
-              ]),
+              child: Text(gatherLabel, style: const TextStyle(fontSize: 14, color: _teal, fontWeight: FontWeight.w700)),
             ),
-            const SizedBox(height: 8),
-            SizedBox(width: 220, child: _progress(gatherTotal == 0 ? 0 : gatherCount / gatherTotal, grad: const LinearGradient(colors: [_tealDeep, _teal]), track: const Color(0xBF0D0B09))),
             const SizedBox(height: 6),
-            const Text('은은한 빛을 따라 손끝으로 거두어라', style: TextStyle(fontSize: 11.5, color: Color(0xFFB3A892))),
+            const Text('빛나는 순서대로 조각을 눌러 기억을 되살려라', style: TextStyle(fontSize: 11.5, color: Color(0xFFB3A892))),
           ])),
-          // 수집물 — 전투 없이 탭 한 번으로 거둔다.
-          for (final it in gatherItems)
-            if (it['collected'] != true)
-              Positioned(
-                left: box.maxWidth * (it['left'] as double) - (it['size'] as double) / 2,
-                top: box.maxHeight * (it['top'] as double) - (it['size'] as double) / 2,
-                child: _Floaty(anim: _float, amplitude: 6, child: GestureDetector(
-                  onTap: () => setState(() => it['collected'] = true),
-                  child: _FragShard(glyph: _target.hanja, size: it['size'] as double),
-                )),
-              ),
+          // 빛 순서 기억하기 — 맞히면 아래 '돌아와 조각을 살피다'가 열린다.
+          Align(
+            alignment: const Alignment(0, -0.12),
+            child: MemorySequenceGame(
+              key: ValueKey('gather-$_tIdx'),
+              count: gatherTotal,
+              onCleared: () => setState(() => gatherCleared = true),
+            ),
+          ),
           if (done) ...[
             Positioned(left: 14, right: 14, bottom: 100, child: Container(
               padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 13),
@@ -3188,7 +3229,7 @@ class _QuestJourneyScreenState extends State<QuestJourneyScreen> with TickerProv
               child: Row(children: [
                 Container(width: 24, height: 24, alignment: Alignment.center, decoration: const BoxDecoration(shape: BoxShape.circle, color: _tealDeep), child: const Text('✓', style: TextStyle(color: Color(0xFFEAFFF9), fontSize: 13, fontWeight: FontWeight.w900))),
                 const SizedBox(width: 10),
-                const Expanded(child: Text('모두 거두었다 — 이제 조각을 살필 차례', style: TextStyle(fontSize: 13.5, color: Color(0xFFBDEEE1), fontWeight: FontWeight.w700))),
+                const Expanded(child: Text('기억을 되살렸다 — 이제 조각을 살필 차례', style: TextStyle(fontSize: 13.5, color: Color(0xFFBDEEE1), fontWeight: FontWeight.w700))),
               ]),
             )),
             Positioned(left: 14, right: 14, bottom: 34, child: _cta('돌아와 조각을 살피다', () => _claimCurrentChapter())),
@@ -3245,7 +3286,7 @@ class _QuestJourneyScreenState extends State<QuestJourneyScreen> with TickerProv
             Positioned(left: 60, right: 60, bottom: 60, child: _progress(scan / 100, grad: const LinearGradient(colors: [_tealDeep, _teal]), track: const Color(0xBF0D0B09))),
           if (photoState == 'done')
             Positioned(left: 14, right: 14, bottom: 34, child: hasTrail
-                ? _cta('길이 열렸다 — 발자국을 따라가라', () => go('trail'))
+                ? _cta('길이 열렸다 — 흘린 엽전을 따라가라', () => go('trail'))
                 : _cta('돌아와 조각을 살피다', () => _claimCurrentChapter())),
         ]);
       }),
@@ -3281,7 +3322,7 @@ class _QuestJourneyScreenState extends State<QuestJourneyScreen> with TickerProv
     final fpDefs = [
       (0.20, 0.22, 56.0, -18.0), (0.38, 0.32, 48.0, -24.0), (0.55, 0.42, 40.0, -30.0),
     ];
-    // follow 원자의 걸음 수 — 화면엔 발자국 3개까지만 배치해뒀으니 그 안으로 클램프.
+    // follow 원자의 걸음 수 — 화면엔 엽전 3개까지만 배치해뒀으니 그 안으로 클램프.
     final trailTotal = (_actionAtom('follow')?.steps ?? 3).clamp(1, fpDefs.length);
     final fragVisible = trail >= trailTotal && !fragTaken;
     return Container(
@@ -3291,7 +3332,7 @@ class _QuestJourneyScreenState extends State<QuestJourneyScreen> with TickerProv
           Align(alignment: const Alignment(0, 0.55), child: ClipPath(clipper: _RoofClipper(), child: Container(height: 110, color: const Color(0xFF0C0A08)))),
           Positioned(top: 58, left: 0, right: 0, child: Center(child: Row(mainAxisSize: MainAxisSize.min, children: [
             // 가짜 거리("파편까지 Nm")는 뺐다 — 실제 거리와 무관한 걸음 수 × 4m였다.
-            _pill('발자국 $trail/$trailTotal', border: _goldDim, textColor: _gold),
+            _pill('엽전 $trail/$trailTotal', border: _goldDim, textColor: _gold),
           ]))),
           for (var i = 0; i < trailTotal; i++)
             if (trail >= i && trail < trailTotal)
@@ -3305,12 +3346,12 @@ class _QuestJourneyScreenState extends State<QuestJourneyScreen> with TickerProv
                     child: Opacity(
                       opacity: trail == i ? 0.9 : 0.4,
                       child: Container(
-                        width: fpDefs[i].$3, height: 26,
+                        width: fpDefs[i].$3, height: fpDefs[i].$3,
                         decoration: BoxDecoration(
-                          color: Colors.black,
-                          borderRadius: const BorderRadius.only(topLeft: Radius.circular(28), topRight: Radius.circular(28), bottomLeft: Radius.circular(16), bottomRight: Radius.circular(16)),
+                          shape: BoxShape.circle,
                           boxShadow: trail == i ? [BoxShadow(color: _gold.withOpacity(0.55), blurRadius: 20)] : null,
                         ),
+                        child: Image.asset(kCoinImageAsset),
                       ),
                     ),
                   ),
@@ -3638,7 +3679,7 @@ class _QuestJourneyScreenState extends State<QuestJourneyScreen> with TickerProv
           Positioned(top: 58, left: 0, right: 0, child: Column(children: [
             _pill('조각 $fragments/$_stoneTotal — 마지막 하나', border: _gold, textColor: _gold),
           ])),
-          Positioned(left: 0, right: 0, top: box.maxHeight * .22, child: Center(child: _Floaty(anim: _float, amplitude: 10, child: const _Dokkaebi(size: 230)))),
+          Positioned(left: 0, right: 0, top: box.maxHeight * .22, child: Center(child: _Floaty(anim: _float, amplitude: 10, child: _Dokkaebi(size: 280, asset: NpcArt.of(node?.npcName ?? '', isFinale: true).full)))),
           Positioned(left: 14, right: 14, bottom: 34, child: Column(mainAxisSize: MainAxisSize.min, children: [
             // 망각귀의 비관 — AI가 피날레 미션에 함께 넣어 준다(없으면 줄을 뺀다).
             if (villain != null && villain.isNotEmpty) ...[
@@ -3709,18 +3750,16 @@ class _QuestJourneyScreenState extends State<QuestJourneyScreen> with TickerProv
             width: 200, height: 200, alignment: Alignment.center,
             child: Stack(alignment: Alignment.center, children: [
               AnimatedBuilder(animation: _glow, builder: (_, __) => Container(width: 200, height: 200, decoration: BoxDecoration(shape: BoxShape.circle, gradient: RadialGradient(colors: [_gold.withOpacity(0.35 * (0.55 + _glow.value * 0.45)), Colors.transparent], stops: const [0, 0.66])))),
-              Container(width: 164, height: 164, padding: const EdgeInsets.all(22), decoration: BoxDecoration(shape: BoxShape.circle, gradient: const RadialGradient(center: Alignment(-0.2, -0.36), colors: [Color(0xFF4A4034), Color(0xFF2A2318), Color(0xFF17120C)], stops: [0, .55, 1]), border: Border.all(color: _gold.withOpacity(0.55), width: 2), boxShadow: [BoxShadow(color: _gold.withOpacity(0.4), blurRadius: 44)]),
-                child: stone != null
-                    ? Center(child: Text(stone, textAlign: TextAlign.center, style: dokkaebiTitle(size: 22, color: const Color(0xFFFFE9B0), height: 1.3)))
-                    : GridView.count(crossAxisCount: 2, physics: const NeverScrollableScrollPhysics(), children: [for (final c in ['訓', '民', '正', '音']) Center(child: Text(c, style: dokkaebiTitle(size: 32, color: const Color(0xFFFFE9B0))))])),
+              // 완성된 기억석 — 복원 연출(memory_stone_restore.dart)의 끝 장면과 같은 그림.
+              Image.asset(kMemoryStoneAsset, width: 180),
             ]),
           )))),
           Positioned(left: 0, right: 0, top: box.maxHeight * .41, child: Column(children: [
             Text('복 원 · ${e?.label ?? (good ? '굿 엔딩' : '노멀 엔딩')}', style: const TextStyle(fontSize: 12, letterSpacing: 4, color: Color(0xFFA87F2C), fontWeight: FontWeight.w900)),
             const SizedBox(height: 8),
-            Text('${stone ?? '종로 글씨 기억석'} 복원', textAlign: TextAlign.center, style: dokkaebiTitle(size: 25, color: _cream)),
+            Text('$_stoneName 복원', textAlign: TextAlign.center, style: dokkaebiTitle(size: 25, color: _cream)),
             const SizedBox(height: 8),
-            Text(lines ?? '"백성의 글이 다시 깨어났다.\n그대의 걸음이 사백 년의 먹을 되살렸느니."',
+            Text(lines ?? '"흩어진 기억이 다시 하나가 되었느니라.\n그대의 걸음이 이 땅의 기억을 되살렸느니."',
                 textAlign: TextAlign.center, style: dokkaebiTitle(size: 13, color: const Color(0xFFB3A892), height: 1.7)),
           ])),
           Positioned(left: 20, right: 20, bottom: 34, child: Column(mainAxisSize: MainAxisSize.min, children: [
@@ -3839,8 +3878,15 @@ class _QuestJourneyScreenState extends State<QuestJourneyScreen> with TickerProv
               decoration: BoxDecoration(gradient: const LinearGradient(begin: Alignment.topCenter, end: Alignment.bottomCenter, colors: [Color(0xFFF4EDDA), Color(0xFFEADFC4)]), borderRadius: BorderRadius.circular(22), border: Border.all(color: const Color(0xFFD8C9A4)), boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.7), blurRadius: 70)]),
               child: Column(mainAxisSize: MainAxisSize.min, children: [
                 const SizedBox(height: 8),
-                _FragShard(glyph: t.hanja, size: 104, fontSize: 48),
-                const SizedBox(height: 14),
+                // 받은 조각 그림 — 뒤에 복원 빛을 깔고 커지며 등장한다.
+                RewardPopIn(child: SizedBox(
+                  width: 150, height: 150,
+                  child: Stack(alignment: Alignment.center, children: [
+                    Opacity(opacity: 0.55, child: Image.asset(kMemoryRestoreFxAsset, width: 150)),
+                    Image.asset(kMemoryFragmentAsset, width: 112),
+                  ]),
+                )),
+                const SizedBox(height: 10),
                 Text('「${t.name}」의 기억석 조각',
                     textAlign: TextAlign.center,
                     maxLines: 2,
@@ -3849,6 +3895,16 @@ class _QuestJourneyScreenState extends State<QuestJourneyScreen> with TickerProv
                 const SizedBox(height: 4),
                 Text('${region.isEmpty ? '' : '$region의 '}기억석 · ${c.chapterIdx + 1}/$_stoneTotal 조각',
                     style: const TextStyle(fontSize: 13, color: _bronze, fontWeight: FontWeight.w700)),
+                const SizedBox(height: 10),
+                // 모은 조각 칸 — 모은 장소는 조각 그림, 남은 장소는 흐리게.
+                Wrap(spacing: 4, runSpacing: 4, alignment: WrapAlignment.center, children: [
+                  for (var i = 0; i < _stoneTotal; i++)
+                    Opacity(
+                      key: ValueKey('frag-slot-$i-${_doneChapters.contains(i)}'),
+                      opacity: _doneChapters.contains(i) ? 1 : 0.22,
+                      child: Image.asset(kMemoryFragmentAsset, width: 26),
+                    ),
+                ]),
                 const SizedBox(height: 14),
                 // 경험치·도감·칭호는 서버가 계산해 실제로 지급한 값 — 로컬 추정이 아니다.
                 if (reward != null)
@@ -4094,15 +4150,16 @@ class _Floaty extends StatelessWidget {
       );
 }
 
-/// 도깨비 — 기본 캐릭터 일러스트.
+/// 도깨비 캐릭터 그림 — [asset]은 NpcArt가 고른 이 장소 도깨비의 전신·상반신.
 class _Dokkaebi extends StatelessWidget {
   final double size;
-  const _Dokkaebi({this.size = 190});
+  final String asset;
+  const _Dokkaebi({this.size = 190, required this.asset});
   @override
   Widget build(BuildContext context) {
     return SizedBox(
       width: size, height: size,
-      child: Image.asset('assets/images/dokkaebi_character.png', fit: BoxFit.contain),
+      child: Image.asset(asset, fit: BoxFit.contain),
     );
   }
 }

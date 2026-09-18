@@ -12,6 +12,10 @@
 //            바꿔(… 거리를 걷던) 받침에 따라 을/를이 어긋나지 않게 했다.
 // 구현일: 2026-09-13 | 작성: ljs (jongno-hardcode-cleanup/ljs/v1)
 // ------------------------------------------------------------
+// [v4] 초롱 도깨비를 새 캐릭터 세트의 기본 소년 도깨비(빨간 youth)로 — 예전 만화풍 그림은 지웠다.
+//      이름→그림 규칙(lib/game/npc_art.dart)을 그대로 따른다(초롱은 표에 없어 기본 도깨비).
+// 구현일: 2026-09-19 | 작성: ljs (npc-character-set/ljs/v1)
+// ------------------------------------------------------------
 // [v3] 초롱 도깨비 NPC를 기본 캐릭터 일러스트(assets/images/dokkaebi_character.png)로 교체.
 // 구현(요약): 벡터로 근사하던 방식을 버리고 실제 이미지 에셋을 표시. NPC 대화창(ar_frame.dart
 //            DokkaebiNpc), AR 2D 폴백(quest_journey_screen.dart _Dokkaebi), AR 삼각뿔 마커
@@ -22,6 +26,7 @@ import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 
+import '../game/npc_art.dart';
 import '../models/scenario.dart';
 import '../session.dart';
 import '../store.dart';
@@ -368,7 +373,7 @@ class _MemoryLight extends StatelessWidget {
   }
 }
 
-/// 초롱 도깨비 — 기본 캐릭터 일러스트.
+/// 초롱 도깨비 — 이름→그림 규칙의 그림(표에 없어 기본 소년 도깨비).
 class _LanternDokkaebi extends StatelessWidget {
   const _LanternDokkaebi({super.key});
   @override
@@ -379,7 +384,7 @@ class _LanternDokkaebi extends StatelessWidget {
         SizedBox(
           width: 220,
           height: 270,
-          child: Image.asset('assets/images/dokkaebi_character.png', fit: BoxFit.contain),
+          child: Image.asset(NpcArt.of('초롱 도깨비').full, fit: BoxFit.contain),
         ),
         const SizedBox(height: 8),
         Text('초롱 도깨비', style: dokkaebiTitle(size: 13, color: AppColors.goldDim)),

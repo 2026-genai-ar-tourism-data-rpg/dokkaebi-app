@@ -1,4 +1,9 @@
 // ============================================================
+// [v4] 카드에 그림 — 도깨비는 그 도깨비의 상반신(NpcArt), 기억석은 조각 그림.
+// 구현(요약): 아이콘(불꽃·다이아) 대신 카드 위쪽을 그림으로 채운다. 도깨비 그림은 코스 진행
+//            화면과 같은 이름→그림 규칙(lib/game/npc_art.dart)이라 만난 그 도깨비가 나온다.
+// 구현일: 2026-09-18 | 작성: ljs (npc-character-set/ljs/v1)
+// ------------------------------------------------------------
 // [v3] 기억석 도감 추가 — 도깨비/기억석 두 탭.
 // 구현(요약): 도깨비 도감만 있던 화면에 "기억석" 탭 추가. ScenarioStore.
 //            collectedStones()(신규)로 완료한 기억석 조각을 모아 이름+지역만
@@ -25,8 +30,10 @@
 // ============================================================
 import 'package:flutter/material.dart';
 
+import '../game/npc_art.dart';
 import '../store.dart';
 import '../theme.dart';
+import '../widgets/memory_stone_restore.dart' show kMemoryFragmentAsset;
 import '../widgets/ui.dart';
 
 enum _DexTab { dokkaebi, stone }
@@ -89,10 +96,8 @@ class _DexScreenState extends State<DexScreen> {
                 children: [
                   for (final item in items)
                     isDokkaebi
-                        ? _card(item.name, item.region,
-                            icon: Icons.local_fire_department, color: AppColors.gold)
-                        : _card(item.name, item.region,
-                            icon: Icons.diamond_outlined, color: AppColors.teal),
+                        ? _card(item.name, item.region, image: NpcArt.of(item.name).bust, color: AppColors.gold)
+                        : _card(item.name, item.region, image: kMemoryFragmentAsset, color: AppColors.teal),
                 ],
               ),
           ],
@@ -101,20 +106,22 @@ class _DexScreenState extends State<DexScreen> {
     );
   }
 
-  Widget _card(String name, String region, {required IconData icon, required Color color}) {
+  Widget _card(String name, String region, {required String image, required Color color}) {
     return GlowCard(
       glow: color,
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Container(
-            height: 56,
-            width: 56,
-            decoration:
-                BoxDecoration(color: color.withOpacity(0.15), borderRadius: BorderRadius.circular(14)),
-            child: Icon(icon, color: color),
+          // 남는 높이를 그림이 채운다 — 좁은 기기에선 그림만 작아지고 글자 줄은 그대로다.
+          Expanded(
+            child: Container(
+              width: double.infinity,
+              decoration:
+                  BoxDecoration(color: color.withOpacity(0.10), borderRadius: BorderRadius.circular(14)),
+              child: Image.asset(image, fit: BoxFit.contain),
+            ),
           ),
-          const Spacer(),
+          const SizedBox(height: 8),
           // 좁은 셀(320px 기기에서 내부 폭 ~104px)에서 지역·이름이 여러 줄로
           // 접히면 카드 높이를 넘겨 오버플로가 난다 → 한 줄 + 말줄임으로 고정.
           Text(region,

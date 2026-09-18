@@ -4,7 +4,7 @@
 // 구현(요약): AR 타당성 검토(2026-08-19)의 "A층" 구현. 네이티브(ARKit)는 마커를
 //            바닥에 앵커링하고 10Hz로 거리·조준각만 보내 주고, 무엇을 켜고 언제
 //            드러낼지는 전부 여기서 정한다.
-//            · HUNT       발자국 추적 — 가까운 자국부터 하나씩 켜지고, 끝에 도깨비불
+//            · HUNT       엽전 줍기 — 다가가면 반짝이고, 탭하거나 바로 앞까지 가면 줍는다(v2)
 //            · RESTORE_AR 기억석 복원 — 부재까지 걸어가 하나씩 수습
 //            · PHOTO_FIND 문양 스캔   — 가까이서 정면으로 겨눠 머물면 일치율이 오름
 //            · FIND       은신 탐지   — 풀 흔들림이 거리에 따라 커지고, 겨누면 드러남
@@ -12,6 +12,14 @@
 //            판정 임계값은 전부 상수로 빼 뒀다 — 실기기 튜닝은 들고 나가서 해야 하고,
 //            Dart에 있어야 핫리로드로 고칠 수 있다.
 // 구현일: 2026-09-16 | 작성: kys (ar-realtime/kys/v1)
+// ------------------------------------------------------------
+// [v2] HUNT 발자국 → 도깨비가 흘리고 간 엽전 줍기.
+// 구현(요약): 다가가면 엽전이 흐릿하게 보이다가 반짝이고, 반짝일 때 탭하거나 바로 앞까지
+//            가면 줍는다(주운 엽전은 사라진다). 다 주우면 완료. 전엔 다 켜지기만 하면 끝났다.
+//            가까울수록 크게(coinScaleFor) — 크기가 바뀌면 상태가 같아도 다시 보낸다.
+//            엽전은 허리께 높이에 떠 있고(바닥이면 발밑이라 폰을 숙여야 보였다) 2.4m 앞부터 놓는다.
+//            뷰가 붙기 전 지시는 기록하지 않고, 마커 배치 직후 resync로 다시 보낸다.
+// 구현일: 2026-09-18 | 작성: ljs (npc-character-set/ljs/v1)
 // ============================================================
 import 'dart:ui' show Color;
 
@@ -42,11 +50,31 @@ ArMissionType arMissionTypeOf(String? raw) {
 }
 
 // ── 판정 임계값 (실기기 튜닝 대상) ──────────────────────────
-/// 발자국이 켜지기 시작하는 거리. 이보다 멀면 기척만.
+/// 엽전이 흐릿하게 보이기 시작하는 거리. 이보다 멀면 기척만.
 const double kTrailWakeM = 6.0;
 
-/// 이 거리 안에 들어오면 그 발자국은 완전히 드러난다.
+/// 이 거리 안에 들어오면 엽전이 반짝인다 — 이때부터 탭으로 주울 수 있다.
 const double kTrailSolidM = 2.2;
+
+/// 이 거리까지 가면 탭하지 않아도 줍는다(AR에서 작은 물체 탭이 빗나가도 막히지 않게).
+const double kCoinPickM = 1.2;
+
+/// 엽전 원근 — 가장 먼(kTrailWakeM) 엽전과 줍기 직전(kCoinPickM) 엽전의 크기 배율.
+/// admin 방향키 이동은 폰이 실제로 안 움직여 화면 원근이 없으니 이 배율이 곧 원근이다.
+const double kCoinScaleFar = 0.5;
+const double kCoinScaleNear = 1.8;
+
+/// 크기 배율이 이만큼 바뀌어야 네이티브에 다시 보낸다(10Hz 채널 낭비 방지).
+const double _kScaleEpsilon = 0.02;
+
+/// 거리 → 엽전 크기 배율. 가까울수록 크다(kCoinScaleFar~kCoinScaleNear).
+double coinScaleFor(double distanceM) {
+  final t = ((kTrailWakeM - distanceM) / (kTrailWakeM - kCoinPickM)).clamp(0.0, 1.0);
+  return kCoinScaleFar + (kCoinScaleNear - kCoinScaleFar) * t;
+}
+
+/// HUNT 엽전 그림(Flutter 에셋) — 네이티브가 판에 붙인다.
+const String kCoinImageAsset = 'assets/game/ar/coin_drop_game.webp';
 
 /// 부재를 수습하는 거리 — 팔 뻗으면 닿을 만큼 가야 한다.
 const double kPartCollectM = 1.2;
@@ -135,6 +163,10 @@ class ArMissionController extends ChangeNotifier {
 
   /// 마지막으로 네이티브에 보낸 상태 — 같은 값을 반복해 보내지 않으려고 들고 있는다.
   final Map<String, ArMarkerState> _sent = {};
+  final Map<String, double> _sentScale = {};
+
+  /// HUNT: 지금 반짝이는(탭으로 주울 수 있는) 엽전 — 네이티브 전송 기록과 따로 든다.
+  final Set<String> _shining = {};
 
   double _ratio = 0;
   String _status = '둘러보는 중…';
@@ -156,6 +188,13 @@ class ArMissionController extends ChangeNotifier {
       );
 
   void attach(ArViewController view) => _view = view;
+
+  /// 네이티브가 마커를 막 놓았을 때 화면이 부른다. 그 전에 보낸 지시는 받을 마커가 없어
+  /// 사라졌으니, 보낸 기록을 비워 다음 텔레메트리에 지금 상태를 다시 보내게 한다.
+  void resync() {
+    _sent.clear();
+    _sentScale.clear();
+  }
 
   /// 네이티브 10Hz 텔레메트리 진입점.
   void onTelemetry(Map<String, ArMarkerReading> readings) {
@@ -197,34 +236,59 @@ class ArMissionController extends ChangeNotifier {
     notifyListeners();
   }
 
-  /// 탭으로 줍는 미션(부재·발자국 끝의 도깨비불)에서 화면이 호출한다.
+  /// 탭으로 줍는 미션(부재·엽전)에서 화면이 호출한다.
   void onTapped(String markerId) {
     if (_done.contains(markerId)) return;
-    if (type == ArMissionType.restore || type == ArMissionType.hunt) {
+    if (type == ArMissionType.restore) {
       _collect(markerId);
+    } else if (type == ArMissionType.hunt) {
+      // 반짝이는(가까운) 엽전만 줍는다 — 멀리서 흐릿한 걸 탭해 건너뛰지 못하게.
+      if (_shining.contains(markerId)) {
+        _pickCoin(markerId);
+      } else {
+        _status = '더 가까이 가야 주울 수 있느니라';
+      }
+      notifyListeners();
     }
   }
 
-  // ── HUNT — 다가가면 앞쪽 자국이 하나씩 켜진다 ──────────────
+  // ── HUNT — 다가가면 엽전이 반짝이고, 탭하거나 바로 앞까지 가면 줍는다 ──
   void _tickHunt(Map<String, ArMarkerReading> r) {
-    var lit = 0;
+    var shining = 0;
     for (final m in _markers) {
+      if (_done.contains(m.id)) continue;
       final read = r[m.id];
       if (read == null) continue;
       final d = read.distance;
+      if (d <= kCoinPickM) {
+        _pickCoin(m.id);
+        continue;
+      }
       final state = d <= kTrailSolidM
           ? ArMarkerState.solid
           : (d <= kTrailWakeM ? ArMarkerState.ghost : ArMarkerState.hidden);
-      // 멀수록 흐리고 작게 — 거리 자체가 연출이 된다.
-      final t = ((kTrailWakeM - d) / (kTrailWakeM - kTrailSolidM)).clamp(0.0, 1.0);
-      _push(m.id, state, scale: 0.6 + 0.4 * t);
-      if (state == ArMarkerState.solid) lit++;
+      // 멀수록 흐리고 작게, 가까울수록 크게 — 거리 자체가 원근 연출이 된다.
+      _push(m.id, state, scale: coinScaleFor(d));
+      if (state == ArMarkerState.solid) {
+        _shining.add(m.id);
+        shining++;
+      } else {
+        _shining.remove(m.id);
+      }
     }
-    _ratio = _markers.isEmpty ? 0 : lit / _markers.length;
-    _status = lit == 0
-        ? '기척이 희미하다 — 더 다가가 보거라'
-        : (lit >= _markers.length ? '자국이 모두 드러났느니라' : '자국이 이어지는구나 ($lit/${_markers.length})');
-    if (lit >= _markers.length && _markers.isNotEmpty) _finish();
+    if (_complete) return; // 방금 마지막 엽전을 주웠다 — _finish 문구를 덮지 않는다
+    _ratio = _markers.isEmpty ? 0 : _done.length / _markers.length;
+    final count = '${_done.length}/${_markers.length}';
+    _status = shining > 0
+        ? '엽전이 반짝이는구나 — 주워 보거라 ($count)'
+        : (_done.isEmpty ? '엽전 기척이 희미하다 — 더 다가가 보거라' : '도깨비가 흘린 엽전이 이어지는구나 ($count)');
+  }
+
+  /// 엽전 하나를 줍는다 — 사라지게 하고 센다(다 주우면 _collect가 완료시킨다).
+  void _pickCoin(String id) {
+    _shining.remove(id);
+    _push(id, ArMarkerState.hidden);
+    _collect(id);
   }
 
   // ── RESTORE_AR — 부재까지 걸어가 하나씩 수습 ───────────────
@@ -328,12 +392,17 @@ class ArMissionController extends ChangeNotifier {
     onComplete?.call();
   }
 
-  /// 같은 상태를 10Hz로 반복 전송하면 채널만 먹는다 — 바뀔 때만 보낸다.
-  /// (scale은 연속값이라 상태가 같아도 흐름이 끊기지 않게 함께 실어 보낸다.)
+  /// 같은 상태를 10Hz로 반복 전송하면 채널만 먹는다 — 상태나 크기가 바뀔 때만 보낸다.
+  /// (전엔 ghost일 때만 크기를 다시 보내, 반짝이는(solid) 엽전은 다가가도 커지지 않았다.)
   void _push(String id, ArMarkerState state, {double scale = 1.0}) {
-    final changed = _sent[id] != state;
+    // 뷰가 아직 없으면 보내지도 기록하지도 않는다 — 기록만 남으면 뷰가 붙은 뒤 상태가 같아
+    // 다시 안 보내, 마커가 끝까지 숨은 채로 남았다(admin 이동은 뷰보다 먼저 거리를 보낸다).
+    if (_view == null) return;
+    final prevScale = _sentScale[id];
+    final changed = _sent[id] != state || prevScale == null || (prevScale - scale).abs() > _kScaleEpsilon;
     _sent[id] = state;
-    if (changed || state == ArMarkerState.ghost) {
+    _sentScale[id] = scale;
+    if (changed) {
       _view?.setMarkerState(id, state, scale: scale);
     }
   }
@@ -356,18 +425,20 @@ List<ArMarkerDef> buildArMarkers({
 }) {
   switch (type) {
     case ArMissionType.hunt:
-      // 정면으로 이어지는 발자국. 좌우로 조금씩 엇갈려야 걸어온 자취처럼 보인다.
+      // 정면으로 이어지는 엽전. 좌우로 조금씩 엇갈려야 도깨비가 흘리고 간 자취처럼 보인다.
       final n = (count ?? 5).clamp(2, 12);
       return [
         for (var i = 0; i < n; i++)
           ArMarkerDef(
             id: 'step$i',
-            label: '자국 ${i + 1}',
+            label: '엽전 ${i + 1}',
             color: primary,
-            kind: ArMarkerKind.footprint,
-            forward: 1.4 + i * 1.3,
+            kind: ArMarkerKind.coin,
+            image: kCoinImageAsset,
+            // 첫 엽전이 폰을 들고만 있어도 화면에 들어오는 거리부터.
+            forward: 2.4 + i * 1.3,
             right: (i.isEven ? -0.22 : 0.22),
-            down: 1.35, // 눈높이에서 바닥까지 — 평면을 찾으면 그 높이로 다시 앉는다
+            down: 0.9, // 눈높이에서 허리께 — 평면을 찾으면 네이티브가 바닥+띄움 높이로 옮긴다
             state: ArMarkerState.hidden,
           ),
       ];

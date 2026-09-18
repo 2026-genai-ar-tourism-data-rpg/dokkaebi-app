@@ -60,6 +60,8 @@ import 'package:dokkaebi_app/screens/ar_search_screen.dart';
 import 'package:dokkaebi_app/screens/quest_journey_screen.dart';
 import 'package:dokkaebi_app/session.dart';
 import 'package:dokkaebi_app/store.dart';
+import 'package:dokkaebi_app/widgets/memory_sequence_game.dart';
+import 'package:dokkaebi_app/widgets/memory_stone_restore.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:google_fonts/google_fonts.dart';
@@ -1088,6 +1090,13 @@ void main() {
       expect(find.text('「첨성대」의 기억석 조각'), findsOneWidget);
       expect(find.text('경주시의 기억석 · 1/2 조각'), findsOneWidget);
       expect(find.text('단서 「별빛」'), findsOneWidget);
+      // 코드로 그린 한자 조각 대신 조각 그림 — 큰 그림 1 + 모은 조각 칸 2(모은 1·남은 1).
+      expect(
+          find.byWidgetPredicate((w) =>
+              w is Image && w.image is AssetImage && (w.image as AssetImage).assetName == kMemoryFragmentAsset),
+          findsNWidgets(3));
+      expect(find.byKey(const ValueKey('frag-slot-0-true')), findsOneWidget, reason: '첨성대 조각은 모았다');
+      expect(find.byKey(const ValueKey('frag-slot-1-false')), findsOneWidget, reason: '남은 조각은 흐리게');
       expect(find.text('글씨조각 「훈(訓)」'), findsNothing);
       expect(find.textContaining('申時'), findsNothing);
       expect(find.textContaining('익선동'), findsNothing);
@@ -1253,12 +1262,12 @@ void main() {
   });
 
   // 계획 B14 — 발자국 대사가 모든 코스에 종로 대본 4줄(먹내음·처마)로 고정돼 있었다.
-  group('발자국 귀띔(trailWhisper)', () {
+  group('엽전 귀띔(trailWhisper)', () {
     const steps = ['돌담 모퉁이', '느티나무 아래', '우물터'];
 
-    test('첫 발자국 전엔 자취 묘사를, 걸음마다 방금 닿은 지점을, 끝에선 거두라는 말을 붙인다', () {
-      expect(trailWhisper(clue: '물기 어린 발자국이 동쪽으로 이어진다', steps: steps, step: 0, total: 3),
-          '"물기 어린 발자국이 동쪽으로 이어진다"');
+    test('첫 엽전 전엔 자취 묘사를, 주울 때마다 방금 닿은 지점을, 끝에선 거두라는 말을 붙인다', () {
+      expect(trailWhisper(clue: '엽전 몇 닢이 동쪽으로 흩어져 있다', steps: steps, step: 0, total: 3),
+          '"엽전 몇 닢이 동쪽으로 흩어져 있다"');
       expect(trailWhisper(steps: steps, step: 1, total: 3), '"돌담 모퉁이"');
       expect(trailWhisper(steps: steps, step: 2, total: 3), '"느티나무 아래"');
       expect(trailWhisper(steps: steps, step: 3, total: 3), '"우물터 — 저기 빛나는 것을 거두거라."');
@@ -1267,12 +1276,124 @@ void main() {
     test('자취 묘사·지점이 없으면 종로 대본이 아닌 기본 문구를 쓴다', () {
       final lines = [for (var i = 0; i <= 3; i++) trailWhisper(step: i, total: 3)];
 
-      expect(lines.first, contains('발자국이 이어져'));
+      expect(lines.first, contains('엽전이 이어져'));
       expect(lines.last, contains('빛나는 것을 거두거라'));
       for (final line in lines) {
         expect(line, isNot(contains('먹내음')));
         expect(line, isNot(contains('처마')));
       }
+    });
+  });
+
+  // 수집 단계(S1·S6)가 떠 있는 조각(종로 한자 '宮') 탭이라 AR 엽전 줍기와 같은 '모으기'로 보였다
+  // → 빛 순서 기억하기 미니게임. 대상 이름·개수는 tap 원자에서 온다.
+  group('수집 단계 — 빛 순서 기억하기', () {
+    Scenario gatherCourse() => Scenario.fromJson({
+          'scenario_id': 'gyeongju_gather_test',
+          'title': '경주시의 기억석',
+          'region': '경주시',
+          'node_sequence': [
+            {
+              ..._stone('g1', '무열왕릉비'),
+              'strategy': const ['S6_COUNT_COLLECT'],
+              'actions': const [
+                {'a': 'tap', 'target': '비몸', 'count': [0, 4]},
+              ],
+              'mission': {'type': 'COLLECT', 'order': '비몸을 찾아라', 'hints': const []},
+            },
+            _stone('g2', '첨성대', finale: true),
+          ],
+        });
+
+    Future<void> toGather(WidgetTester tester) async {
+      await _toDialogue(tester, gatherCourse());
+      await tester.tap(find.text('"그냥 빨리 찾겠소."'));
+      await tester.pump();
+      await tester.tap(find.text('계속 — 지령 받기'));
+      await tester.pump();
+      await tester.tap(find.text('지령 받기 — 수집 시작'));
+      await tester.pump();
+    }
+
+    /// 화면에서 빛나는 조각을 차례로 읽는다(무작위 순서) — 빛남 600ms·쉼 250ms.
+    Future<List<int>> readSequence(WidgetTester tester, int n) async {
+      await tester.pump(const Duration(milliseconds: 750)); // 시작 지연 700 + 여유
+      final seq = <int>[];
+      for (var step = 0; step < n; step++) {
+        for (var i = 0; i < n; i++) {
+          final scale = tester.widget<AnimatedScale>(
+              find.descendant(of: find.byKey(ValueKey('seq-tile-$i')), matching: find.byType(AnimatedScale)));
+          if (scale.scale > 1) seq.add(i);
+        }
+        await tester.pump(const Duration(milliseconds: 850));
+      }
+      return seq;
+    }
+
+    testWidgets('떠 있는 조각 대신 미니게임이 뜨고, 대상 이름·개수는 데이터에서 온다', (tester) async {
+      await toGather(tester);
+
+      expect(tester.takeException(), isNull);
+      expect(find.byType(MemorySequenceGame), findsOneWidget);
+      expect(find.text('비몸의 기억'), findsOneWidget);
+      expect(find.byKey(const ValueKey('seq-tile-3')), findsOneWidget, reason: 'tap 원자 개수 4');
+      expect(find.byKey(const ValueKey('seq-tile-4')), findsNothing);
+      expect(find.text('宮'), findsNothing, reason: '종로 시안 한자 조각이 아니다');
+      expect(find.text('돌아와 조각을 살피다'), findsNothing, reason: '맞히기 전엔 못 넘어간다');
+    });
+
+    testWidgets('빛난 순서대로 누르면 조각을 살피러 갈 수 있다', (tester) async {
+      await toGather(tester);
+      final seq = await readSequence(tester, 4);
+      expect(seq, hasLength(4));
+
+      for (final i in seq) {
+        await tester.tap(find.byKey(ValueKey('seq-tile-$i')));
+        await tester.pump();
+      }
+      await tester.pump(const Duration(milliseconds: 300));
+      expect(find.text('돌아와 조각을 살피다'), findsOneWidget);
+    });
+  });
+
+  // 모든 장소에 같은 기본 캐릭터 한 장이 떴다 — 이름(npc.name)에 맞는 도깨비 그림으로.
+  group('장소 도깨비 그림', () {
+    Finder assetImage(String path) => find.byWidgetPredicate(
+        (w) => w is Image && w.image is AssetImage && (w.image as AssetImage).assetName == path);
+
+    Scenario npcCourse({String npc = ''}) => Scenario.fromJson({
+          'scenario_id': 'npc_art_course',
+          'title': '해운대구의 기억석',
+          'region': '해운대구',
+          'node_sequence': [
+            _rich('a1', '동백섬', 'RESTORE_AR', npc: npc),
+            _stone('a2', '해운대해수욕장', finale: true),
+          ],
+        });
+
+    testWidgets('소환 화면 — 그 장소 도깨비의 전신이 뜬다', (tester) async {
+      final sc = npcCourse(npc: '숯불 도깨비');
+      await _tapArrival(tester, sc, _FakeQuestServer(scenarioId: sc.scenarioId));
+      await tester.pump(const Duration(milliseconds: 1600)); // 스캔 → 등장
+
+      expect(tester.takeException(), isNull);
+      expect(assetImage('assets/game/characters/food_sutbul/full_idle.webp'), findsOneWidget);
+      expect(assetImage('assets/game/characters/base_youth/full_idle.webp'), findsNothing,
+          reason: '기본 도깨비가 아니라 이 장소의 숯불 도깨비');
+    });
+
+    testWidgets('대화 화면 — 그 도깨비의 말하는 상반신', (tester) async {
+      await _toDialogue(tester, npcCourse(npc: '숯불 도깨비'));
+
+      expect(tester.takeException(), isNull);
+      expect(assetImage('assets/game/characters/food_sutbul/bust_talk.webp'), findsOneWidget);
+    });
+
+    testWidgets('이름이 없는 장소는 기본 소년 도깨비로 폴백한다', (tester) async {
+      await _toDialogue(tester, npcCourse());
+
+      expect(tester.takeException(), isNull);
+      expect(assetImage('assets/game/characters/base_youth/bust_talk.webp'), findsOneWidget);
     });
   });
 
@@ -1322,6 +1443,14 @@ void main() {
           ],
         });
 
+    /// 엔딩 갈래를 고른 뒤 복원 연출을 끝까지 보고 '계속'으로 엔딩 화면에 간다.
+    Future<void> throughRestore(WidgetTester tester) async {
+      await tester.pump(kRestoreDuration);
+      await tester.tap(find.text('계속'));
+      await tester.pump(const Duration(milliseconds: 100));
+      await tester.pump(const Duration(milliseconds: 100));
+    }
+
     /// 도착 인증 → 소환 → "말 걸기"까지 눌러 피날레 화면을 연다.
     Future<void> toFinale(WidgetTester tester, Scenario sc, _FakeQuestServer server) async {
       await _tapArrival(tester, sc, server);
@@ -1344,6 +1473,20 @@ void main() {
       expect(find.textContaining('이순신'), findsNothing, reason: '근거 없는 사이드 퀘스트는 삭제했다');
     });
 
+    testWidgets('피날레 화면 — 수호 도깨비 그림이 뜬다', (tester) async {
+      final sc = finaleCourse();
+      await toFinale(tester, sc, _FakeQuestServer(scenarioId: sc.scenarioId));
+
+      expect(
+          find.byWidgetPredicate((w) =>
+              w is Image &&
+              w.image is AssetImage &&
+              (w.image as AssetImage).assetName == 'assets/game/characters/guardian_suho/full_idle.webp'),
+          findsWidgets, reason: '화면 전환 중엔 소환 화면과 피날레 화면이 함께 그려진다 — 둘 다 수호 도깨비');
+      expect(find.byWidgetPredicate((w) => w is Image && w.image is AssetImage &&
+          (w.image as AssetImage).assetName == 'assets/game/characters/base_youth/full_idle.webp'), findsNothing);
+    });
+
     testWidgets('엔딩 화면 — 고른 갈래의 대사·지역 기억석과 서버 칭호를 보여준다', (tester) async {
       final sc = finaleCourse();
       final server = _FakeQuestServer(
@@ -1353,6 +1496,7 @@ void main() {
       await tester.tap(find.text('이곳의 기억을 계속 지킬게.'));
       await tester.pump(const Duration(milliseconds: 100));
       await tester.pump(const Duration(milliseconds: 100));
+      await throughRestore(tester);
 
       expect(find.text('복 원 · 굿 엔딩'), findsOneWidget);
       expect(find.text('경주시 기억석 복원'), findsOneWidget);
@@ -1367,6 +1511,29 @@ void main() {
       expect(ScenarioStore.I.endingOf(sc.scenarioId), 'good');
     });
 
+    testWidgets('엔딩을 고르면 바로 엔딩이 아니라 조각이 모이는 복원 연출이 먼저 뜬다', (tester) async {
+      final sc = finaleCourse();
+      await toFinale(tester, sc, _FakeQuestServer(scenarioId: sc.scenarioId));
+
+      await tester.tap(find.text('이곳의 기억을 계속 지킬게.'));
+      await tester.pump(const Duration(milliseconds: 100));
+      await tester.pump(const Duration(milliseconds: 100));
+
+      expect(find.byType(MemoryStoneRestore), findsOneWidget);
+      expect(find.text('복 원 · 굿 엔딩'), findsNothing, reason: '엔딩은 연출 뒤');
+      expect(find.text('「경주시 기억석」'), findsOneWidget, reason: '피날레 노드의 region_stone 이름');
+
+      await throughRestore(tester);
+      await tester.pump(const Duration(seconds: 1)); // 화면 전환(크로스페이드)이 끝나야 연출 화면이 빠진다
+      expect(find.byType(MemoryStoneRestore), findsNothing);
+      expect(find.text('복 원 · 굿 엔딩'), findsOneWidget);
+      expect(
+          find.byWidgetPredicate((w) =>
+              w is Image && w.image is AssetImage && (w.image as AssetImage).assetName == kMemoryStoneAsset),
+          findsOneWidget,
+          reason: '엔딩의 기억석은 완성체 그림');
+    });
+
     testWidgets('엔딩 화면 — 다른 갈래를 고르면 노멀 엔딩 대사가 뜬다', (tester) async {
       final sc = finaleCourse();
       await toFinale(tester, sc, _FakeQuestServer(scenarioId: sc.scenarioId));
@@ -1374,6 +1541,7 @@ void main() {
       await tester.tap(find.text('이제 일상으로 돌아가고 싶어.'));
       await tester.pump(const Duration(milliseconds: 100));
       await tester.pump(const Duration(milliseconds: 100));
+      await throughRestore(tester);
 
       expect(find.text('복 원 · 노멀 엔딩'), findsOneWidget);
       expect(find.text('쉬고 싶은 마음도 당연하니라.'), findsOneWidget);
