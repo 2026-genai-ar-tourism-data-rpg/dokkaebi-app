@@ -6,6 +6,8 @@
 //       조각 획득 팝업은 코드로 그린 한자 조각 대신 조각 그림 + 모은 조각 칸. 피날레 선택 뒤엔
 //       복원 연출 화면('restore', memory_stone_restore.dart)을 거쳐 엔딩으로 가고, 엔딩의 기억석은
 //       완성체 그림. 엔딩의 종로 시안 대체값(訓民正音·'종로 글씨 기억석'·사백 년의 먹)은 걷어냈다.
+//       수집 단계(S1·S6)는 떠 있는 조각(종로 한자) 탭 대신 빛 순서 기억하기 미니게임
+//       (memory_sequence_game.dart) — AR 엽전 줍기와 같은 '모으기'로 보였다.
 // 구현일: 2026-09-18 | 작성: ljs (npc-character-set/ljs/v1)
 // ------------------------------------------------------------
 // [v15] 코스 상세와 같은 장소로 열기 + 사진 미션을 실제 AR 카메라로(계획 C2·B10).
@@ -224,6 +226,7 @@ import '../session.dart';
 import '../store.dart';
 import '../theme.dart';
 import '../utils/web_mercator.dart';
+import '../widgets/memory_sequence_game.dart';
 import '../widgets/memory_stone_restore.dart';
 import '../widgets/native_ar_view.dart';
 import '../widgets/reward_pop.dart';
@@ -441,8 +444,9 @@ class _QuestJourneyScreenState extends State<QuestJourneyScreen> with TickerProv
   // defeat/tap 원자의 이름·개수로 다시 채운다.
   String huntLabel = '먹그림자 처치';
   // S1(대화→수집)·S6(수집 누적) 전용 — 전투 없는 탭 수집 화면(_gatherScreen).
-  List<Map<String, dynamic>> gatherItems = [];
-  String gatherLabel = '글씨조각 수집';
+  int gatherTotal = 1; // 빛 순서 기억하기의 조각 수(tap 원자 개수)
+  bool gatherCleared = false;
+  String gatherLabel = '글씨조각의 기억';
   String photoState = 'idle';
   int scan = 0;
   int trail = 0;
@@ -710,21 +714,12 @@ class _QuestJourneyScreenState extends State<QuestJourneyScreen> with TickerProv
   }
 
   /// 수집 화면(_gatherScreen)을 이 챕터의 실제 데이터로 다시 채운다 — S1/S6은
-  /// 전투 없이 tap 원자 대상·개수만 있다(_prepareHuntEnemies와 갈래만 다름).
+  /// 전투 없이 tap 원자 대상·개수만 있다. 그 개수로 빛 순서 기억하기를 한다.
   void _prepareGatherItems() {
     final tap = _actionAtom('tap');
-    final count = (tap?.countTarget ?? 1).clamp(1, _huntPositions.length);
-    gatherLabel = '${tap?.target ?? '글씨조각'} 수집';
-    gatherItems = [
-      for (var i = 0; i < count; i++)
-        {
-          'id': i,
-          'left': _huntPositions[i].$1,
-          'top': _huntPositions[i].$2,
-          'size': 64.0,
-          'collected': false,
-        },
-    ];
+    gatherTotal = tap?.countTarget ?? 1;
+    gatherCleared = false;
+    gatherLabel = '${tap?.target ?? '글씨조각'}의 기억';
   }
 
   /// 현재 챕터의 힌트 사다리 컨트롤러(문구=노드 hint_ladder, 없으면 시안 문구).
@@ -3175,44 +3170,31 @@ class _QuestJourneyScreenState extends State<QuestJourneyScreen> with TickerProv
   // 8-2. GATHER — 전투 없는 탭 수집 (S1 대화→수집 · S6 수집 누적)
   // ════════════════════════════════════════════════════
   Widget _gatherScreen() {
-    final gatherTotal = gatherItems.length;
-    final gatherCount = gatherItems.where((e) => e['collected'] == true).length;
-    final done = gatherCount >= gatherTotal;
+    final done = gatherCleared;
     return Container(
       decoration: BoxDecoration(gradient: _dialBg),
       child: LayoutBuilder(builder: (ctx, box) {
         return Stack(children: [
           Align(alignment: const Alignment(0, 0.52), child: ClipPath(clipper: _RoofClipper(), child: Container(height: 130, color: const Color(0xFF0C0A08)))),
-          // 상단 카운터 — 사냥 화면과 같은 틀이지만 전투 색(주홍) 대신 수집 색(청록).
+          // 상단 이름표 — 사냥 화면과 같은 틀이지만 전투 색(주홍) 대신 수집 색(청록).
           Positioned(top: 58, left: 0, right: 0, child: Column(children: [
             Container(
               padding: const EdgeInsets.symmetric(horizontal: 22, vertical: 10),
               decoration: BoxDecoration(color: _inkDeep.withOpacity(0.8), borderRadius: BorderRadius.circular(16), border: Border.all(color: _tealDeep.withOpacity(0.6))),
-              child: Row(mainAxisSize: MainAxisSize.min, children: [
-                Text(gatherLabel, style: const TextStyle(fontSize: 13, color: _teal, fontWeight: FontWeight.w700)),
-                const SizedBox(width: 12),
-                RichText(text: TextSpan(children: [
-                  TextSpan(text: '$gatherCount', style: dokkaebiTitle(size: 26, color: _cream)),
-                  TextSpan(text: ' / $gatherTotal', style: const TextStyle(fontSize: 16, color: _muted)),
-                ])),
-              ]),
+              child: Text(gatherLabel, style: const TextStyle(fontSize: 14, color: _teal, fontWeight: FontWeight.w700)),
             ),
-            const SizedBox(height: 8),
-            SizedBox(width: 220, child: _progress(gatherTotal == 0 ? 0 : gatherCount / gatherTotal, grad: const LinearGradient(colors: [_tealDeep, _teal]), track: const Color(0xBF0D0B09))),
             const SizedBox(height: 6),
-            const Text('은은한 빛을 따라 손끝으로 거두어라', style: TextStyle(fontSize: 11.5, color: Color(0xFFB3A892))),
+            const Text('빛나는 순서대로 조각을 눌러 기억을 되살려라', style: TextStyle(fontSize: 11.5, color: Color(0xFFB3A892))),
           ])),
-          // 수집물 — 전투 없이 탭 한 번으로 거둔다.
-          for (final it in gatherItems)
-            if (it['collected'] != true)
-              Positioned(
-                left: box.maxWidth * (it['left'] as double) - (it['size'] as double) / 2,
-                top: box.maxHeight * (it['top'] as double) - (it['size'] as double) / 2,
-                child: _Floaty(anim: _float, amplitude: 6, child: GestureDetector(
-                  onTap: () => setState(() => it['collected'] = true),
-                  child: _FragShard(glyph: _target.hanja, size: it['size'] as double),
-                )),
-              ),
+          // 빛 순서 기억하기 — 맞히면 아래 '돌아와 조각을 살피다'가 열린다.
+          Align(
+            alignment: const Alignment(0, -0.12),
+            child: MemorySequenceGame(
+              key: ValueKey('gather-$_tIdx'),
+              count: gatherTotal,
+              onCleared: () => setState(() => gatherCleared = true),
+            ),
+          ),
           if (done) ...[
             Positioned(left: 14, right: 14, bottom: 100, child: Container(
               padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 13),
@@ -3220,7 +3202,7 @@ class _QuestJourneyScreenState extends State<QuestJourneyScreen> with TickerProv
               child: Row(children: [
                 Container(width: 24, height: 24, alignment: Alignment.center, decoration: const BoxDecoration(shape: BoxShape.circle, color: _tealDeep), child: const Text('✓', style: TextStyle(color: Color(0xFFEAFFF9), fontSize: 13, fontWeight: FontWeight.w900))),
                 const SizedBox(width: 10),
-                const Expanded(child: Text('모두 거두었다 — 이제 조각을 살필 차례', style: TextStyle(fontSize: 13.5, color: Color(0xFFBDEEE1), fontWeight: FontWeight.w700))),
+                const Expanded(child: Text('기억을 되살렸다 — 이제 조각을 살필 차례', style: TextStyle(fontSize: 13.5, color: Color(0xFFBDEEE1), fontWeight: FontWeight.w700))),
               ]),
             )),
             Positioned(left: 14, right: 14, bottom: 34, child: _cta('돌아와 조각을 살피다', () => _claimCurrentChapter())),

@@ -60,6 +60,7 @@ import 'package:dokkaebi_app/screens/ar_search_screen.dart';
 import 'package:dokkaebi_app/screens/quest_journey_screen.dart';
 import 'package:dokkaebi_app/session.dart';
 import 'package:dokkaebi_app/store.dart';
+import 'package:dokkaebi_app/widgets/memory_sequence_game.dart';
 import 'package:dokkaebi_app/widgets/memory_stone_restore.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -1281,6 +1282,77 @@ void main() {
         expect(line, isNot(contains('먹내음')));
         expect(line, isNot(contains('처마')));
       }
+    });
+  });
+
+  // 수집 단계(S1·S6)가 떠 있는 조각(종로 한자 '宮') 탭이라 AR 엽전 줍기와 같은 '모으기'로 보였다
+  // → 빛 순서 기억하기 미니게임. 대상 이름·개수는 tap 원자에서 온다.
+  group('수집 단계 — 빛 순서 기억하기', () {
+    Scenario gatherCourse() => Scenario.fromJson({
+          'scenario_id': 'gyeongju_gather_test',
+          'title': '경주시의 기억석',
+          'region': '경주시',
+          'node_sequence': [
+            {
+              ..._stone('g1', '무열왕릉비'),
+              'strategy': const ['S6_COUNT_COLLECT'],
+              'actions': const [
+                {'a': 'tap', 'target': '비몸', 'count': [0, 4]},
+              ],
+              'mission': {'type': 'COLLECT', 'order': '비몸을 찾아라', 'hints': const []},
+            },
+            _stone('g2', '첨성대', finale: true),
+          ],
+        });
+
+    Future<void> toGather(WidgetTester tester) async {
+      await _toDialogue(tester, gatherCourse());
+      await tester.tap(find.text('"그냥 빨리 찾겠소."'));
+      await tester.pump();
+      await tester.tap(find.text('계속 — 지령 받기'));
+      await tester.pump();
+      await tester.tap(find.text('지령 받기 — 수집 시작'));
+      await tester.pump();
+    }
+
+    /// 화면에서 빛나는 조각을 차례로 읽는다(무작위 순서) — 빛남 600ms·쉼 250ms.
+    Future<List<int>> readSequence(WidgetTester tester, int n) async {
+      await tester.pump(const Duration(milliseconds: 750)); // 시작 지연 700 + 여유
+      final seq = <int>[];
+      for (var step = 0; step < n; step++) {
+        for (var i = 0; i < n; i++) {
+          final scale = tester.widget<AnimatedScale>(
+              find.descendant(of: find.byKey(ValueKey('seq-tile-$i')), matching: find.byType(AnimatedScale)));
+          if (scale.scale > 1) seq.add(i);
+        }
+        await tester.pump(const Duration(milliseconds: 850));
+      }
+      return seq;
+    }
+
+    testWidgets('떠 있는 조각 대신 미니게임이 뜨고, 대상 이름·개수는 데이터에서 온다', (tester) async {
+      await toGather(tester);
+
+      expect(tester.takeException(), isNull);
+      expect(find.byType(MemorySequenceGame), findsOneWidget);
+      expect(find.text('비몸의 기억'), findsOneWidget);
+      expect(find.byKey(const ValueKey('seq-tile-3')), findsOneWidget, reason: 'tap 원자 개수 4');
+      expect(find.byKey(const ValueKey('seq-tile-4')), findsNothing);
+      expect(find.text('宮'), findsNothing, reason: '종로 시안 한자 조각이 아니다');
+      expect(find.text('돌아와 조각을 살피다'), findsNothing, reason: '맞히기 전엔 못 넘어간다');
+    });
+
+    testWidgets('빛난 순서대로 누르면 조각을 살피러 갈 수 있다', (tester) async {
+      await toGather(tester);
+      final seq = await readSequence(tester, 4);
+      expect(seq, hasLength(4));
+
+      for (final i in seq) {
+        await tester.tap(find.byKey(ValueKey('seq-tile-$i')));
+        await tester.pump();
+      }
+      await tester.pump(const Duration(milliseconds: 300));
+      expect(find.text('돌아와 조각을 살피다'), findsOneWidget);
     });
   });
 
