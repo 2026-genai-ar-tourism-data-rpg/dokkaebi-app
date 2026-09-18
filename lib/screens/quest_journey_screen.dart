@@ -8,6 +8,8 @@
 //       완성체 그림. 엔딩의 종로 시안 대체값(訓民正音·'종로 글씨 기억석'·사백 년의 먹)은 걷어냈다.
 //       수집 단계(S1·S6)는 떠 있는 조각(종로 한자) 탭 대신 빛 순서 기억하기 미니게임
 //       (memory_sequence_game.dart) — AR 엽전 줍기와 같은 '모으기'로 보였다.
+//       AR 소환은 도깨비를 비춰 잡아야(summon_sighting.dart) '말 걸기'가 열린다 — 전엔 1.5초 뒤
+//       무조건 열려 안 비춰도 대화가 됐다. AR이 없거나 멈추면 예전처럼 바로 등장.
 // 구현일: 2026-09-18 | 작성: ljs (npc-character-set/ljs/v1)
 // ------------------------------------------------------------
 // [v15] 코스 상세와 같은 장소로 열기 + 사진 미션을 실제 AR 카메라로(계획 C2·B10).
@@ -220,6 +222,7 @@ import '../game/player_state.dart';
 import '../game/location_service.dart';
 import '../game/npc_art.dart';
 import '../game/run_session.dart';
+import '../game/summon_sighting.dart';
 import '../models/run.dart';
 import '../models/scenario.dart';
 import '../session.dart';
@@ -500,6 +503,12 @@ class _QuestJourneyScreenState extends State<QuestJourneyScreen> with TickerProv
   late final AnimationController _glow;
 
   Timer? _walkTimer, _scanTimer, _summonTimer;
+
+  /// 소환 화면 — AR로 도깨비를 비춰 잡았는지(잡아야 '말 걸기'가 열린다).
+  SummonSighting _sighting = SummonSighting();
+
+  /// 소환 화면이 실제 AR 카메라로 도는지(아니면 2D 연출 — 비출 카메라가 없다).
+  bool get _summonUsesAr => _arSupported == true && !_arError;
 
   // ── 챕터 진행판(_mapScreen)의 실지도 상태 ──
   // 지도는 screen=='map'일 때만 마운트되므로(다른 스테이지로 가면 unmount),
@@ -1156,9 +1165,20 @@ class _QuestJourneyScreenState extends State<QuestJourneyScreen> with TickerProv
       screen = 'summon';
       summonFor = t.after == 'summon-sejong' ? 'sejong' : 'meok';
       summonPhase = 'scan';
+      _sighting = SummonSighting();
     });
     _summonTimer?.cancel();
-    _summonTimer = Timer(const Duration(milliseconds: 1500), () => setState(() => summonPhase = 'appear'));
+    // 실제 AR이면 도깨비를 비춰 잡아야 등장(_onSummonTelemetry) — 시간이 지났다고 열지 않는다.
+    // 2D 연출(AR 미지원·오류)은 비출 카메라가 없으니 예전처럼 잠시 뒤 등장.
+    _summonTimer = Timer(const Duration(milliseconds: 1500), () {
+      if (!_summonUsesAr) setState(() => summonPhase = 'appear');
+    });
+  }
+
+  /// 소환 AR 텔레메트리 — 도깨비를 화면 가운데 근처에 잠시 잡으면 등장(말 걸기 열림).
+  void _onSummonTelemetry(Map<String, ArMarkerReading> readings) {
+    if (summonPhase != 'scan') return;
+    if (_sighting.onReading(readings['summon'])) setState(() => summonPhase = 'appear');
   }
 
   /// 이 챕터 노드의 requires 판정. 시나리오/노드가 없으면 null(게이팅 없음).
@@ -2735,7 +2755,8 @@ class _QuestJourneyScreenState extends State<QuestJourneyScreen> with TickerProv
     final scanning = summonPhase == 'scan';
     // 실제 AR 경로: 카메라 배경 + 3D 도깨비 마커. 2D 연출 요소(그라데이션 배경·지붕·
     // 먹웅덩이·그림 도깨비)는 카메라를 가리므로 AR일 땐 그리지 않는다.
-    // 마커 탭 = '말 걸기'와 동일(스캔 중이면 대기를 건너뛰고 바로 등장).
+    // 마커 탭 = '말 걸기'와 동일(스캔 중이면 발견으로 치고 바로 등장).
+    // 실제 AR에선 도깨비를 비춰 잡아야(SummonSighting) 등장하고 '말 걸기'가 열린다.
     final bool realAr = _arSupported == true && !_arError;
     return Container(
       decoration: realAr ? null : BoxDecoration(gradient: finale ? _finaleBg : _dialBg),
@@ -2756,6 +2777,7 @@ class _QuestJourneyScreenState extends State<QuestJourneyScreen> with TickerProv
                     image: _art.full,
                   ),
                 ],
+                // 도깨비를 직접 탭한 것도 발견이다(화면에 보여야 탭할 수 있다).
                 onMarkerTapped: (_) => setState(() {
                   if (summonPhase == 'scan') {
                     _summonTimer?.cancel();
@@ -2764,7 +2786,12 @@ class _QuestJourneyScreenState extends State<QuestJourneyScreen> with TickerProv
                     go(finale ? 'sejong' : 'dialogue');
                   }
                 }),
-                onError: () => setState(() => _arError = true),
+                onTelemetry: _onSummonTelemetry,
+                // AR이 멈추면 비출 수 없다 — 막히지 않게 바로 등장시킨다.
+                onError: () => setState(() {
+                  _arError = true;
+                  if (summonPhase == 'scan') summonPhase = 'appear';
+                }),
               ),
             )
           else
@@ -2788,7 +2815,7 @@ class _QuestJourneyScreenState extends State<QuestJourneyScreen> with TickerProv
               ))),
             ),
             Positioned(left: 0, right: 0, top: box.maxHeight * .74, child: Center(child: Text(
-              realAr ? '천천히 주변을 비춰 보거라…' : '기운이 모여든다…',
+              realAr ? '주변을 천천히 비춰 도깨비를 찾아보거라…' : '기운이 모여든다…',
               style: dokkaebiTitle(size: 15, color: const Color(0xFFE8DCC4))))),
           ] else ...[
             // 실제 AR에서는 도깨비가 카메라 공간의 3D 마커로 떠 있으므로 그림을 겹치지 않는다.
