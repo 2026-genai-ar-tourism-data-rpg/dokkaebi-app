@@ -11,9 +11,11 @@ import 'dart:convert';
 import 'package:dokkaebi_app/game/location_service.dart';
 import 'package:dokkaebi_app/models/explore_draft.dart';
 import 'package:dokkaebi_app/models/scenario.dart';
+import 'package:dokkaebi_app/screens/explore_confirm_screen.dart';
 import 'package:dokkaebi_app/screens/explore_place_screen.dart';
 import 'package:dokkaebi_app/screens/quest_tab_screen.dart';
 import 'package:dokkaebi_app/store.dart';
+import 'package:dokkaebi_app/theme.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:google_fonts/google_fonts.dart';
@@ -119,7 +121,9 @@ void main() {
         return _json({}, 404);
       });
 
+      // 실제 앱 테마로 — 테마의 버튼 최소 크기가 '가로 꽉 참'이라 한 줄 배치가 깨지던 걸 잡는다.
       await tester.pumpWidget(MaterialApp(
+          theme: buildDokkaebiTheme(),
           home: Scaffold(body: QuestTabScreen(locationService: _here, httpClient: client))));
       await tester.tap(find.text('내 주변 탐험'));
       await tester.pumpAndSettle();
@@ -132,6 +136,7 @@ void main() {
 
       await tester.tap(find.text('위시리스트'));
       await tester.pumpAndSettle();
+      expect(tester.takeException(), isNull, reason: '코스 생성 버튼 배치가 깨지면 안 된다');
       expect(find.text('명락사'), findsOneWidget);
       final button = find.widgetWithText(FilledButton, '코스 생성');
       expect(tester.widget<FilledButton>(button).onPressed, isNull, reason: '고르기 전엔 못 누른다');
@@ -145,6 +150,7 @@ void main() {
       expect((created!['wishlist'] as List).map((w) => w['content_id']), ['101']);
       expect(created!['radius_m'], 7000, reason: '고른 장소(6.2km)가 들어오게');
       expect(created!['duration'], '2h');
+      expect(created!['wishlist_only'], isTrue, reason: '고른 장소로만 — 다른 장소로 채우지 않는다');
       expect(ScenarioStore.I.isWished('101'), isTrue, reason: '만들어도 위시리스트는 남는다');
     });
 
@@ -153,6 +159,7 @@ void main() {
         await ScenarioStore.I.addWish(_wish('$i'));
       }
       await tester.pumpWidget(MaterialApp(
+          theme: buildDokkaebiTheme(),
           home: Scaffold(body: QuestTabScreen(locationService: _here, httpClient: MockClient((_) async => _json([]))))));
       await tester.tap(find.text('위시리스트'));
       await tester.pumpAndSettle();
@@ -165,6 +172,21 @@ void main() {
       expect(find.text('코스 하나엔 최대 5곳까지 고를 수 있어요.'), findsOneWidget);
       expect(find.widgetWithText(FilledButton, '코스 생성 5'), findsOneWidget);
     });
+  });
+
+  testWidgets('마법사로 만들 땐 wishlist_only를 보내지 않는다 — 위시 장소에 다른 장소를 더해도 된다', (tester) async {
+    Map<String, dynamic>? created;
+    final client = MockClient((req) async {
+      created = jsonDecode(req.body) as Map<String, dynamic>;
+      return _json({'detail': 'test'}, 500);
+    });
+    final draft = ExploreDraft()..places.add(_wish('101'));
+    await tester.pumpWidget(MaterialApp(
+        home: ExploreConfirmScreen(draft: draft, locationService: _here, httpClient: client, autoGenerate: true)));
+    await tester.pumpAndSettle();
+
+    expect((created!['wishlist'] as List).map((w) => w['content_id']), ['101']);
+    expect(created!.containsKey('wishlist_only'), isFalse);
   });
 
   group('코스 만들기 마법사 — 위시 리스트', () {

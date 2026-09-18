@@ -4,7 +4,8 @@
 //            카메라 아이콘(누르는 기능 없는 장식)을 +/✓ 버튼으로 바꿔 ScenarioStore 위시리스트
 //            (최대 30곳, 앱을 꺼도 유지)에 담고 뺀다. 위시리스트 탭은 여러 곳을 골라(코스 하나에
 //            최대 5곳) '코스 생성'을 누르면 기본 조건(2시간·도보·혼자·보통)으로 바로 만든다 —
-//            반경은 고른 장소가 모두 들어오게 가장 먼 곳까지(최대 10km). 만든 뒤에도 목록은 남긴다.
+//            고른 장소로만(wishlist_only, 다른 장소로 채우지 않음), 반경은 고른 장소가 모두
+//            들어오게 가장 먼 곳까지(최대 10km). 만든 뒤에도 목록은 남긴다.
 //            카드 자체를 누르면 예전처럼 그 장소 AR 탐색.
 // 구현일: 2026-09-19 | 작성: ljs (wishlist-course/ljs/v1)
 // ------------------------------------------------------------
@@ -733,6 +734,7 @@ class _WishlistSectionState extends State<_WishlistSection> {
     setState(() => _starting = false);
     final draft = ExploreDraft()
       ..places.addAll(picked)
+      ..wishlistOnly = true // 고른 장소로만 — 다른 장소로 채우지 않는다
       ..radiusKm = wishCourseRadiusKm(loc.isOk ? loc.lat : null, loc.isOk ? loc.lng : null, picked);
     await Navigator.push(
       context,
@@ -761,6 +763,8 @@ class _WishlistSectionState extends State<_WishlistSection> {
                 style: const TextStyle(color: AppColors.textSecondary, fontSize: 12)),
             const Spacer(),
             FilledButton.icon(
+              // 테마의 최소 크기가 '가로 꽉 참'(Size.fromHeight)이라 한 줄(Row) 안에선 그려지지 않는다.
+              style: FilledButton.styleFrom(minimumSize: const Size(0, 40)),
               onPressed: canCreate ? () => _create(items) : null,
               icon: const Icon(Icons.auto_awesome, size: 18),
               label: Text(_selected.isEmpty ? '코스 생성' : '코스 생성 ${_selected.length}'),

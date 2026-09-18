@@ -17,6 +17,7 @@
 // ------------------------------------------------------------
 // [v3] autoGenerate — 퀘스트 탭 위시리스트의 '코스 생성'은 조건을 묻지 않고 바로 만든다.
 //      같은 생성·진행률·오류·결과 화면을 쓰려고, 이 화면을 열자마자 생성을 시작한다.
+//      draft.wishlistOnly를 함께 보내 고른 장소로만 짠다.
 // 구현일: 2026-09-19 | 작성: ljs (wishlist-course/ljs/v1)
 // ============================================================
 import 'dart:async';
@@ -118,6 +119,7 @@ class _ExploreConfirmScreenState extends State<ExploreConfirmScreen> {
         tags: d.tagList,
         headcount: d.headcount,
         radiusM: d.radiusM,
+        wishlistOnly: d.wishlistOnly,
       );
       final name = _nameController.text.trim();
       final named = name.isEmpty ? scn : scn.copyWith(title: name);
