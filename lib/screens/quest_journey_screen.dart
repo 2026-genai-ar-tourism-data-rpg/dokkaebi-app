@@ -1,4 +1,7 @@
 // ============================================================
+// [v17] 엔딩 화면 '처음부터 다시'·'코스 목록으로' 버튼을 같은 너비로(1:14라 앞 버튼이 세로로 접혔다).
+// 구현일: 2026-09-19 | 작성: ljs (reward-ui-polish/ljs/v1)
+// ------------------------------------------------------------
 // [v16] 도깨비 그림을 노드 도깨비 이름에 맞춘다(lib/game/npc_art.dart) + 발자국 → 엽전 + 조각 보상 연출.
 // 구현(요약): 등장·AR 마커=전신, 대화=말하는 상반신, 지령=기본 상반신, 피날레=수호 도깨비 전신.
 //       전엔 모든 장소에 같은 기본 캐릭터 한 장이 떴다. 발자국 추적은 도깨비가 흘린 엽전 줍기로
@@ -3785,7 +3788,8 @@ class _QuestJourneyScreenState extends State<QuestJourneyScreen> with TickerProv
             Row(children: [
               Expanded(child: GestureDetector(onTap: _restart, child: Container(height: 48, alignment: Alignment.center, decoration: BoxDecoration(borderRadius: BorderRadius.circular(13), border: Border.all(color: Colors.white.withOpacity(0.18))), child: const Text('처음부터 다시', style: TextStyle(color: _soft, fontWeight: FontWeight.w900, fontSize: 14))))),
               const SizedBox(width: 8),
-              Expanded(flex: 14, child: GestureDetector(
+              // 두 버튼은 같은 너비 — flex 1:14라 '처음부터 다시'가 세로로 접혀 밀려났다.
+              Expanded(child: GestureDetector(
                 onTap: () => Navigator.of(context).maybePop(),
                 child: Container(height: 48, alignment: Alignment.center, decoration: BoxDecoration(gradient: _goldGrad, borderRadius: BorderRadius.circular(13), boxShadow: [BoxShadow(color: const Color(0xFFE8C268).withOpacity(0.3), blurRadius: 22, offset: const Offset(0, 8))]), child: const Text('코스 목록으로', style: TextStyle(color: Color(0xFF3A2A08), fontWeight: FontWeight.w900, fontSize: 14))),
               )),

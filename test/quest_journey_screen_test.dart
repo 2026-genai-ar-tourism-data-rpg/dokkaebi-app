@@ -1534,6 +1534,19 @@ void main() {
           reason: '엔딩의 기억석은 완성체 그림');
     });
 
+    testWidgets('엔딩 화면 — 처음부터 다시·코스 목록으로 두 버튼은 같은 너비다', (tester) async {
+      final sc = finaleCourse();
+      await toFinale(tester, sc, _FakeQuestServer(scenarioId: sc.scenarioId));
+      await tester.tap(find.text('이곳의 기억을 계속 지킬게.'));
+      await tester.pump(const Duration(milliseconds: 100));
+      await tester.pump(const Duration(milliseconds: 100));
+      await throughRestore(tester);
+
+      Size box(String label) =>
+          tester.getSize(find.ancestor(of: find.text(label), matching: find.byType(Container)).first);
+      expect(box('처음부터 다시').width, box('코스 목록으로').width);
+    });
+
     testWidgets('엔딩 화면 — 다른 갈래를 고르면 노멀 엔딩 대사가 뜬다', (tester) async {
       final sc = finaleCourse();
       await toFinale(tester, sc, _FakeQuestServer(scenarioId: sc.scenarioId));
