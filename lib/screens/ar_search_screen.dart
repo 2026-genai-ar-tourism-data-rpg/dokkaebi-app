@@ -29,6 +29,10 @@
 //            (현장에서 모델 장애로 셔터가 막히면 안 된다). 참조 사진 URL은 ARKit 인식용으로
 //            네이티브에도 넘긴다(arReferenceImages).
 // 구현일: 2026-09-16 | 작성: kys (photo-verify/kys/v1)
+// ------------------------------------------------------------
+// [v5] HUNT 엽전 줍기 — 주울 때마다 엽전 획득 효과를 화면 가운데 잠깐 띄우고,
+//      마지막 엽전은 효과가 보이도록 잠시 뒤에 닫는다.
+// 구현일: 2026-09-18 | 작성: ljs (npc-character-set/ljs/v1)
 // ============================================================
 import 'dart:async';
 import 'dart:math' as math;
@@ -112,6 +116,9 @@ class _ArSearchScreenState extends State<ArSearchScreen> with SingleTickerProvid
   bool _verifying = false;
   /// 검증 결과 도깨비 대사 — HUD 문구를 잠시 덮는다.
   String? _verdictLine;
+
+  /// HUNT: 주운 엽전 수 — 바뀔 때마다 획득 효과를 새로 띄운다(효과 위젯의 키).
+  int _coinPicks = 0;
 
   bool get _isPhotoMission => _mission?.type == ArMissionType.photo;
 
@@ -225,12 +232,20 @@ class _ArSearchScreenState extends State<ArSearchScreen> with SingleTickerProvid
       _mission = ArMissionController(
         type: type,
         markers: _markers,
-        onComplete: () {
+        onCollected: type == ArMissionType.hunt
+            ? (_) {
+                if (mounted) setState(() => _coinPicks++);
+              }
+            : null,
+        onComplete: () async {
           if (!mounted) return;
           if (type == ArMissionType.photo) {
             // 찾았다 → 셔터를 연다. 조각은 촬영·검증이 끝나야 준다.
             setState(() => _photoReady = true);
           } else {
+            // 마지막 엽전의 획득 효과가 보이도록 잠깐 기다린다.
+            if (type == ArMissionType.hunt) await Future<void>.delayed(_coinFxDuration);
+            if (!mounted) return;
             // 목표를 다 찾으면 조각 획득으로 화면을 닫는다 — 호출부가 서버 collect를 한다.
             Navigator.pop(context, true);
           }
@@ -377,7 +392,11 @@ class _ArSearchScreenState extends State<ArSearchScreen> with SingleTickerProvid
         if (_mission != null && _arSupported == true && _mode == 'scan' && !_arError)
           _MissionHud(progress: _mission!.progress, statusOverride: _verdictLine),
 
-        // admin 전용 — 방향키로 "다가가기/물러서기"(실외 이동 없이 발자국·AR 미션 테스트).
+        // 엽전 획득 효과 — 주울 때마다 키가 바뀌어 처음부터 다시 재생된다.
+        if (_coinPicks > 0)
+          IgnorePointer(child: Center(child: _CoinPickFx(key: ValueKey(_coinPicks)))),
+
+        // admin 전용 — 방향키로 "다가가기/물러서기"(실외 이동 없이 엽전·AR 미션 테스트).
         if (_mission != null && Session.isAdmin && _arSupported == true && _mode == 'scan' && !_arError)
           Positioned(right: 12, top: 130, child: _adminArPanel()),
 
@@ -703,6 +722,28 @@ class _MissionHud extends StatelessWidget {
               style: const TextStyle(color: Colors.white, fontSize: 13.5)),
         ),
       ]),
+    );
+  }
+}
+
+const _coinFxDuration = Duration(milliseconds: 700);
+const double _coinFxSize = 220;
+const _coinFxAsset = 'assets/game/vfx/coin_pickup_vfx.webp';
+
+/// 엽전 획득 효과 — 금빛 고리가 커지며 사라진다.
+class _CoinPickFx extends StatelessWidget {
+  const _CoinPickFx({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    return TweenAnimationBuilder<double>(
+      tween: Tween(begin: 0, end: 1),
+      duration: _coinFxDuration,
+      builder: (_, t, child) => Opacity(
+        opacity: 1 - t,
+        child: Transform.scale(scale: 0.6 + 0.6 * t, child: child),
+      ),
+      child: Image.asset(_coinFxAsset, width: _coinFxSize),
     );
   }
 }

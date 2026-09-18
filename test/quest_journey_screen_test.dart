@@ -1253,12 +1253,12 @@ void main() {
   });
 
   // 계획 B14 — 발자국 대사가 모든 코스에 종로 대본 4줄(먹내음·처마)로 고정돼 있었다.
-  group('발자국 귀띔(trailWhisper)', () {
+  group('엽전 귀띔(trailWhisper)', () {
     const steps = ['돌담 모퉁이', '느티나무 아래', '우물터'];
 
-    test('첫 발자국 전엔 자취 묘사를, 걸음마다 방금 닿은 지점을, 끝에선 거두라는 말을 붙인다', () {
-      expect(trailWhisper(clue: '물기 어린 발자국이 동쪽으로 이어진다', steps: steps, step: 0, total: 3),
-          '"물기 어린 발자국이 동쪽으로 이어진다"');
+    test('첫 엽전 전엔 자취 묘사를, 주울 때마다 방금 닿은 지점을, 끝에선 거두라는 말을 붙인다', () {
+      expect(trailWhisper(clue: '엽전 몇 닢이 동쪽으로 흩어져 있다', steps: steps, step: 0, total: 3),
+          '"엽전 몇 닢이 동쪽으로 흩어져 있다"');
       expect(trailWhisper(steps: steps, step: 1, total: 3), '"돌담 모퉁이"');
       expect(trailWhisper(steps: steps, step: 2, total: 3), '"느티나무 아래"');
       expect(trailWhisper(steps: steps, step: 3, total: 3), '"우물터 — 저기 빛나는 것을 거두거라."');
@@ -1267,12 +1267,52 @@ void main() {
     test('자취 묘사·지점이 없으면 종로 대본이 아닌 기본 문구를 쓴다', () {
       final lines = [for (var i = 0; i <= 3; i++) trailWhisper(step: i, total: 3)];
 
-      expect(lines.first, contains('발자국이 이어져'));
+      expect(lines.first, contains('엽전이 이어져'));
       expect(lines.last, contains('빛나는 것을 거두거라'));
       for (final line in lines) {
         expect(line, isNot(contains('먹내음')));
         expect(line, isNot(contains('처마')));
       }
+    });
+  });
+
+  // 모든 장소에 같은 기본 캐릭터 한 장이 떴다 — 이름(npc.name)에 맞는 도깨비 그림으로.
+  group('장소 도깨비 그림', () {
+    Finder assetImage(String path) => find.byWidgetPredicate(
+        (w) => w is Image && w.image is AssetImage && (w.image as AssetImage).assetName == path);
+
+    Scenario npcCourse({String npc = ''}) => Scenario.fromJson({
+          'scenario_id': 'npc_art_course',
+          'title': '해운대구의 기억석',
+          'region': '해운대구',
+          'node_sequence': [
+            _rich('a1', '동백섬', 'RESTORE_AR', npc: npc),
+            _stone('a2', '해운대해수욕장', finale: true),
+          ],
+        });
+
+    testWidgets('소환 화면 — 그 장소 도깨비의 전신이 뜬다', (tester) async {
+      final sc = npcCourse(npc: '숯불 도깨비');
+      await _tapArrival(tester, sc, _FakeQuestServer(scenarioId: sc.scenarioId));
+      await tester.pump(const Duration(milliseconds: 1600)); // 스캔 → 등장
+
+      expect(tester.takeException(), isNull);
+      expect(assetImage('assets/game/characters/food_sutbul/full_idle.webp'), findsOneWidget);
+      expect(assetImage('assets/images/dokkaebi_character.png'), findsNothing, reason: '고정 기본 캐릭터가 아니다');
+    });
+
+    testWidgets('대화 화면 — 그 도깨비의 말하는 상반신', (tester) async {
+      await _toDialogue(tester, npcCourse(npc: '숯불 도깨비'));
+
+      expect(tester.takeException(), isNull);
+      expect(assetImage('assets/game/characters/food_sutbul/bust_talk.webp'), findsOneWidget);
+    });
+
+    testWidgets('이름이 없는 장소는 기본 소년 도깨비로 폴백한다', (tester) async {
+      await _toDialogue(tester, npcCourse());
+
+      expect(tester.takeException(), isNull);
+      expect(assetImage('assets/game/characters/base_youth/bust_talk.webp'), findsOneWidget);
     });
   });
 
@@ -1342,6 +1382,20 @@ void main() {
       expect(find.text('세종대왕'), findsNothing);
       expect(find.textContaining('글씨조각 3/4'), findsNothing);
       expect(find.textContaining('이순신'), findsNothing, reason: '근거 없는 사이드 퀘스트는 삭제했다');
+    });
+
+    testWidgets('피날레 화면 — 수호 도깨비 그림이 뜬다', (tester) async {
+      final sc = finaleCourse();
+      await toFinale(tester, sc, _FakeQuestServer(scenarioId: sc.scenarioId));
+
+      expect(
+          find.byWidgetPredicate((w) =>
+              w is Image &&
+              w.image is AssetImage &&
+              (w.image as AssetImage).assetName == 'assets/game/characters/guardian_suho/full_idle.webp'),
+          findsWidgets, reason: '화면 전환 중엔 소환 화면과 피날레 화면이 함께 그려진다 — 둘 다 수호 도깨비');
+      expect(find.byWidgetPredicate((w) => w is Image && w.image is AssetImage &&
+          (w.image as AssetImage).assetName == 'assets/images/dokkaebi_character.png'), findsNothing);
     });
 
     testWidgets('엔딩 화면 — 고른 갈래의 대사·지역 기억석과 서버 칭호를 보여준다', (tester) async {

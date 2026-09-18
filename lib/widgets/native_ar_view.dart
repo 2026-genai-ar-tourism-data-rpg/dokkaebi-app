@@ -23,7 +23,7 @@ import 'package:flutter/services.dart';
 
 /// 마커가 무엇으로 그려지는지. Swift의 ArMarkerKind와 **문자열이 같아야 한다**.
 enum ArMarkerKind {
-  footprint, // HUNT       — 바닥 발자국
+  coin, // HUNT       — 도깨비가 흘리고 간 엽전
   part, // RESTORE_AR — 흩어진 부재
   pattern, // PHOTO_FIND — 벽면 문양
   hidden, // FIND       — 숨은 자리의 풀숲
@@ -46,6 +46,9 @@ class ArMarkerDef {
   /// 처음 보일지. 숨은 것(FIND)·아직 안 켜진 발자국은 hidden으로 시작한다.
   final ArMarkerState state;
 
+  /// beacon(캐릭터)·coin(엽전)에 붙일 그림(Flutter 에셋 경로). null이면 네이티브 기본 모양.
+  final String? image;
+
   const ArMarkerDef({
     required this.id,
     required this.label,
@@ -55,6 +58,7 @@ class ArMarkerDef {
     this.down = 0.2,
     this.kind = ArMarkerKind.beacon,
     this.state = ArMarkerState.solid,
+    this.image,
   });
 
   Map<String, dynamic> toMap() => {
@@ -66,6 +70,7 @@ class ArMarkerDef {
         'down': down,
         'kind': kind.name,
         'state': state.name,
+        if (image != null) 'image': image,
       };
 }
 

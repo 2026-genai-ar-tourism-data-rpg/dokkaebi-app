@@ -5,7 +5,12 @@
 //            직접 만들어 먹여서 상태기계만 따로 검증한다. 실기기에서 확인해야 하는
 //            것은 "숫자가 그럴듯한가"(튜닝)이지 "로직이 맞는가"가 아니게 만드는 것.
 // 구현일: 2026-09-16 | 작성: kys (ar-realtime/kys/v1)
+// ------------------------------------------------------------
+// [v2] HUNT를 엽전 줍기로 — 반짝임·탭·바로 앞 자동 줍기·배치(그림) 테스트.
+// 구현일: 2026-09-18 | 작성: ljs (npc-character-set/ljs/v1)
 // ============================================================
+import 'dart:io';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
@@ -35,8 +40,8 @@ void main() {
     });
   });
 
-  group('HUNT — 다가가면 자국이 하나씩 켜진다', () {
-    test('멀면 아무것도 안 켜지고, 가까워질수록 켜진 수가 는다', () {
+  group('HUNT — 도깨비가 흘린 엽전을 줍는다', () {
+    test('멀면 기척만, 가까우면 반짝이고, 바로 앞까지 가면 줍는다', () {
       final c = ArMissionController(
         type: ArMissionType.hunt,
         markers: [_m('f1'), _m('f2'), _m('f3')],
@@ -46,10 +51,47 @@ void main() {
       expect(c.progress.done, 0);
       expect(c.progress.status, contains('기척이 희미'));
 
-      // f1만 코앞, 나머지는 기척 구간.
+      // f1은 반짝이는 거리지만 아직 줍지 않았다.
       c.onTelemetry(_read({'f1': 1.5, 'f2': 4.0, 'f3': 5.5}));
+      expect(c.progress.done, 0);
+      expect(c.progress.status, contains('주워 보거라'));
+
+      // 바로 앞까지 가면 줍는다.
+      c.onTelemetry(_read({'f1': 1.0, 'f2': 4.0, 'f3': 5.5}));
+      expect(c.progress.done, 1);
       expect(c.progress.status, contains('1/3'));
       expect(c.progress.complete, isFalse);
+    });
+
+    test('반짝이는 엽전은 탭으로 줍고, 흐릿한 엽전은 탭해도 안 줍힌다', () {
+      final got = <String>[];
+      final c = ArMissionController(
+        type: ArMissionType.hunt,
+        markers: [_m('f1'), _m('f2')],
+        onCollected: got.add,
+      );
+      c.onTelemetry(_read({'f1': 2.0, 'f2': 5.0})); // f1 반짝, f2 흐릿
+
+      c.onTapped('f2');
+      expect(got, isEmpty, reason: '멀리서 탭해 건너뛰지 못한다');
+      expect(c.progress.status, contains('더 가까이'));
+
+      c.onTapped('f1');
+      expect(got, ['f1']);
+      c.onTapped('f1');
+      expect(got, ['f1'], reason: '같은 엽전을 두 번 세지 않는다');
+    });
+
+    test('엽전은 바닥 배치에 그림이 붙고, 그 그림 파일이 등록돼 있다', () {
+      final markers = buildArMarkers(
+          type: ArMissionType.hunt, primary: const Color(0xFF2E7E76), accent: const Color(0xFF6B4FA0), count: 3);
+      expect(markers, hasLength(3));
+      for (final m in markers) {
+        expect(m.kind, ArMarkerKind.coin);
+        expect(m.toMap()['image'], kCoinImageAsset);
+      }
+      expect(File(kCoinImageAsset).existsSync(), isTrue);
+      expect(File('pubspec.yaml').readAsStringSync(), contains('- assets/game/ar/'));
     });
 
     test('전부 가까워지면 미션이 끝난다', () {
