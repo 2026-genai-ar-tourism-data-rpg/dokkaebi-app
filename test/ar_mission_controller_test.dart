@@ -82,6 +82,18 @@ void main() {
       expect(got, ['f1'], reason: '같은 엽전을 두 번 세지 않는다');
     });
 
+    test('가까운 엽전일수록 크게 보인다(원근)', () {
+      expect(coinScaleFor(kCoinPickM), closeTo(kCoinScaleNear, 1e-9));
+      expect(coinScaleFor(kTrailWakeM), closeTo(kCoinScaleFar, 1e-9));
+      expect(coinScaleFor(2.0), greaterThan(coinScaleFor(4.0)));
+      expect(coinScaleFor(4.0), greaterThan(coinScaleFor(5.5)));
+    });
+
+    test('범위 밖 거리는 양 끝 크기로 묶인다', () {
+      expect(coinScaleFor(30), kCoinScaleFar, reason: '아주 멀어도 더 작아지지 않는다');
+      expect(coinScaleFor(0), kCoinScaleNear, reason: '코앞이어도 더 커지지 않는다');
+    });
+
     test('엽전은 바닥 배치에 그림이 붙고, 그 그림 파일이 등록돼 있다', () {
       final markers = buildArMarkers(
           type: ArMissionType.hunt, primary: const Color(0xFF2E7E76), accent: const Color(0xFF6B4FA0), count: 3);

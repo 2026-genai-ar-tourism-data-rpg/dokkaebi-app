@@ -2736,8 +2736,10 @@ class _QuestJourneyScreenState extends State<QuestJourneyScreen> with TickerProv
                     id: 'summon',
                     label: _npcName,
                     color: finale ? _gold : AppColors.teal,
-                    forward: 1.8,
-                    down: 0.1,
+                    // 키 1m 도깨비가 발끝까지 한 화면에 들어오는 거리. 바닥을 찾기 전엔 눈높이보다
+                    // 1m 아래(허리께)에 발을 두고, 찾으면 네이티브가 바닥으로 내려앉힌다.
+                    forward: 2.3,
+                    down: 1.0,
                     image: _art.full,
                   ),
                 ],
@@ -2783,7 +2785,7 @@ class _QuestJourneyScreenState extends State<QuestJourneyScreen> with TickerProv
                 child: Center(child: _Floaty(anim: _float, child: Column(mainAxisSize: MainAxisSize.min, children: [
                   _pill(finale ? '$_npcName · 수호' : _npcName, border: _goldDim, textColor: _goldDim),
                   const SizedBox(height: 10),
-                  _Dokkaebi(size: 190, asset: _art.full),
+                  _Dokkaebi(size: 240, asset: _art.full),
                 ]))),
               ),
             Positioned(left: 14, right: 14, bottom: 40, child: Column(mainAxisSize: MainAxisSize.min, children: [
@@ -2830,7 +2832,7 @@ class _QuestJourneyScreenState extends State<QuestJourneyScreen> with TickerProv
             const Spacer(),
             _pill('조각 $fragments/$_stoneTotal', border: _tealDeep, textColor: _teal),
           ])),
-          Positioned(left: 0, right: 0, top: box.maxHeight * .16, child: Center(child: _Floaty(anim: _float, child: _Dokkaebi(size: 205, asset: _art.bustTalk)))),
+          Positioned(left: 0, right: 0, top: box.maxHeight * .16, child: Center(child: _Floaty(anim: _float, child: _Dokkaebi(size: 250, asset: _art.bustTalk)))),
           Positioned(left: 14, right: 14, bottom: 34, child: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.stretch, children: [
             // NPC 말풍선
             Stack(clipBehavior: Clip.none, children: [
@@ -3050,7 +3052,7 @@ class _QuestJourneyScreenState extends State<QuestJourneyScreen> with TickerProv
           Align(alignment: const Alignment(0, 0.48), child: ClipPath(clipper: _RoofClipper(), child: Container(height: 120, color: const Color(0xFF0C0A08)))),
           // left: 58 — 좌상단 뒤로가기 버튼 자리를 비켜준다.
           Positioned(top: 58, left: 58, right: 14, child: Row(children: [_pill('${_target.name} · 제 ${_tIdx + 1} 장'), const Spacer(), _pill('조각 $fragments/$_stoneTotal', border: _tealDeep, textColor: _teal)])),
-          Positioned(left: 0, right: 0, top: box.maxHeight * .20, child: Center(child: _Floaty(anim: _float, child: _Dokkaebi(size: 165, asset: _art.bust)))),
+          Positioned(left: 0, right: 0, top: box.maxHeight * .20, child: Center(child: _Floaty(anim: _float, child: _Dokkaebi(size: 210, asset: _art.bust)))),
           Positioned(left: 14, right: 14, bottom: 34, child: _parchment(
             padding: const EdgeInsets.fromLTRB(18, 18, 18, 16),
             child: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.start, children: [
@@ -3650,7 +3652,7 @@ class _QuestJourneyScreenState extends State<QuestJourneyScreen> with TickerProv
           Positioned(top: 58, left: 0, right: 0, child: Column(children: [
             _pill('조각 $fragments/$_stoneTotal — 마지막 하나', border: _gold, textColor: _gold),
           ])),
-          Positioned(left: 0, right: 0, top: box.maxHeight * .22, child: Center(child: _Floaty(anim: _float, amplitude: 10, child: _Dokkaebi(size: 230, asset: NpcArt.of(node?.npcName ?? '', isFinale: true).full)))),
+          Positioned(left: 0, right: 0, top: box.maxHeight * .22, child: Center(child: _Floaty(anim: _float, amplitude: 10, child: _Dokkaebi(size: 280, asset: NpcArt.of(node?.npcName ?? '', isFinale: true).full)))),
           Positioned(left: 14, right: 14, bottom: 34, child: Column(mainAxisSize: MainAxisSize.min, children: [
             // 망각귀의 비관 — AI가 피날레 미션에 함께 넣어 준다(없으면 줄을 뺀다).
             if (villain != null && villain.isNotEmpty) ...[

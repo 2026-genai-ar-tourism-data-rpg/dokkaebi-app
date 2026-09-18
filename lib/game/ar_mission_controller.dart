@@ -16,6 +16,7 @@
 // [v2] HUNT 발자국 → 도깨비가 흘리고 간 엽전 줍기.
 // 구현(요약): 다가가면 엽전이 흐릿하게 보이다가 반짝이고, 반짝일 때 탭하거나 바로 앞까지
 //            가면 줍는다(주운 엽전은 사라진다). 다 주우면 완료. 전엔 다 켜지기만 하면 끝났다.
+//            가까울수록 크게(coinScaleFor) — 크기가 바뀌면 상태가 같아도 다시 보낸다.
 // 구현일: 2026-09-18 | 작성: ljs (npc-character-set/ljs/v1)
 // ============================================================
 import 'dart:ui' show Color;
@@ -55,6 +56,20 @@ const double kTrailSolidM = 2.2;
 
 /// 이 거리까지 가면 탭하지 않아도 줍는다(AR에서 작은 물체 탭이 빗나가도 막히지 않게).
 const double kCoinPickM = 1.2;
+
+/// 엽전 원근 — 가장 먼(kTrailWakeM) 엽전과 줍기 직전(kCoinPickM) 엽전의 크기 배율.
+/// admin 방향키 이동은 폰이 실제로 안 움직여 화면 원근이 없으니 이 배율이 곧 원근이다.
+const double kCoinScaleFar = 0.5;
+const double kCoinScaleNear = 1.8;
+
+/// 크기 배율이 이만큼 바뀌어야 네이티브에 다시 보낸다(10Hz 채널 낭비 방지).
+const double _kScaleEpsilon = 0.02;
+
+/// 거리 → 엽전 크기 배율. 가까울수록 크다(kCoinScaleFar~kCoinScaleNear).
+double coinScaleFor(double distanceM) {
+  final t = ((kTrailWakeM - distanceM) / (kTrailWakeM - kCoinPickM)).clamp(0.0, 1.0);
+  return kCoinScaleFar + (kCoinScaleNear - kCoinScaleFar) * t;
+}
 
 /// HUNT 엽전 그림(Flutter 에셋) — 네이티브가 판에 붙인다.
 const String kCoinImageAsset = 'assets/game/ar/coin_drop_game.webp';
@@ -146,6 +161,7 @@ class ArMissionController extends ChangeNotifier {
 
   /// 마지막으로 네이티브에 보낸 상태 — 같은 값을 반복해 보내지 않으려고 들고 있는다.
   final Map<String, ArMarkerState> _sent = {};
+  final Map<String, double> _sentScale = {};
 
   double _ratio = 0;
   String _status = '둘러보는 중…';
@@ -239,9 +255,8 @@ class ArMissionController extends ChangeNotifier {
       final state = d <= kTrailSolidM
           ? ArMarkerState.solid
           : (d <= kTrailWakeM ? ArMarkerState.ghost : ArMarkerState.hidden);
-      // 멀수록 흐리고 작게 — 거리 자체가 연출이 된다.
-      final t = ((kTrailWakeM - d) / (kTrailWakeM - kTrailSolidM)).clamp(0.0, 1.0);
-      _push(m.id, state, scale: 0.6 + 0.4 * t);
+      // 멀수록 흐리고 작게, 가까울수록 크게 — 거리 자체가 원근 연출이 된다.
+      _push(m.id, state, scale: coinScaleFor(d));
       if (state == ArMarkerState.solid) shining++;
     }
     if (_complete) return; // 방금 마지막 엽전을 주웠다 — _finish 문구를 덮지 않는다
@@ -359,12 +374,14 @@ class ArMissionController extends ChangeNotifier {
     onComplete?.call();
   }
 
-  /// 같은 상태를 10Hz로 반복 전송하면 채널만 먹는다 — 바뀔 때만 보낸다.
-  /// (scale은 연속값이라 상태가 같아도 흐름이 끊기지 않게 함께 실어 보낸다.)
+  /// 같은 상태를 10Hz로 반복 전송하면 채널만 먹는다 — 상태나 크기가 바뀔 때만 보낸다.
+  /// (전엔 ghost일 때만 크기를 다시 보내, 반짝이는(solid) 엽전은 다가가도 커지지 않았다.)
   void _push(String id, ArMarkerState state, {double scale = 1.0}) {
-    final changed = _sent[id] != state;
+    final prevScale = _sentScale[id];
+    final changed = _sent[id] != state || prevScale == null || (prevScale - scale).abs() > _kScaleEpsilon;
     _sent[id] = state;
-    if (changed || state == ArMarkerState.ghost) {
+    _sentScale[id] = scale;
+    if (changed) {
       _view?.setMarkerState(id, state, scale: scale);
     }
   }

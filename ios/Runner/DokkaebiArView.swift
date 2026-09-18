@@ -43,6 +43,7 @@
 // 구현(요약): 마커 정의의 image(Flutter 에셋 경로, lib/game/npc_art.dart)를 앱 번들에서 읽어
 //            판에 붙이고, 판 비율도 그 그림에 맞춘다. image가 없거나 못 읽으면 v4의 기본 캐릭터.
 //            HUNT는 바닥의 발자국 대신 도깨비가 흘리고 간 엽전(빌보드 판, 바닥에 세움).
+//            도깨비 판은 키 0.42→1.0m로 키우고 발끝을 바닥에 맞췄다(가운데가 바닥이라 반이 묻혔다).
 // 구현일: 2026-09-18 | 작성: ljs (npc-character-set/ljs/v1)
 // ============================================================
 import ARKit
@@ -463,7 +464,7 @@ final class DokkaebiArView: NSObject, FlutterPlatformView, ARSCNViewDelegate, AR
   /// 엽전 — 도깨비가 흘리고 간 것. 그림을 카메라를 향하는 판에 붙여 바닥에 세운다
   /// (마커 위치=바닥이라 판을 반 높이만큼 올린다). 그림을 못 읽으면 발광 원판.
   private func coinNode(imageAsset: String?, color: UIColor) -> SCNNode {
-    let size: CGFloat = 0.22
+    let size: CGFloat = 0.3  // 기본 지름(m) — 거리별 배율은 Dart(coinScaleFor)가 곱한다
     let geo = SCNPlane(width: size, height: size)
     if let image = imageAsset.flatMap({ flutterAssetImage($0) }) {
       let mat = SCNMaterial()
@@ -527,21 +528,25 @@ final class DokkaebiArView: NSObject, FlutterPlatformView, ARSCNViewDelegate, AR
   /// 범용/하위호환 — 캐릭터 그림을 항상 카메라를 향하는 평면에 텍스처로 붙인다.
   /// (v1의 피라미드는 사람 형상 이미지를 입체에 입힐 수 없어 빌보드 판으로 교체)
   /// imageAsset(장소 도깨비)을 못 읽으면 기본 캐릭터 DokkaebiCharacter.
+  /// 판의 발끝을 마커 위치(바닥)에 맞춘다 — 전엔 판 가운데가 바닥이라 아래 절반이 바닥에 묻혔다.
   private func beaconNode(imageAsset: String?) -> SCNNode {
     let image = imageAsset.flatMap { flutterAssetImage($0) } ?? UIImage(named: "DokkaebiCharacter")
     let heightOverWidth: CGFloat = image.map { $0.size.height / max($0.size.width, 1) }
       ?? 902.0 / 572.0 // dokkaebi_character.png 원본 픽셀 비율
-    let height: CGFloat = 0.42
+    let height: CGFloat = 1.0  // 도깨비 키(m) — 아이 키만큼 보여야 눈에 띈다
     let geo = SCNPlane(width: height / heightOverWidth, height: height)
     let mat = SCNMaterial()
     mat.diffuse.contents = image
     mat.isDoubleSided = true
     mat.lightingModel = .constant
     geo.materials = [mat]
-    let node = SCNNode(geometry: geo)
+    let plane = SCNNode(geometry: geo)
+    plane.position = SCNVector3(0, Float(height / 2), 0)
     let billboard = SCNBillboardConstraint()
     billboard.freeAxes = .Y
-    node.constraints = [billboard]
+    plane.constraints = [billboard]
+    let node = SCNNode()
+    node.addChildNode(plane)
     node.runAction(.repeatForever(.sequence([
       .moveBy(x: 0, y: 0.04, z: 0, duration: 1.6),
       .moveBy(x: 0, y: -0.04, z: 0, duration: 1.6),

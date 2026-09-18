@@ -266,7 +266,7 @@ class _QuestPlayScreenState extends State<QuestPlayScreen> {
           Align(
               alignment: const Alignment(0, -0.42),
               child: DokkaebiNpc(
-                  size: 210, showBadge: false, asset: NpcArt.of(n.npcName, isFinale: n.isFinale).bust)),
+                  size: 250, showBadge: false, asset: NpcArt.of(n.npcName, isFinale: n.isFinale).bust)),
         // 퀴즈 = 중앙 모달 / 그 외 = 하단 시트
         if (_quizNow) ...[
           Container(color: Colors.black.withOpacity(0.72)),
