@@ -1,4 +1,9 @@
 // ============================================================
+// [v6] 단서 = 퀴즈의 귀띔 — 퀴즈 바로 앞 장소가 주는 단서를 가진 채 퀴즈에 오면 오답 하나를 지운다.
+// 구현(요약): QuestNode.quizClue(퀴즈 화면 노드가 요구하는 단서) · Scenario.quizClues(보여 줄 단서 —
+//            예전 코스의 쓰임 없는 단서는 숨긴다) · Quiz.eliminatedFor(장소마다 고정된 지울 오답).
+// 구현일: 2026-09-19 | 작성: ljs (quiz-clue/ljs/v1)
+// ------------------------------------------------------------
 // [v5] 기억석 조각 표시 이름 — '관악구_stone_1of5'(AI 식별자) 대신 '첫째 조각 · 자매공원'.
 //      식별자는 서버 조각 기록 키라 그대로 두고, 화면에만 코스 데이터(순서·장소)로 이름을 짓는다.
 // 구현일: 2026-09-19 | 작성: ljs (reward-ui-polish/ljs/v1)
@@ -40,7 +45,19 @@ class Quiz {
         wrongHint: j['wrong_hint'] ?? '다시 살펴보거라.',
       );
   Map<String, dynamic> toJson() => {'q': q, 'options': options, 'answer': answer, 'wrong_hint': wrongHint};
+
+  /// 귀띔 단서로 지울 오답 번호 — 장소([seed])마다 고정이라 다시 들어와도 같은 보기가 지워진다.
+  /// 보기가 [kQuizClueMinOptions]개보다 적으면 하나를 지웠을 때 정답이 드러나므로 null.
+  int? eliminatedFor(String seed) {
+    if (options.length < kQuizClueMinOptions) return null;
+    final wrong = [for (var i = 0; i < options.length; i++) if (i != answer) i];
+    final hash = seed.codeUnits.fold<int>(0, (sum, c) => sum + c);
+    return wrong[hash % wrong.length];
+  }
 }
+
+/// 귀띔 단서가 쓰이는 퀴즈의 최소 보기 수 — AI node_schema.QUIZ_CLUE_MIN_OPTIONS와 같게 둔다.
+const kQuizClueMinOptions = 3;
 
 /// 피날레에서 고를 수 있는 엔딩 한 갈래 (AI `endings.A`/`endings.B`).
 ///
@@ -378,6 +395,18 @@ class QuestNode {
     return null;
   }
 
+  /// 이 퀴즈에서 오답 하나를 지워 주는 귀띔 단서 — 퀴즈 화면으로 가는 노드(S3)가 요구하는 단서.
+  /// 퀴즈가 아니거나 보기가 적거나 요구하는 단서가 없으면 null.
+  String? get quizClue {
+    final codes = strategyCodes;
+    if (codes.isEmpty || codes.first != 'S3') return null;
+    if ((quiz?.options.length ?? 0) < kQuizClueMinOptions) return null;
+    for (final r in requires) {
+      if (r.kind == StateKind.clue) return r.value;
+    }
+    return null;
+  }
+
   /// 힌트 사다리 — hint_ladder 우선, 없으면 구 mission.hints/objective.hints로 폴백.
   HintLadder get hints {
     if (hintLadder != null && !hintLadder!.isEmpty) return hintLadder!;
@@ -709,6 +738,12 @@ class Scenario {
     final n = givers.firstWhere((g) => played.contains(g.nodeId), orElse: () => givers.first);
     return fragmentDisplayName(n.stoneNo, n.name, fallback: fragmentId);
   }
+
+  /// 퀴즈가 쓰는 귀띔 단서들 — 보상·단서함엔 이것만 보여 준다(예전 코스의 쓰임 없는 단서는 숨김).
+  Set<String> get quizClues => {
+        for (final n in nodeSequence)
+          if (n.quizClue != null) n.quizClue!,
+      };
 
   /// 조각 총수 — 서버값 우선, 없으면 관광 노드 수로 폴백.
   int get stoneTotal => _stoneTotal ?? stoneNodes.length;

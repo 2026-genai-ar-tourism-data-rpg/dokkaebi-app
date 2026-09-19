@@ -46,6 +46,10 @@
 // [v8] '모은 것'의 기억석 조각 — 식별자('관악구_stone_1of5') 대신 '첫째 조각 · 자매공원'
 //      (Scenario.fragmentLabel, 갈림길은 실제로 다녀온 장소).
 // 구현일: 2026-09-19 | 작성: ljs (reward-ui-polish/ljs/v1)
+// ------------------------------------------------------------
+// [v9] 단서는 퀴즈가 쓰는 귀띔만 보인다(Scenario.quizClues) — '모은 것' 단서함·끝낸 장소 요약.
+//      예전 코스의 쓰임 없는 단서(三影·三片 등)는 숨긴다.
+// 구현일: 2026-09-19 | 작성: ljs (quiz-clue/ljs/v1)
 // ============================================================
 import 'dart:async';
 import 'dart:math' as math;
@@ -504,7 +508,8 @@ class _ScenarioScreenState extends State<ScenarioScreen> {
               const SizedBox(height: 14),
               Wrap(spacing: 6, runSpacing: 6, children: [
                 _gateChip(n.stoneNo != null ? '기억석 조각 ${n.stoneNo}' : '기억석 조각', got: true),
-                if (n.clueName != null) _gateChip('단서 「${n.clueName}」', got: true),
+                if (n.clueName != null && widget.scenario.quizClues.contains(n.clueName))
+                  _gateChip('단서 「${n.clueName}」', got: true),
                 if (n.npcName.isNotEmpty) _gateChip('만난 도깨비 · ${n.npcName}', got: true),
               ]),
               const SizedBox(height: 16),
@@ -700,7 +705,10 @@ class _ScenarioScreenState extends State<ScenarioScreen> {
 
               // ── 상태 그래프 — 단서함·성향·쿠폰 ───────────
               if (inventory.isNotEmpty) ...[
-                _StateStrip(state: state, fragmentLabel: (f) => scn.fragmentLabel(f, played: done)),
+                _StateStrip(
+                    state: state,
+                    clues: state.clues.where(scn.quizClues.contains).toList(),
+                    fragmentLabel: (f) => scn.fragmentLabel(f, played: done)),
                 const SizedBox(height: 14),
               ],
 
@@ -882,9 +890,12 @@ class _RestoredBanner extends StatelessWidget {
 class _StateStrip extends StatelessWidget {
   final PlayerState state;
 
+  /// 보여 줄 단서 — 퀴즈가 쓰는 귀띔만(예전 코스의 쓰임 없는 단서는 뺀 목록).
+  final List<String> clues;
+
   /// 조각 식별자 → 화면 이름('첫째 조각 · 자매공원') — 식별자를 그대로 찍으면 '관악구_stone_1of5'.
   final String Function(String fragmentId) fragmentLabel;
-  const _StateStrip({required this.state, required this.fragmentLabel});
+  const _StateStrip({required this.state, required this.clues, required this.fragmentLabel});
 
   @override
   Widget build(BuildContext context) {
@@ -902,12 +913,12 @@ class _StateStrip extends StatelessWidget {
             Text('쿠폰 $coupon원', style: hbMono(10, hbIce, spacing: 1)),
           ],
         ]),
-        if (state.clues.isNotEmpty) ...[
+        if (clues.isNotEmpty) ...[
           const SizedBox(height: 10),
           Text('단서함', style: hbMono(9, hbRed2, spacing: 1.5)),
           const SizedBox(height: 6),
           Wrap(spacing: 6, runSpacing: 6, children: [
-            for (final c in state.clues) _chip(c, hbRed, hbRed3),
+            for (final c in clues) _chip(c, hbRed, hbRed3),
           ]),
         ],
         if (state.fragments.isNotEmpty) ...[
