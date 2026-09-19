@@ -12,6 +12,10 @@
 //            읽고 보상을 버렸다(화면엔 같은 값 200원이 박혀 있었다). 경험치는 읽지 않는다 —
 //            실제 경험치는 조각을 기록할 때 서버가 따로 준다.
 // 구현일: 2026-09-13 | 작성: ljs (jongno-hardcode-cleanup/ljs/v1)
+// ------------------------------------------------------------
+// [v3] ActionAtom.correctCoupon 제거 — 쿠폰 보상을 없앴다(AI도 correct.coupon을 더 보내지 않는다).
+//      coupon 상태 어휘(StateKind.coupon)는 예전 코스 저장값을 읽으려고 남긴다.
+// 구현일: 2026-09-19 | 작성: ljs (coupon-affinity/ljs/v1)
 // ============================================================
 
 /// 상태 어휘 6종 (시나리오구조화 3절). 모르는 접두사는 unknown.
@@ -227,17 +231,6 @@ class ActionAtom {
     final q = raw['quiz'];
     if (q is Map) return (q['answer_idx'] as num?)?.toInt();
     return null;
-  }
-
-  /// answer 액션의 정답 보상 쿠폰(원) — AI `quiz.correct.coupon`. 없거나 0 이하면 null.
-  /// 경험치(`correct.exp`)는 읽지 않는다 — 실제 경험치는 조각을 기록할 때 서버가 준다.
-  int? get correctCoupon {
-    final q = raw['quiz'];
-    if (q is! Map) return null;
-    final correct = q['correct'];
-    if (correct is! Map) return null;
-    final amount = (correct['coupon'] as num?)?.toInt();
-    return amount != null && amount > 0 ? amount : null;
   }
 
   /// 이 액션이 화면 한 단계를 차지하는가(goto/report는 전환·마감 처리).

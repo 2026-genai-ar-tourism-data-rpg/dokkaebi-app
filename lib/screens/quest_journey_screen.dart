@@ -1,4 +1,11 @@
 // ============================================================
+// [v20] 쿠폰 보상 제거 + 친밀도로 굿 엔딩 잠금.
+// 구현(요약): 쿠폰은 실제 가게에서 못 쓰는 게임 속 할인이었다 — 대화 B의 쿠폰+100(태그는 '보상 듣기'),
+//       퀴즈 정답 쿠폰, 획득 팝업 쿠폰 줄, 식음 화면 '보유 쿠폰 적용'을 걷어냈다. 친밀도(대화 A '사연'
+//       +1)는 피날레에서 굿 엔딩을 연다 — 피날레를 뺀 장소의 절반(올림) 이상(goodEndingAffinityFor).
+//       모자라면 굿 엔딩 선택지가 잠기고 필요한 친밀도를 보여 준다. 노멀 엔딩은 늘 고를 수 있다.
+// 구현일: 2026-09-19 | 작성: ljs (coupon-affinity/ljs/v1)
+// ------------------------------------------------------------
 // [v19] 다음 장소 퀴즈가 정답이 체크된 채, 대화가 앞 장소에서 고른 답이 남은 채 열리던 문제 —
 //       퀴즈 결과(quizState)·대화 단계(dlgStep·flag·실제 답)를 코스를 처음부터 다시 할 때만 지웠다.
 //       퀴즈는 퀴즈 단계에 들어갈 때마다(_enterMission), 대화는 장소를 끝낼 때(_markChapterDone) 비운다.
@@ -439,7 +446,7 @@ class _QuestJourneyScreenState extends State<QuestJourneyScreen> with TickerProv
   bool _dialogueLoading = false;
   String? _liveAnswer;
   String quizState = 'idle';
-  int fragments = 0, coupon = 0, spent = 0, exp = 0, brush = ScenarioStore.defaultBrush;
+  int fragments = 0, spent = 0, exp = 0, brush = ScenarioStore.defaultBrush;
 
   /// 끝낸 챕터(장소) 번호들. 예전엔 "모은 조각 수 = 다음 챕터 번호"로 셌는데, 순서를 건너뛰어
   /// 뒤 장소를 먼저 끝내면 번호가 어긋난다 — 무엇을 끝냈는지를 직접 들고 다닌다.
@@ -608,7 +615,6 @@ class _QuestJourneyScreenState extends State<QuestJourneyScreen> with TickerProv
     pstate.applyAll(
         ScenarioStore.I.inventoryOf(s.scenarioId).map(StateRef.parse));
     fragments = pstate.fragments.length;      // 캡은 targets 확정 후(initState)에서
-    coupon = pstate.couponTotal;
     brush = ScenarioStore.I.brushOf(s.scenarioId);  // 재진입해도 쓴 붓털이 되돌아오지 않게
     if (s.budget != null) budget = s.budget!;
   }
@@ -697,9 +703,6 @@ class _QuestJourneyScreenState extends State<QuestJourneyScreen> with TickerProv
         return node?.quiz == null ? 'hunt' : 'quiz';
     }
   }
-
-  /// 이 챕터 퀴즈를 맞히면 받는 쿠폰(원) — AI가 퀴즈 원자에 담아 보낸 `correct.coupon`. 없으면 0.
-  int get _quizCoupon => _actionAtom('answer')?.correctCoupon ?? 0;
 
   /// 현재 챕터 노드의 컴파일된 액션 원자 중 타입이 `type`인 첫 번째 것.
   ActionAtom? _actionAtom(String type) {
@@ -970,6 +973,12 @@ class _QuestJourneyScreenState extends State<QuestJourneyScreen> with TickerProv
     final n = _curNode;
     return n != null && n.isFinale ? n : null;
   }
+
+  /// 굿 엔딩에 필요한 친밀도 — 피날레를 뺀 장소의 절반(올림).
+  int get _goodEndingNeed => goodEndingAffinityFor(_stoneTotal - 1);
+
+  /// 굿 엔딩을 고를 수 있나 — 장소마다 사연을 물어(A) 쌓은 친밀도가 기준 이상.
+  bool get _goodEndingOpen => pstate.affinity >= _goodEndingNeed;
 
   /// 고를 수 있는 엔딩 갈래(A→B 순). 데이터가 없는 코스·데모면 빈 목록.
   List<CourseEnding> get _endingChoices {
@@ -1270,16 +1279,6 @@ class _QuestJourneyScreenState extends State<QuestJourneyScreen> with TickerProv
     }
   }
 
-  /// 퀴즈 챕터 조각 확정 — AI가 준 정답 쿠폰이 있으면 조각과 함께 지급한다.
-  /// 서버 기록이 성공해야 확정되고(_claimChapter), 쿠폰은 획득 팝업에도 보이고 코스에 저장된다.
-  void _claimQuizChapter() {
-    final amount = _quizCoupon; // 확정되면 챕터가 넘어가 _curNode가 바뀐다 — 먼저 읽어 둔다
-    _claimCurrentChapter(
-      extra: [if (amount > 0) StateRef(kind: StateKind.coupon, value: '', amount: amount)],
-      also: amount > 0 ? () => coupon += amount : null,
-    );
-  }
-
   /// 지금 챕터 조각 확정(일반 챕터) — 서버에 기록되면 조각 수를 올리고 획득 팝업을 띄운다.
   /// [also]는 그 챕터 고유의 화면 반영(발자국 파편 거두기·카페 주문 완료 등) — 확정될 때 함께 적용한다.
   void _claimCurrentChapter({List<StateRef> extra = const [], VoidCallback? also}) {
@@ -1404,9 +1403,7 @@ class _QuestJourneyScreenState extends State<QuestJourneyScreen> with TickerProv
   /// A/B/C 선택 — 플래그·보상은 원래대로 고정이고(엔딩 분기가 여기 걸려 있다),
   /// A/B(정보를 묻는 선택)만 실제 도깨비 대화(dialogueTurn)로 답을 받는다.
   /// C는 안 물어보는 선택이라 API를 안 탄다. 실패하면 _npcLines 고정 문구로 폴백.
-  Future<void> _pickChoice(String letter, String question, List<StateRef> refs,
-      {VoidCallback? extra}) async {
-    extra?.call();
+  Future<void> _pickChoice(String letter, String question, List<StateRef> refs) async {
     if (question.isEmpty) {
       setState(() { flag = letter; dlgStep = 1; });
       await _applyChoice(refs);
@@ -1447,8 +1444,8 @@ class _QuestJourneyScreenState extends State<QuestJourneyScreen> with TickerProv
 
   Future<void> _finish(String pick, {String? choiceId}) async {
     final curious = pstate.flags.contains('호기심');
-    // 엔딩 데이터가 있는 코스는 선택만으로 갈린다(AI 계약). 누적 플래그 규칙은 데모 대본에만 남는다 —
-    // 친밀도·쿠폰으로 굿 엔딩을 가르는 기준은 아직 정해지지 않았다(계획 C4).
+    // 엔딩 데이터가 있는 코스는 선택만으로 갈린다(AI 계약). 누적 플래그 규칙은 데모 대본에만 남는다.
+    // 굿 엔딩은 친밀도가 모자라면 선택지부터 잠긴다(_goodEndingOpen).
     final resolved = choiceId != null ? pick : ((pick == 'good' && curious) ? 'good' : 'normal');
     // 챕터 번호 하드코딩(옛 4챕터 종로 대본) 제거 — 피날레는 늘 마지막 챕터다.
     // 피날레 조각도 서버 기록이 성공해야 엔딩으로 넘어간다(_claimChapter).
@@ -1480,7 +1477,6 @@ class _QuestJourneyScreenState extends State<QuestJourneyScreen> with TickerProv
       _doneChapters.clear();
       _chapter = 0;
       _skippedClues = const [];
-      coupon = 0;
       spent = 0;
       exp = 0;
       brush = ScenarioStore.defaultBrush;
@@ -2872,7 +2868,7 @@ class _QuestJourneyScreenState extends State<QuestJourneyScreen> with TickerProv
   static const _npcLines = {
     0: '"허허, 운현궁에 발을 들였구나. 흥선대원군의 사저에… 세종 임금의 글씨 한 조각이 먹물 속으로 숨어버렸느니라. 자네, 글을 아끼는 자인가?"',
     'A': '"허허, 사연이 궁금한 게로구나. 마음이 곧은 자로군." (친밀도 +1)',
-    'B': '"허허, 셈부터 빠르구나. 이 조각엔 옛 기억의 힘이 깃들었지." (이후 쿠폰 +100원)',
+    'B': '"허허, 셈부터 빠르구나. 이 조각엔 옛 기억의 힘이 깃들었지."',
     'C': '"성격 급한 게로구나. 그럼 따라오너라."',
   };
 
@@ -2925,10 +2921,9 @@ class _QuestJourneyScreenState extends State<QuestJourneyScreen> with TickerProv
                   () => _pickChoice('A', '그게 무슨 사연이오? 이곳에 얽힌 이야기가 궁금하오.',
                       [const StateRef(kind: StateKind.flag, value: '호기심'), const StateRef(kind: StateKind.affinity, value: '', amount: 1)])),
               const SizedBox(height: 8),
-              _choiceRow('B', _goldDim, _parchInk, '"보상은 무엇이오?"', '쿠폰+100', _gold,
+              _choiceRow('B', _goldDim, _parchInk, '"보상은 무엇이오?"', '보상 듣기', _gold,
                   () => _pickChoice('B', '이 조각을 찾으면 무슨 보상이 있소?',
-                      [const StateRef(kind: StateKind.flag, value: '실리'), const StateRef(kind: StateKind.coupon, value: '', amount: 100)],
-                      extra: () => coupon += 100)),
+                      [const StateRef(kind: StateKind.flag, value: '실리')])),
               const SizedBox(height: 8),
               _choiceRow('C', const Color(0xFF3A352E), _soft, '"그냥 빨리 찾겠소."', '바로 진행', _muted,
                   () => _pickChoice('C', '', [const StateRef(kind: StateKind.flag, value: '실속')])),
@@ -3035,19 +3030,14 @@ class _QuestJourneyScreenState extends State<QuestJourneyScreen> with TickerProv
                         decoration: BoxDecoration(color: _tealDeep.withOpacity(0.1), borderRadius: BorderRadius.circular(11), border: Border.all(color: _tealDeep.withOpacity(0.45))),
                         child: Row(children: [
                           // 경험치 태그는 뺐다 — 조각을 기록할 때 서버가 실제로 주는 값(획득 팝업)과 달랐다.
-                          // 쿠폰은 AI가 퀴즈 원자에 담아 보낸 값(correct.coupon)이 있을 때만 보여준다.
                           Flexible(child: Text('"옳거니! 안목이 있구나."', style: dokkaebiTitle(size: 13.5, color: const Color(0xFF1D4A41)))),
-                          if (_quizCoupon > 0) ...[
-                            const Spacer(),
-                            _miniTag('쿠폰 +${_won(_quizCoupon)}', const Color(0xFFA87F2C)),
-                          ],
                         ]),
                       ),
                       const SizedBox(height: 12),
                       // S3(퀴즈→개봉)은 정답 자체가 곧 개봉이다 — 지령 화면을
                       // 거치지 않고 바로 조각을 지급한다(원래 order→hunt로
                       // 흘러가던 건 챕터 0 전용 하드코딩 사슬이었다).
-                      _cta('계속하기', _claimQuizChapter),
+                      _cta('계속하기', _claimCurrentChapter),
                     ],
                   ]),
                 ),
@@ -3063,12 +3053,6 @@ class _QuestJourneyScreenState extends State<QuestJourneyScreen> with TickerProv
       ]),
     );
   }
-
-  Widget _miniTag(String s, Color c) => Container(
-        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
-        decoration: BoxDecoration(color: c.withOpacity(0.16), borderRadius: BorderRadius.circular(6)),
-        child: Text(s, style: TextStyle(fontSize: 11, fontWeight: FontWeight.w900, color: c)),
-      );
 
   /// 퀴즈 위 귀띔 카드 — 가져왔으면 무엇을 지웠는지, 없으면 어디서 받는지.
   Widget _quizClueCard(String clue, {required bool hasClue}) {
@@ -3493,8 +3477,7 @@ class _QuestJourneyScreenState extends State<QuestJourneyScreen> with TickerProv
     // S7(주문 인증) 실제 데이터 — purchase 원자의 메뉴명, 없으면 장소명으로 대체.
     final menu = _actionAtom('purchase')?.menu ?? '${_target.name} 한 상';
     final npcLine = _curNode?.npcDialogue.isNotEmpty == true ? _curNode!.npcDialogue : '"${_target.obj}"';
-    final cafeCoupon = math.min(coupon, 5000);
-    final cafePayN = 5000 - cafeCoupon;
+    const cafePayN = 5000;
     return Container(
       decoration: const BoxDecoration(gradient: LinearGradient(begin: Alignment.topCenter, end: Alignment.bottomCenter, colors: [_ink, Color(0xFF211A14)])),
       child: SafeArea(
@@ -3540,21 +3523,8 @@ class _QuestJourneyScreenState extends State<QuestJourneyScreen> with TickerProv
                   Container(width: 52, height: 52, alignment: Alignment.center, decoration: BoxDecoration(gradient: const LinearGradient(colors: [Color(0xFF3B332A), Color(0xFF221C15)]), borderRadius: BorderRadius.circular(12)), child: Text(_target.hanja, style: dokkaebiTitle(size: 20, color: _gold))),
                   const SizedBox(width: 12),
                   Expanded(child: Text(menu, style: const TextStyle(fontSize: 15, color: _cream, fontWeight: FontWeight.w700))),
-                  Column(crossAxisAlignment: CrossAxisAlignment.end, mainAxisSize: MainAxisSize.min, children: [
-                    const Text('5,000원', style: TextStyle(fontSize: 12, color: _muted, decoration: TextDecoration.lineThrough)),
-                    Text(_won(cafePayN), style: const TextStyle(fontSize: 17, color: _gold, fontWeight: FontWeight.w900)),
-                  ]),
+                  Text(_won(cafePayN), style: const TextStyle(fontSize: 17, color: _gold, fontWeight: FontWeight.w900)),
                 ]),
-                const SizedBox(height: 12),
-                Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 13, vertical: 10),
-                  decoration: BoxDecoration(color: _goldDim.withOpacity(0.1), borderRadius: BorderRadius.circular(10), border: Border.all(color: _goldDim.withOpacity(0.45))),
-                  child: Row(children: [
-                    const Text('🎟 보유 쿠폰 적용', style: TextStyle(fontSize: 12.5, color: Color(0xFFE8DCC4), fontWeight: FontWeight.w500)),
-                    const Spacer(),
-                    Text('−${_won(cafeCoupon)}', style: const TextStyle(fontSize: 13, color: _gold, fontWeight: FontWeight.w900)),
-                  ]),
-                ),
                 const SizedBox(height: 12),
                 if (!cafeOrdered)
                   _cta(
@@ -3562,7 +3532,6 @@ class _QuestJourneyScreenState extends State<QuestJourneyScreen> with TickerProv
                     () => _verifyReceiptAndClaim(() {
                       cafeOrdered = true;
                       spent += cafePayN;
-                      coupon = 0;
                     }),
                     fontSize: 15,
                   )
@@ -3788,14 +3757,30 @@ class _QuestJourneyScreenState extends State<QuestJourneyScreen> with TickerProv
                 _endingChoiceTile(e.choiceText, e.label, e.isGood, () => _finishWith(e)),
                 if (e != choices.last) const SizedBox(height: 8),
               ],
+            if (!_goodEndingOpen) ...[
+              const SizedBox(height: 10),
+              Text('도깨비들의 사연을 더 들어야 굿 엔딩이 열리느니라 · 친밀도 ${pstate.affinity}/$_goodEndingNeed',
+                  key: const ValueKey('good-ending-need'),
+                  textAlign: TextAlign.center,
+                  style: _gowun(12.5, const Color(0xFFE8DCC4))),
+            ],
           ])),
         ]);
       }),
     );
   }
 
-  Widget _endingChoiceTile(String text, String tag, bool good, VoidCallback onTap) =>
-      _sejongChoice(text, tag, good ? _gold : _muted, onTap);
+  /// 엔딩 선택지 — 굿 엔딩은 친밀도가 모자라면 흐리게 잠겨 누를 수 없다.
+  Widget _endingChoiceTile(String text, String tag, bool good, VoidCallback onTap) {
+    if (good && !_goodEndingOpen) {
+      return Opacity(
+        key: const ValueKey('good-ending-locked'),
+        opacity: 0.4,
+        child: IgnorePointer(child: _sejongChoice(text, '🔒 $tag', _gold, onTap)),
+      );
+    }
+    return _sejongChoice(text, tag, good ? _gold : _muted, onTap);
+  }
 
   Widget _sejongChoice(String text, String tag, Color tagColor, VoidCallback onTap) => GestureDetector(
         onTap: onTap,
@@ -3944,9 +3929,6 @@ class _QuestJourneyScreenState extends State<QuestJourneyScreen> with TickerProv
     final clue = t.clue != null
         ? (_shownClue(t.clue!) ? t.clue! : '')
         : (widget.scenario == null ? _defaultClues[c.chapterIdx.clamp(0, 3)] : '');
-    // 이 챕터에서 실제로 지급한 쿠폰만(발자국 미션 등) — 없으면 줄 자체를 빼고 보여주지 않는다.
-    final coupons = c.extra.where((r) => r.kind == StateKind.coupon && (r.amount ?? 0) > 0).toList();
-    final couponAmount = coupons.fold<int>(0, (sum, r) => sum + (r.amount ?? 0));
     return Positioned.fill(child: Container(
         color: Colors.black.withOpacity(0.8),
         alignment: Alignment.center,
@@ -4001,10 +3983,6 @@ class _QuestJourneyScreenState extends State<QuestJourneyScreen> with TickerProv
                     Text('다음 장소 시험에서 오답 하나를 지워 주느니라.',
                         textAlign: TextAlign.center, style: _gowun(12, _bronze)),
                   ],
-                ],
-                if (couponAmount > 0) ...[
-                  const SizedBox(height: 7),
-                  _rewardRow('${coupons.first.to ?? ''} 쿠폰'.trim(), '+${_won(couponAmount)}', _goldDim),
                 ],
                 if (reward?.dexEntry != null) ...[
                   const SizedBox(height: 7),

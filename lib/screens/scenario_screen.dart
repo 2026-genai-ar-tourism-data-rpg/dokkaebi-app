@@ -50,6 +50,9 @@
 // [v9] 단서는 퀴즈가 쓰는 귀띔만 보인다(Scenario.quizClues) — '모은 것' 단서함·끝낸 장소 요약.
 //      예전 코스의 쓰임 없는 단서(三影·三片 등)는 숨긴다.
 // 구현일: 2026-09-19 | 작성: ljs (quiz-clue/ljs/v1)
+// ------------------------------------------------------------
+// [v10] '모은 것'에서 쿠폰 금액 표시 제거 — 쿠폰 보상을 없앴다.
+// 구현일: 2026-09-19 | 작성: ljs (coupon-affinity/ljs/v1)
 // ============================================================
 import 'dart:async';
 import 'dart:math' as math;
@@ -899,7 +902,6 @@ class _StateStrip extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final coupon = state.couponTotal;
     return GlowCard(
       padding: const EdgeInsets.all(14),
       child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
@@ -908,10 +910,6 @@ class _StateStrip extends StatelessWidget {
           const Spacer(),
           if (state.affinity != 0)
             Text('친밀도 +${state.affinity}', style: hbMono(10, hbTeal2, spacing: 1)),
-          if (coupon > 0) ...[
-            const SizedBox(width: 8),
-            Text('쿠폰 $coupon원', style: hbMono(10, hbIce, spacing: 1)),
-          ],
         ]),
         if (clues.isNotEmpty) ...[
           const SizedBox(height: 10),

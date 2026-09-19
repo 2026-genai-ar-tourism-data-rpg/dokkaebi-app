@@ -62,7 +62,7 @@ const kQuizClueMinOptions = 3;
 /// 피날레에서 고를 수 있는 엔딩 한 갈래 (AI `endings.A`/`endings.B`).
 ///
 /// 굿·노멀은 AI가 붙여 주는 이름(`ending`)이고, 어느 쪽을 고를지는 플레이어가 정한다.
-/// 친밀도·쿠폰으로 자동 분기하는 기준은 아직 없다(계획 C4).
+/// 굿 엔딩은 친밀도가 기준(goodEndingAffinityFor)에 모자라면 잠긴다 — 코스 진행 화면에서 판정.
 class CourseEnding {
   final String id; // "A" | "B"
   final String choiceText; // 피날레에서 보여줄 선택지 문구
