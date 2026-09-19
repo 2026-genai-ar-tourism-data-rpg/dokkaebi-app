@@ -59,10 +59,13 @@
 // 구현일: 2026-09-19 | 작성: Claude
 // ------------------------------------------------------------
 // [v7] 도깨비불 길들이기 지원 (AR 미션 교체 명세 v1.0, 2026-09-19).
-// 구현(요약): ① kind=fire 마커 — 발광 구체+점광원, 작은 깜빡임. 바닥 스냅 제외(눈높이).
+// 구현(요약): ① kind=fire 마커 — 에셋 그림(fire_spirit_idle)을 카메라를 향하는 판에 붙인 빌보드
+//               + 은은한 점광원, 작은 상하 부유·크기 변화(판정 중심 markerPositions는 고정).
+//               그림을 못 읽으면 발광 구체 폴백. 바닥 스냅 제외(눈높이).
 //            ② 텔레메트리에 dyaw(부호 있는 수평 각, +면 목표가 오른쪽) → 좌우 힌트.
 //            ③ ARKit tracking 상태를 trackingState 이벤트로 — Dart가 불안정 시 게이지를 버린다.
-//            ④ absorbMarker: 흡수 연출(커졌다 작아지며 사라짐) 후 노드 제거.
+//            ④ absorbMarker(id, image): 불꽃이 줄며 사라지고 그 자리에 흡수 소용돌이(capture_wisp)가
+//               회전·축소·페이드로 약 800ms — 에셋 안내서(ar-fire-assets-guide) 권장값. 노드 제거.
 //            목표는 세션 시작 카메라 기준 월드 좌표에 고정(placeMarkers가 이미 그렇다).
 //            카메라 자식으로 두면 화면을 돌려도 따라붙어 게임이 성립하지 않는다 — 명세의 금지 사항.
 // 구현일: 2026-09-19 | 작성: kys (fire-capture/kys/v1)
@@ -253,7 +256,11 @@ final class DokkaebiArView: NSObject, FlutterPlatformView, ARSCNViewDelegate, AR
         }
         result(nil)
       case "absorbMarker":
-        if let id = call.arguments as? String { self?.absorbMarker(id: id) }
+        if let id = call.arguments as? String {
+          self?.absorbMarker(id: id, effectImage: nil)
+        } else if let a = call.arguments as? [String: Any], let id = a["id"] as? String {
+          self?.absorbMarker(id: id, effectImage: a["image"] as? String)
+        }
         result(nil)
       case "snapshot":
         // ARSCNView.snapshot()은 카메라 프레임 + SceneKit 오버레이를 합친 이미지 — 메인 스레드 전용.
@@ -496,7 +503,7 @@ final class DokkaebiArView: NSObject, FlutterPlatformView, ARSCNViewDelegate, AR
     case .pattern: node = patternNode(color: color, label: spec.label)
     case .hidden: node = grassNode(color: color)
     case .beacon: node = beaconNode(imageAsset: spec.image)
-    case .fire: node = fireNode(color: color)
+    case .fire: node = fireNode(imageAsset: spec.image, color: color)
     }
     // 엽전·문양은 이름표가 오히려 방해된다(바닥의 엽전 위에 글자가 뜬다).
     if spec.kind == .beacon || spec.kind == .part {
@@ -639,55 +646,108 @@ final class DokkaebiArView: NSObject, FlutterPlatformView, ARSCNViewDelegate, AR
     return UIImage(contentsOfFile: path)
   }
 
-  /// 도깨비불 — 발광 구체 + 점광원. 작은 깜빡임만(판정 중심은 markerPositions로 고정).
-  private func fireNode(color: UIColor) -> SCNNode {
+  /// 도깨비불 — 에셋 그림(민트색 불꽃 캐릭터) 빌보드 + 은은한 점광원. 그림이 없으면 발광 구체.
+  /// 부유감은 자식 판만 움직인다 — 마커 노드(=판정 중심)는 그대로라 조준 각이 흔들리지 않는다.
+  private func fireNode(imageAsset: String?, color: UIColor) -> SCNNode {
     let node = SCNNode()
-    let core = SCNSphere(radius: 0.09)
-    let mat = SCNMaterial()
-    mat.diffuse.contents = color
-    mat.emission.contents = color
-    mat.emission.intensity = 1.4
-    mat.lightingModel = .constant
-    core.materials = [mat]
-    let coreNode = SCNNode(geometry: core)
-    node.addChildNode(coreNode)
+    let visual: SCNNode
+    if let image = imageAsset.flatMap({ flutterAssetImage($0) }) {
+      // 2.4m 거리에서 손바닥만 하게 — 표정이 보일 정도. 원본 캔버스 여백 포함이라 조금 크게 잡는다.
+      let size: CGFloat = 0.42
+      let geo = SCNPlane(width: size, height: size)
+      let mat = SCNMaterial()
+      mat.diffuse.contents = image
+      mat.isDoubleSided = true
+      mat.lightingModel = .constant
+      mat.blendMode = .alpha
+      mat.writesToDepthBuffer = false   // 투명 가장자리가 뒤 마커를 가리지 않게
+      geo.materials = [mat]
+      visual = SCNNode(geometry: geo)
+      visual.constraints = [SCNBillboardConstraint()]
+    } else {
+      let core = SCNSphere(radius: 0.09)
+      let mat = SCNMaterial()
+      mat.diffuse.contents = color
+      mat.emission.contents = color
+      mat.emission.intensity = 1.4
+      mat.lightingModel = .constant
+      core.materials = [mat]
+      visual = SCNNode(geometry: core)
+      let halo = SCNSphere(radius: 0.16)
+      let hmat = SCNMaterial()
+      hmat.diffuse.contents = color.withAlphaComponent(0.18)
+      hmat.emission.contents = color
+      hmat.emission.intensity = 0.5
+      hmat.lightingModel = .constant
+      hmat.transparency = 0.35
+      hmat.isDoubleSided = true
+      halo.materials = [hmat]
+      visual.addChildNode(SCNNode(geometry: halo))
+    }
+    node.addChildNode(visual)
 
-    let halo = SCNSphere(radius: 0.16)
-    let hmat = SCNMaterial()
-    hmat.diffuse.contents = color.withAlphaComponent(0.18)
-    hmat.emission.contents = color
-    hmat.emission.intensity = 0.5
-    hmat.lightingModel = .constant
-    hmat.transparency = 0.35
-    hmat.isDoubleSided = true
-    halo.materials = [hmat]
-    node.addChildNode(SCNNode(geometry: halo))
-
+    // 이미지에 발광이 이미 들어 있어 점광원은 약하게(안내서: 추가 bloom 과하지 않게).
     let light = SCNLight()
     light.type = .omni
     light.color = color
-    light.intensity = 220
-    light.attenuationEndDistance = 2.0
+    light.intensity = 120
+    light.attenuationEndDistance = 1.6
     let lightNode = SCNNode()
     lightNode.light = light
     node.addChildNode(lightNode)
 
-    coreNode.runAction(.repeatForever(.sequence([
-      .scale(to: 1.06, duration: 0.35), .scale(to: 0.94, duration: 0.45), .scale(to: 1.0, duration: 0.3),
+    visual.runAction(.repeatForever(.group([
+      .sequence([.moveBy(x: 0, y: 0.03, z: 0, duration: 0.9), .moveBy(x: 0, y: -0.03, z: 0, duration: 0.9)]),
+      .sequence([.scale(to: 1.05, duration: 0.7), .scale(to: 0.95, duration: 0.7)]),
     ])))
     return node
   }
 
-  /// 흡수 연출 — 커졌다가 빠르게 줄며 사라진 뒤 노드 제거. 텔레메트리 대상에서도 빠진다.
-  private func absorbMarker(id: String) {
+  /// 흡수 연출(약 800ms) — 불꽃은 빠르게 줄며 사라지고, 같은 자리에 흡수 소용돌이 그림이
+  /// 회전·축소·페이드된다(effectImage가 없으면 기존처럼 커졌다 줄어드는 연출). 텔레메트리 대상에서도 빠진다.
+  private func absorbMarker(id: String, effectImage: String?) {
     guard let node = sceneView.scene.rootNode.childNode(withName: "marker:\(id)", recursively: false) else { return }
     markerPositions.removeValue(forKey: id)
     node.removeAllActions()
-    node.runAction(.sequence([
-      .scale(to: 1.5, duration: 0.18),
-      .group([.scale(to: 0.02, duration: 0.5), .fadeOut(duration: 0.5)]),
+    node.childNodes.forEach { $0.removeAllActions() }
+    guard let image = effectImage.flatMap({ flutterAssetImage($0) }) else {
+      node.runAction(.sequence([
+        .scale(to: 1.5, duration: 0.18),
+        .group([.scale(to: 0.02, duration: 0.5), .fadeOut(duration: 0.5)]),
+        .removeFromParentNode(),
+      ]))
+      return
+    }
+    // 불꽃: 0.25초 만에 흡수
+    node.childNodes.forEach {
+      $0.runAction(.group([.scale(to: 0.05, duration: 0.25), .fadeOut(duration: 0.25)]))
+    }
+    // 소용돌이: 같은 위치에 카메라를 향하는 판 — 회전하며 줄고 사라진다
+    let size: CGFloat = 0.6
+    let geo = SCNPlane(width: size, height: size)
+    let mat = SCNMaterial()
+    mat.diffuse.contents = image
+    mat.isDoubleSided = true
+    mat.lightingModel = .constant
+    mat.blendMode = .alpha
+    mat.writesToDepthBuffer = false
+    geo.materials = [mat]
+    let wisp = SCNNode(geometry: geo)
+    wisp.position = node.position
+    wisp.constraints = [SCNBillboardConstraint()]
+    wisp.opacity = 0
+    wisp.scale = SCNVector3(0.6, 0.6, 0.6)
+    sceneView.scene.rootNode.addChildNode(wisp)
+    wisp.runAction(.sequence([
+      .group([.fadeIn(duration: 0.12), .scale(to: 1.0, duration: 0.12)]),
+      .group([
+        .rotateBy(x: 0, y: 0, z: -CGFloat.pi * 1.5, duration: 0.68),  // 빌보드 판의 z축 = 화면 회전
+        .scale(to: 0.05, duration: 0.68),
+        .sequence([.wait(duration: 0.3), .fadeOut(duration: 0.38)]),
+      ]),
       .removeFromParentNode(),
     ]))
+    node.runAction(.sequence([.wait(duration: 0.3), .removeFromParentNode()]))
   }
 
   private func textGeometry(_ text: String, color: UIColor) -> SCNText {

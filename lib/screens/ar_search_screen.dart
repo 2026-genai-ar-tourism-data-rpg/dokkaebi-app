@@ -43,6 +43,8 @@
 //            모은 불꽃은 로컬(userId+runId+nodeId+버전)에 저장해 이탈·재진입 시 복원한다.
 //            구 시나리오의 "현판을 찍어라" 지령은 여기서 불빛 모으기 문구로 치환한다.
 //            촬영·검증 코드(_shoot 등)는 남겨 두되 이 경로에서는 호출하지 않는다.
+//            그림은 에셋 안내서(ar-fire) 4종: 불꽃(3마리 재사용)·흡수 소용돌이·초롱 꺼짐/켜짐.
+//            초롱은 같은 자리·크기로 두고 3마리째에 300ms 교차 페이드로 켠다.
 // 구현일: 2026-09-19 | 작성: kys (fire-capture/kys/v1)
 // ============================================================
 import 'dart:async';
@@ -111,6 +113,11 @@ class _ArSearchScreenState extends State<ArSearchScreen>
   bool _fireTracking = true;        // ARKit tracking 정상 여부(네이티브 이벤트)
   bool _fireIntroShown = true;      // 인트로(초롱 소개 + 시작) 표시 중
   String? _fireKey;                 // 로컬 저장 키
+
+  bool _lanternLit = false;         // 3마리째 → 초롱 점등(꺼짐→켜짐 교차 페이드)
+
+  static const _fireSpiritAsset = 'assets/game/ar/fire/fire_spirit_idle.png';
+  static const _fireWispAsset = 'assets/game/ar/fire/capture_wisp.png';
 
   bool get _isFireMission => _fire != null;
   /// AR을 못 쓰는 경우(미지원·에러·원격) — 터치 모드로 같은 규칙을 돌린다.
@@ -321,7 +328,8 @@ class _ArSearchScreenState extends State<ArSearchScreen>
       for (final t in targets)
         if (!collected.contains(t.id))
           ArMarkerDef(
-            id: t.id, label: '도깨비불', color: AppColors.gold, kind: ArMarkerKind.fire,
+            id: t.id, label: '도깨비불', color: AppColors.teal, kind: ArMarkerKind.fire,
+            image: _fireSpiritAsset,
             forward: kFireDistanceM * math.cos(t.yawRad),
             right: kFireDistanceM * math.sin(t.yawRad),
             down: 0.0,
@@ -386,7 +394,14 @@ class _ArSearchScreenState extends State<ArSearchScreen>
   }
 
   void _onFireCaptured(String id) {
-    _arController?.absorbMarker(id);
+    _arController?.absorbMarker(id, image: _fireWispAsset);
+    if (_fireTouchMode) {
+      final t = FireTarget.defaults().where((e) => e.id == id).firstOrNull;
+      setState(() { _touchWispYaw = t?.yawRad; _touchWispSeq++; });
+      Future<void>.delayed(const Duration(milliseconds: kFireCaptureMs), () {
+        if (mounted) setState(() => _touchWispYaw = null);
+      });
+    }
     _persistFire();
     // 800ms 뒤 다음 불꽃을 켠다(컨트롤러가 capture→seek로 넘어가는 시점과 같다).
     Future<void>.delayed(const Duration(milliseconds: kFireCaptureMs), () {
@@ -396,6 +411,7 @@ class _ArSearchScreenState extends State<ArSearchScreen>
   }
 
   Future<void> _onAllFiresCaptured() async {
+    if (mounted) setState(() => _lanternLit = true);   // 꺼짐→켜짐 300ms 교차 페이드
     await _persistFire(done: true);
     // 초롱 점등 연출을 잠깐 보여주고 닫는다. 조각·collect·재시도는 상위 화면 담당.
     await Future<void>.delayed(const Duration(milliseconds: 1400));
@@ -415,6 +431,8 @@ class _ArSearchScreenState extends State<ArSearchScreen>
 
   // ── 터치 모드: 드래그·버튼으로 가상 시야(yaw)를 돌린다 ──
   double _touchYaw = 0;                       // 가상 카메라 yaw(라디안)
+  double? _touchWispYaw;                      // 흡수 소용돌이를 그릴 방향(800ms)
+  int _touchWispSeq = 0;                      // 연출 재시작 키
   static const double _touchFovRad = 70 * math.pi / 180;
 
   void _pushTouchObservation() {
@@ -548,6 +566,8 @@ class _ArSearchScreenState extends State<ArSearchScreen>
             active: _fire?.activeTarget,
             collected: _fire?.collectedIds ?? const {},
             holdRatio: _fire?.progress.holdRatio ?? 0,
+            wispYaw: _touchWispYaw,
+            wispSeq: _touchWispSeq,
             onYaw: (y) => setState(() => _touchYaw = y),
           )
         else if (widget.remote)
@@ -603,7 +623,7 @@ class _ArSearchScreenState extends State<ArSearchScreen>
 
         // 도깨비불 HUD — 수집 수, 중앙 조준 원(게이지), 좌우 힌트, 안내 한 줄.
         if (_isFireMission && !_fireIntroShown && _arSupported != null)
-          _FireHud(progress: _fire!.progress),
+          _FireHud(progress: _fire!.progress, lanternLit: _lanternLit),
 
         // 도깨비불 인트로 — 초롱 소개 + 시작. GPS 인증은 이미 상위 화면에서 끝났다.
         if (_isFireMission && _fireIntroShown && _arSupported != null)
@@ -918,8 +938,8 @@ class _FireIntro extends StatelessWidget {
             border: Border.all(color: AppColors.gold.withValues(alpha: 0.5)),
           ),
           child: Column(mainAxisSize: MainAxisSize.min, children: [
-            const Icon(Icons.light_outlined, color: AppColors.gold, size: 44),
-            const SizedBox(height: 10),
+            const _LanternImage(lit: false, size: 120),
+            const SizedBox(height: 4),
             const Text('잠든 초롱을 깨워줘',
                 style: TextStyle(color: Colors.white, fontSize: 19, fontWeight: FontWeight.w700)),
             const SizedBox(height: 8),
@@ -948,7 +968,8 @@ class _FireIntro extends StatelessWidget {
 /// HUD — 수집 수 · 중앙 조준 원(유지 게이지) · 좌우 힌트 · 안내.
 class _FireHud extends StatelessWidget {
   final FireProgress progress;
-  const _FireHud({required this.progress});
+  final bool lanternLit;
+  const _FireHud({required this.progress, required this.lanternLit});
 
   @override
   Widget build(BuildContext context) {
@@ -960,22 +981,26 @@ class _FireHud extends StatelessWidget {
     final arrowSize = p.stalled ? 64.0 : 40.0;
     return IgnorePointer(
       child: Stack(children: [
-        // 수집 수
+        // 초롱(같은 자리·크기, 켜짐은 교차 페이드) + 수집 수
         SafeArea(
           child: Align(
             alignment: Alignment.topCenter,
             child: Padding(
-              padding: const EdgeInsets.only(top: 96),
-              child: Container(
+              padding: const EdgeInsets.only(top: 84),
+              child: Column(mainAxisSize: MainAxisSize.min, children: [
+                _LanternImage(lit: lanternLit, size: lanternLit ? 150 : 84),
+                const SizedBox(height: 2),
+                Container(
                 padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
                 decoration: BoxDecoration(
                   color: Colors.black.withValues(alpha: 0.55),
                   borderRadius: BorderRadius.circular(999),
                   border: Border.all(color: AppColors.gold.withValues(alpha: 0.5)),
                 ),
-                child: Text('${p.collected} / ${p.total}',
-                    style: const TextStyle(color: AppColors.gold, fontSize: 18, fontWeight: FontWeight.w700)),
-              ),
+                  child: Text('${p.collected} / ${p.total}',
+                      style: const TextStyle(color: AppColors.gold, fontSize: 18, fontWeight: FontWeight.w700)),
+                ),
+              ]),
             ),
           ),
         ),
@@ -1035,22 +1060,30 @@ class _FireTouchView extends StatelessWidget {
   final FireTarget? active;
   final Set<String> collected;
   final double holdRatio;
+  final double? wispYaw;
+  final int wispSeq;
   final ValueChanged<double> onYaw;
   const _FireTouchView({
     required this.backdrop, required this.yaw, required this.fov, required this.active,
-    required this.collected, required this.holdRatio, required this.onYaw,
+    required this.collected, required this.holdRatio, required this.wispYaw, required this.wispSeq,
+    required this.onYaw,
   });
+
+  /// 목표 yaw를 화면 x로 — 시야각(fov) 밖이면 null.
+  double? _xFor(double targetYaw, double width) {
+    var d = targetYaw - yaw;
+    while (d > math.pi) { d -= 2 * math.pi; }
+    while (d < -math.pi) { d += 2 * math.pi; }
+    if (d.abs() > fov) return null;
+    return width / 2 + (d / (fov / 2)) * (width / 2);
+  }
 
   @override
   Widget build(BuildContext context) {
     final size = MediaQuery.of(context).size;
-    double? fireX;
-    if (active != null) {
-      var d = active!.yawRad - yaw;
-      while (d > math.pi) { d -= 2 * math.pi; }
-      while (d < -math.pi) { d += 2 * math.pi; }
-      fireX = size.width / 2 + (d / (fov / 2)) * (size.width / 2);
-    }
+    final fireX = active == null ? null : _xFor(active!.yawRad, size.width);
+    final wispX = wispYaw == null ? null : _xFor(wispYaw!, size.width);
+    final fireSize = 120 + 24 * holdRatio;   // 유지할수록 살짝 커진다
     return GestureDetector(
       behavior: HitTestBehavior.opaque,
       // 화면 폭을 다 끌면 시야각(70°)만큼 돈다 — 실제 폰을 돌리는 감각에 가깝게.
@@ -1065,10 +1098,29 @@ class _FireTouchView extends StatelessWidget {
                 ),
               ),
             ),
-        if (fireX != null && fireX > -60 && fireX < size.width + 60)
+        if (fireX != null)
           Positioned(
-            left: fireX - 30, top: size.height * 0.45 - 30,
-            child: _Glow(color: AppColors.gold, size: 60 + 20 * holdRatio, opacity: 0.75),
+            left: fireX - fireSize / 2, top: size.height * 0.45 - fireSize / 2,
+            child: Image.asset(_ArSearchScreenState._fireSpiritAsset,
+                width: fireSize, height: fireSize, filterQuality: FilterQuality.medium),
+          ),
+        // 흡수 소용돌이 — 회전·축소·페이드 800ms (에셋 안내서 권장 연출)
+        if (wispX != null)
+          Positioned(
+            left: wispX - 90, top: size.height * 0.45 - 90,
+            child: TweenAnimationBuilder<double>(
+              key: ValueKey(wispSeq),
+              tween: Tween(begin: 0, end: 1),
+              duration: const Duration(milliseconds: kFireCaptureMs),
+              builder: (_, t, child) => Opacity(
+                opacity: t < 0.15 ? t / 0.15 : (1 - t).clamp(0, 1),
+                child: Transform.rotate(
+                  angle: -t * math.pi * 1.5,
+                  child: Transform.scale(scale: 1.0 - 0.9 * t, child: child),
+                ),
+              ),
+              child: Image.asset(_ArSearchScreenState._fireWispAsset, width: 180, height: 180),
+            ),
           ),
         // 좌우 버튼 — 드래그가 어려운 경우(접근성)
         Positioned(
@@ -1106,6 +1158,31 @@ class _TouchTurnButton extends StatelessWidget {
           ),
           child: Icon(icon, color: AppColors.gold),
         ),
+      );
+}
+
+/// 초롱 — 꺼짐/켜짐 두 그림을 같은 자리·같은 크기에 겹쳐 두고 300ms 교차 페이드한다
+/// (에셋 안내서: 자동 자르기 없이 원본 캔버스 여백을 유지해야 전환 시 정렬이 안 흔들린다).
+class _LanternImage extends StatelessWidget {
+  final bool lit;
+  final double size;
+  const _LanternImage({required this.lit, required this.size});
+
+  static const _unlit = 'assets/game/ar/fire/lantern_unlit.png';
+  static const _lit = 'assets/game/ar/fire/lantern_lit.png';
+
+  @override
+  Widget build(BuildContext context) => AnimatedContainer(
+        duration: const Duration(milliseconds: 300),
+        width: size, height: size,
+        child: Stack(fit: StackFit.expand, children: [
+          Image.asset(_unlit, fit: BoxFit.contain),
+          AnimatedOpacity(
+            opacity: lit ? 1 : 0,
+            duration: const Duration(milliseconds: 300),
+            child: Image.asset(_lit, fit: BoxFit.contain),
+          ),
+        ]),
       );
 }
 

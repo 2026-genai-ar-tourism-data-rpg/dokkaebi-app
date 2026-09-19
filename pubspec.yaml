@@ -106,6 +106,8 @@ flutter:
     - assets/images/quest_pins/
     # AR 엽전 줍기(HUNT) — 엽전 그림과 주울 때 뜨는 획득 효과. vfx엔 기억석 복원 빛도 있다.
     - assets/game/ar/
+    # 도깨비불 길들이기(PHOTO_FIND/PATH_TRACE 대체) — 불꽃·흡수 소용돌이·초롱(꺼짐/켜짐). 512² 사본.
+    - assets/game/ar/fire/
     - assets/game/vfx/
     # 기억석 조각·완성체 — 조각 획득 팝업과 피날레 복원 연출(lib/widgets/memory_stone_restore.dart).
     - assets/game/memory_stone/

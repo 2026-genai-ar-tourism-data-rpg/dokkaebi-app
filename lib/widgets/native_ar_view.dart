@@ -133,11 +133,12 @@ class ArViewController {
   }
 
   /// 흡수 연출 후 마커 제거 — 도깨비불 수집 순간. 이후 텔레메트리에서도 빠진다.
-  Future<void> absorbMarker(String id) async {
+  /// 흡수 연출 — [image]를 주면 그 자리에 소용돌이 그림(회전·축소·페이드)이 뜬다.
+  Future<void> absorbMarker(String id, {String? image}) async {
     final ch = _channel;
     if (ch == null) return;
     try {
-      await ch.invokeMethod('absorbMarker', id);
+      await ch.invokeMethod('absorbMarker', image == null ? id : {'id': id, 'image': image});
     } on MissingPluginException {
       // 네이티브가 없는 환경 — 무시.
     } on PlatformException {
