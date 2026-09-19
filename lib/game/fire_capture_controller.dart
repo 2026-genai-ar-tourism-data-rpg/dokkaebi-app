@@ -26,6 +26,10 @@ const String kFireGameVersion = 'fire_capture_v1';
 /// 조준 허용 오차 — 카메라 전방과 목표 방향의 3D 각도. 손떨림(2~4°)을 고려해 빡빡한 편.
 const double kFireAimToleranceRad = 6 * math.pi / 180;
 
+/// hold 중 놓아주는 각도(히스테리시스). 6°로 들어와야 시작하지만, 시작한 뒤엔 손떨림으로
+/// 한 프레임 6.3°가 됐다고 1.9초를 날리지 않도록 8°까지는 유지로 본다.
+const double kFireAimReleaseRad = 8 * math.pi / 180;
+
 /// 유효 조준을 이만큼 연속 유지하면 수집.
 const int kFireHoldMs = 2000;
 
@@ -33,7 +37,7 @@ const int kFireHoldMs = 2000;
 const int kFireCaptureMs = 800;
 
 /// 관측이 이 이상 끊기면 유지 시간 초기화(누적 정지가 아님).
-const int kFireObserveGapMs = 300;
+const int kFireObserveGapMs = 500;
 
 /// 이 시간 동안 진전이 없으면 방향 힌트를 더 강하게.
 const int kFireStalledHintMs = 8000;
@@ -256,7 +260,8 @@ class FireCaptureController extends ChangeNotifier {
       return;
     }
 
-    final aimed = obs.aimErrorRad <= kFireAimToleranceRad;
+    final aimed = obs.aimErrorRad <= kFireAimToleranceRad ||
+        (_state == FireState.hold && obs.aimErrorRad <= kFireAimReleaseRad);
     _aimedNow = aimed;
     if (!aimed) {
       if (_state == FireState.hold) _toSeek();

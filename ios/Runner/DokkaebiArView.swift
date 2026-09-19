@@ -63,7 +63,10 @@
 //               + 은은한 점광원, 작은 상하 부유·크기 변화(판정 중심 markerPositions는 고정).
 //               그림을 못 읽으면 발광 구체 폴백. 바닥 스냅 제외(눈높이).
 //            ② 텔레메트리에 dyaw(부호 있는 수평 각, +면 목표가 오른쪽) → 좌우 힌트.
-//            ③ ARKit tracking 상태를 trackingState 이벤트로 — Dart가 불안정 시 게이지를 버린다.
+//            ③ ARKit tracking 상태를 trackingState 이벤트({state, reason})로. 회전만 하는 게임이라
+//               limited(insufficientFeatures/excessiveMotion)는 IMU 방향이 멀쩡해 정상으로 친다 —
+//               초기화·재위치·notAvailable만 Dart가 게이지를 버린다.
+//            ③' cameraFov 이벤트(세로 화면 가로 시야각°) 1회 — HUD 조준 원을 실제 6°와 같은 크기로.
 //            ④ absorbMarker(id, image): 불꽃이 줄며 사라지고 그 자리에 흡수 소용돌이(capture_wisp)가
 //               회전·축소·페이드로 약 800ms — 에셋 안내서(ar-fire-assets-guide) 권장값. 노드 제거.
 //            목표는 세션 시작 카메라 기준 월드 좌표에 고정(placeMarkers가 이미 그렇다).
@@ -203,6 +206,7 @@ final class DokkaebiArView: NSObject, FlutterPlatformView, ARSCNViewDelegate, AR
   private let sceneView: ARSCNView
   private let channel: FlutterMethodChannel
   private var placed = false
+  private var fovSent = false
   private var markerSpecs: [ArMarkerSpec] = []
 
   /// 배치된 마커의 월드 좌표 — 매 프레임 거리·조준각을 재는 대상.
@@ -372,6 +376,18 @@ final class DokkaebiArView: NSObject, FlutterPlatformView, ARSCNViewDelegate, AR
 
     guard time - lastTelemetry >= Self.telemetryInterval, !markerPositions.isEmpty else { return }
     lastTelemetry = time
+    if !fovSent {
+      // 세로 화면 기준 가로 시야각 — 투영 행렬의 [0][0] = 1/tan(fovx/2). 한 번만 보낸다.
+      fovSent = true
+      let size = sceneView.bounds.size
+      if size.width > 0, size.height > 0 {
+        let p = frame.camera.projectionMatrix(for: .portrait, viewportSize: size, zNear: 0.01, zFar: 100)
+        let fovx = Double(2 * atan(1 / p.columns.0.x)) * 180 / .pi
+        DispatchQueue.main.async { [weak self] in
+          self?.channel.invokeMethod("cameraFov", arguments: ["fovx": fovx])
+        }
+      }
+    }
     let camPos = simd_make_float3(camTransform.columns.3)
     let payload: [[String: Any]] = markerPositions.map { id, pos in
       [
@@ -414,12 +430,21 @@ final class DokkaebiArView: NSObject, FlutterPlatformView, ARSCNViewDelegate, AR
   /// tracking 품질 — Dart는 normal이 아니면 도깨비불 유지 시간을 버린다(명세 3쪽).
   func session(_ session: ARSession, cameraDidChangeTrackingState camera: ARCamera) {
     let state: String
+    var reason = ""
     switch camera.trackingState {
     case .normal: state = "normal"
-    case .limited: state = "limited"
+    case .limited(let r):
+      state = "limited"
+      switch r {
+      case .initializing: reason = "initializing"
+      case .relocalizing: reason = "relocalizing"
+      case .excessiveMotion: reason = "excessiveMotion"
+      case .insufficientFeatures: reason = "insufficientFeatures"
+      @unknown default: reason = "unknown"
+      }
     case .notAvailable: state = "notAvailable"
     }
-    channel.invokeMethod("trackingState", arguments: state)
+    channel.invokeMethod("trackingState", arguments: ["state": state, "reason": reason])
   }
 
   // MARK: - 마커 배치·탭
@@ -652,8 +677,9 @@ final class DokkaebiArView: NSObject, FlutterPlatformView, ARSCNViewDelegate, AR
     let node = SCNNode()
     let visual: SCNNode
     if let image = imageAsset.flatMap({ flutterAssetImage($0) }) {
-      // 2.4m 거리에서 손바닥만 하게 — 표정이 보일 정도. 원본 캔버스 여백 포함이라 조금 크게 잡는다.
-      let size: CGFloat = 0.42
+      // 2.4m 거리에서 약 7° — 조준 원(6° 반경=12° 지름) 안에 그림이 통째로 들어가야
+      // "원 안에 있다"와 "판정 안이다"가 같은 말이 된다. 원본 캔버스 여백 포함.
+      let size: CGFloat = 0.30
       let geo = SCNPlane(width: size, height: size)
       let mat = SCNMaterial()
       mat.diffuse.contents = image

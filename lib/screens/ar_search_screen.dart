@@ -115,6 +115,7 @@ class _ArSearchScreenState extends State<ArSearchScreen>
   String? _fireKey;                 // 로컬 저장 키
 
   bool _lanternLit = false;         // 3마리째 → 초롱 점등(꺼짐→켜짐 교차 페이드)
+  double? _fovxDeg;                 // 카메라 가로 시야각 — 조준 원을 실제 6°로 그린다
 
   static const _fireSpiritAsset = 'assets/game/ar/fire/fire_spirit_idle.png';
   static const _fireWispAsset = 'assets/game/ar/fire/capture_wisp.png';
@@ -549,6 +550,7 @@ class _ArSearchScreenState extends State<ArSearchScreen>
             onTelemetry: _isFireMission ? _onFireTelemetry : (Session.isAdmin ? null : _mission?.onTelemetry),
             onImageDetected: _mission?.onImageDetected,
             onTrackingChanged: _isFireMission ? (ok) => _fireTracking = ok : null,
+            onCameraFov: _isFireMission ? (f) => setState(() => _fovxDeg = f) : null,
             enablePinchZoom: _isPhotoMission,
             // 배치 전에 보낸 상태는 사라졌다 — 다시 보내게 하고, admin은 거리 값을 바로 다시 넣는다
             // (실기기 텔레메트리는 배치 뒤에 오지만 admin 이동은 뷰가 뜨기 전부터 돈다).
@@ -623,7 +625,8 @@ class _ArSearchScreenState extends State<ArSearchScreen>
 
         // 도깨비불 HUD — 수집 수, 중앙 조준 원(게이지), 좌우 힌트, 안내 한 줄.
         if (_isFireMission && !_fireIntroShown && _arSupported != null)
-          _FireHud(progress: _fire!.progress, lanternLit: _lanternLit),
+          _FireHud(progress: _fire!.progress, lanternLit: _lanternLit,
+              fovxDeg: _fireTouchMode ? _touchFovRad * 180 / math.pi : _fovxDeg),
 
         // 도깨비불 인트로 — 초롱 소개 + 시작. GPS 인증은 이미 상위 화면에서 끝났다.
         if (_isFireMission && _fireIntroShown && _arSupported != null)
@@ -969,7 +972,9 @@ class _FireIntro extends StatelessWidget {
 class _FireHud extends StatelessWidget {
   final FireProgress progress;
   final bool lanternLit;
-  const _FireHud({required this.progress, required this.lanternLit});
+  /// 가로 시야각(°). 알면 조준 원 지름을 정확히 12°(허용 6° 반경)로 그린다. 모르면 96pt.
+  final double? fovxDeg;
+  const _FireHud({required this.progress, required this.lanternLit, required this.fovxDeg});
 
   @override
   Widget build(BuildContext context) {
@@ -979,6 +984,14 @@ class _FireHud extends StatelessWidget {
     final showArrow = !aimed && (p.state == FireState.seek || p.state == FireState.hold) &&
         (p.hint == FireHint.left || p.hint == FireHint.right);
     final arrowSize = p.stalled ? 64.0 : 40.0;
+    // 핀홀 투영: 초점거리(pt) = (화면폭/2)/tan(fovx/2), 6° 원의 반지름 = 초점거리·tan(6°).
+    double ring = 96;
+    final fov = fovxDeg;
+    if (fov != null && fov > 10 && fov < 170) {
+      final w = MediaQuery.of(context).size.width;
+      final focal = (w / 2) / math.tan(fov / 2 * math.pi / 180);
+      ring = (2 * focal * math.tan(kFireAimToleranceRad)).clamp(72.0, 220.0);
+    }
     return IgnorePointer(
       child: Stack(children: [
         // 초롱(같은 자리·크기, 켜짐은 교차 페이드) + 수집 수
@@ -1004,10 +1017,10 @@ class _FireHud extends StatelessWidget {
             ),
           ),
         ),
-        // 중앙 조준 원 + 게이지 (6° 허용 범위를 원 크기로 표현)
+        // 중앙 조준 원 + 게이지 — 지름이 실제 허용 각(6° 반경)과 같다: 불꽃이 통째로 들어오면 판정 안
         Center(
           child: SizedBox(
-            width: 96, height: 96,
+            width: ring, height: ring,
             child: Stack(fit: StackFit.expand, children: [
               CircularProgressIndicator(
                 value: p.holdRatio,

@@ -202,6 +202,9 @@ class NativeArView extends StatefulWidget {
   /// ARKit tracking 품질(true=normal). 불안정하면 도깨비불 게이지를 버린다.
   final ValueChanged<bool>? onTrackingChanged;
 
+  /// 세로 화면 가로 시야각(°) — 세션 시작 후 1회. HUD가 조준 원을 실제 각도 크기로 그릴 때 쓴다.
+  final ValueChanged<double>? onCameraFov;
+
   /// 두 손가락 확대·축소를 감싼 Flutter 위젯(ar_search_screen._zoomable)까지
   /// 올려 보낼지. 기본은 false — UiKitView는 기본적으로 자기 영역의 제스처를
   /// 네이티브가 먼저 가져가므로, 이걸 켜야 ScaleGestureRecognizer가 경쟁에 끼어
@@ -222,6 +225,7 @@ class NativeArView extends StatefulWidget {
     this.enablePinchZoom = false,
     this.onMarkersPlaced,
     this.onTrackingChanged,
+    this.onCameraFov,
   });
 
   @override
@@ -275,7 +279,24 @@ class _NativeArViewState extends State<NativeArView> {
         widget.onMarkersPlaced?.call();
         return;
       case 'trackingState':
-        widget.onTrackingChanged?.call((call.arguments ?? 'normal').toString() == 'normal');
+        // 회전만 하는 불꽃 게임엔 limited(특징점 부족·빠른 움직임)도 방향은 믿을 만하다 —
+        // 초기화·재위치·notAvailable만 "불안정".
+        final a = call.arguments;
+        String state, reason = '';
+        if (a is Map) {
+          state = (a['state'] ?? 'normal').toString();
+          reason = (a['reason'] ?? '').toString();
+        } else {
+          state = (a ?? 'normal').toString();
+        }
+        final ok = state == 'normal' ||
+            (state == 'limited' && (reason == 'excessiveMotion' || reason == 'insufficientFeatures'));
+        widget.onTrackingChanged?.call(ok);
+        return;
+      case 'cameraFov':
+        final a = call.arguments;
+        final fovx = a is Map ? (a['fovx'] as num?)?.toDouble() : null;
+        if (fovx != null) widget.onCameraFov?.call(fovx);
         return;
     }
   }

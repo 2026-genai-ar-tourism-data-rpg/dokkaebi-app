@@ -82,13 +82,13 @@ void main() {
   });
 
   group('경계·중복', () {
-    test('6°를 넘으면 유지 초기화, 다시 들어오면 0부터', () {
+    test('놓아주는 각(8°)을 넘으면 유지 초기화, 다시 들어오면 0부터', () {
       final k = _Clock();
       final c = FireCaptureController(now: k.now)..start();
       _holdFor(c, k, 1500);
       expect(c.progress.holdRatio, greaterThan(0.7));
       k.add(100);
-      c.observe(_aimed(err: 7));        // 경계 밖
+      c.observe(_aimed(err: 9));        // 경계 밖
       expect(c.state, FireState.seek);
       expect(c.progress.holdRatio, 0);
       k.add(100);
@@ -97,14 +97,28 @@ void main() {
       expect(c.progress.collected, 0);
     });
 
-    test('정확히 6°는 유효, 6.01°는 무효', () {
+    test('6.01°로는 hold를 시작하지 못하고, 정확히 6°면 시작한다', () {
       final k = _Clock();
       final c = FireCaptureController(now: k.now)..start();
-      c.observe(_aimed(err: 6.0));
-      expect(c.state, FireState.hold);
-      k.add(100);
       c.observe(_aimed(err: 6.01));
       expect(c.state, FireState.seek);
+      k.add(100);
+      c.observe(_aimed(err: 6.0));
+      expect(c.state, FireState.hold);
+    });
+
+    test('hold 중엔 8°까지 봐준다(손떨림) — 8.01°면 초기화', () {
+      final k = _Clock();
+      final c = FireCaptureController(now: k.now)..start();
+      _holdFor(c, k, 1000);
+      k.add(100);
+      c.observe(_aimed(err: 7.5));      // 잠깐 벗어남 — 유지
+      expect(c.state, FireState.hold);
+      expect(c.progress.holdRatio, closeTo(0.55, 0.01));
+      k.add(100);
+      c.observe(_aimed(err: 8.01));     // 진짜 벗어남
+      expect(c.state, FireState.seek);
+      expect(c.progress.holdRatio, 0);
     });
 
     test('수집 완료 프레임에 관측이 반복돼도 한 마리만 증가하고 onCaptured는 1회', () {
@@ -144,7 +158,7 @@ void main() {
       final c = FireCaptureController(now: k.now)..start();
       _holdFor(c, k, 1200);
       expect(c.progress.holdRatio, closeTo(0.6, 0.01));
-      k.add(400);                       // 공백 400ms
+      k.add(600);                       // 공백 600ms(허용 500ms 초과)
       c.observe(_aimed());
       // 초기화 = 유지 시간을 버리고 이 관측부터 다시 센다(관측을 삼키지 않는다)
       expect(c.state, FireState.hold);
