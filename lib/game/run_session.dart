@@ -22,11 +22,16 @@
 //            (4xx 조건 미충족)라 "기록 없이 계속"도 줄지 가르는 근거. 판정은 ApiException.isRetryable
 //            (5xx·요청 과다)을 그대로 쓰고, 응답 자체가 없는 통신 실패는 다시 해볼 만한 실패로 본다.
 // 구현일: 2026-09-12 | 작성: ljs (mission-strategy-routing/ljs/v1)
+// ------------------------------------------------------------
+// [v4] 레벨 — complete에 피날레 엔딩(ending)을 싣고, myLevel()로 내 레벨을 읽는다(실패하면 null).
+// 구현일: 2026-09-19 | 작성: ljs (ending-level/ljs/v1)
 // ============================================================
 import 'package:flutter/foundation.dart';
+import 'package:http/http.dart' as http;
 
 import '../api/api_client.dart';
 import '../models/run.dart';
+import '../session.dart';
 import '../store.dart';
 
 class RunSession extends ChangeNotifier {
@@ -171,16 +176,29 @@ class RunSession extends ChangeNotifier {
     return ok ? result : null;
   }
 
-  /// 노드 완료·보상. 갈림길에서 고른 갈래가 있으면 함께 보낸다.
-  Future<NodeReward?> complete(String nodeId, {String? choiceId}) async {
+  /// 노드 완료·보상. 갈림길에서 고른 갈래, 피날레에서 고른 엔딩(good|normal)이 있으면 함께 보낸다.
+  Future<NodeReward?> complete(String nodeId, {String? choiceId, String? ending}) async {
     final id = runId;
     if (id == null) return null;
     NodeReward? reward;
     final ok = await _guard(() async {
-      reward = await _api.completeNode(runId: id, nodeId: nodeId, choiceId: choiceId);
+      reward = await _api.completeNode(runId: id, nodeId: nodeId, choiceId: choiceId, ending: ending);
     });
     if (ok) await refresh();
     return ok ? reward : null;
+  }
+
+  /// 내 레벨 — 로그인하지 않았거나 불러오지 못하면 null(화면은 레벨을 숨긴다).
+  /// 플레이 진행과 무관한 조회라 busy·error 상태는 건드리지 않는다.
+  Future<PlayerLevel?> myLevel() async {
+    if (!Session.isLoggedIn) return null;
+    try {
+      return await _api.myLevel();
+    } on ApiException {
+      return null;
+    } on http.ClientException {
+      return null;
+    }
   }
 
   /// 플레이 종료(시나리오를 벗어날 때) — 다음 시나리오와 진행도가 섞이지 않게.

@@ -59,6 +59,10 @@
 // [v12] 쿠폰 보상 제거 — 대화 B·퀴즈 정답이 쿠폰을 주지 않는지. 친밀도 굿 엔딩 — 모자라면 굿 엔딩이
 //       잠기고 노멀만 고를 수 있는지, 채우면 굿 엔딩을 고를 수 있는지.
 // 구현일: 2026-09-19 | 작성: ljs (coupon-affinity/ljs/v1)
+// ------------------------------------------------------------
+// [v13] 레벨 — 피날레 완료에 고른 엔딩을 보내는지, 서버가 레벨업을 알리면 엔딩 화면에 뜨는지,
+//       HUD Lv.N이 서버 레벨을 따르고 로그인 전엔 숨는지.
+// 구현일: 2026-09-19 | 작성: ljs (ending-level/ljs/v1)
 // ============================================================
 import 'dart:convert';
 
@@ -128,6 +132,9 @@ class _FakeQuestServer {
     this.expGained = 10,
     this.dexEntry,
     this.titles = const [],
+    this.level,
+    this.levelUp = false,
+    this.meLevel,
   }) : verdict = verdict ?? _verdict();
 
   final String scenarioId;
@@ -139,6 +146,13 @@ class _FakeQuestServer {
   final int expGained;
   final String? dexEntry;
   final List<String> titles;
+
+  /// 완료 응답의 레벨·레벨업(피날레 굿 엔딩) — null이면 옛 서버처럼 레벨을 안 싣는다.
+  final int? level;
+  final bool levelUp;
+
+  /// GET /v1/me가 돌려줄 레벨 — null이면 404(레벨을 못 읽음).
+  final int? meLevel;
   final requests = <http.Request>[];
 
   /// 조각 기록(collect) 응답 코드 — 테스트 도중 바꿔 "다시 시도" 성공을 흉내낸다.
@@ -187,7 +201,11 @@ class _FakeQuestServer {
         'titles': titles,
         'progress': 1,
         'required': 2,
+        if (level != null) ...{'level': level, 'tier': '초급 탐사자', 'level_up': levelUp},
       });
+    }
+    if (path == '/v1/me' && meLevel != null) {
+      return _json({'level': meLevel, 'tier': '초급 탐사자', 'good_endings': 0, 'next_level_at': 1});
     }
     return http.Response('{}', 404);
   }
@@ -1249,6 +1267,22 @@ void main() {
 
   // 계획 B7 — 지도 HUD의 칭호·여비 고정값.
   group('HUD', () {
+    testWidgets('로그인했으면 서버 레벨을 Lv.N으로 보여 주고, 로그인 전엔 숨긴다', (tester) async {
+      final sc = _course(3);
+      await ScenarioStore.I.add(sc);
+      final server = _FakeQuestServer(scenarioId: sc.scenarioId, meLevel: 3);
+
+      await _toMap(tester, sc, runSession: server.session());
+      expect(find.textContaining('Lv.'), findsNothing, reason: '로그인 전 — 서버에 묻지 않는다');
+      expect(server.count('/v1/me'), 0);
+
+      Session.token = 'test-token';
+      addTearDown(() => Session.token = null);
+      await tester.pumpWidget(const SizedBox()); // 화면을 새로 연다
+      await _toMap(tester, sc, runSession: server.session());
+      expect(find.text('Lv.3'), findsOneWidget);
+    });
+
     Scenario hudCourse({int? budget}) => Scenario.fromJson({
           'scenario_id': 'hud_course',
           'title': '경주시의 기억석',
@@ -1541,6 +1575,43 @@ void main() {
       await tester.pump(const Duration(milliseconds: 100));
       await throughRestore(tester);
       expect(ScenarioStore.I.endingOf(sc.scenarioId), 'good');
+    });
+
+    /// 서버에 보낸 피날레 완료 요청의 엔딩 값.
+    String? sentEnding(_FakeQuestServer server) {
+      final req = server.requests.lastWhere((r) => r.url.path.endsWith('/complete'));
+      return (jsonDecode(req.body) as Map<String, dynamic>)['ending'] as String?;
+    }
+
+    testWidgets('굿 엔딩을 고르면 서버에 보내고, 레벨이 오르면 엔딩 화면에 레벨 업이 뜬다', (tester) async {
+      Session.token = 'test-token';
+      addTearDown(() => Session.token = null);
+      final sc = finaleCourse();
+      final server = _FakeQuestServer(scenarioId: sc.scenarioId, level: 2, levelUp: true, meLevel: 1);
+      await toFinale(tester, sc, server);
+
+      await tester.tap(find.text('이곳의 기억을 계속 지킬게.'));
+      await tester.pump(const Duration(milliseconds: 100));
+      await tester.pump(const Duration(milliseconds: 100));
+      await throughRestore(tester);
+
+      expect(sentEnding(server), 'good');
+      expect(find.byKey(const ValueKey('level-up')), findsOneWidget);
+      expect(find.text('레벨 업! Lv.2 · 초급 탐사자'), findsOneWidget);
+    });
+
+    testWidgets('노멀 엔딩도 서버에 보내지만 레벨이 안 오르면 레벨 업이 없다', (tester) async {
+      final sc = finaleCourse();
+      final server = _FakeQuestServer(scenarioId: sc.scenarioId, level: 1);
+      await toFinale(tester, sc, server);
+
+      await tester.tap(find.text('이제 일상으로 돌아가고 싶어.'));
+      await tester.pump(const Duration(milliseconds: 100));
+      await tester.pump(const Duration(milliseconds: 100));
+      await throughRestore(tester);
+
+      expect(sentEnding(server), 'normal');
+      expect(find.byKey(const ValueKey('level-up')), findsNothing);
     });
 
     testWidgets('피날레 화면 — 세종대왕 대신 그 코스의 수호 도깨비와 복원 대사가 뜬다', (tester) async {
