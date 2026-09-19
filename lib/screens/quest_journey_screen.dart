@@ -1,4 +1,9 @@
 // ============================================================
+// [v19] 다음 장소 퀴즈가 정답이 체크된 채, 대화가 앞 장소에서 고른 답이 남은 채 열리던 문제 —
+//       퀴즈 결과(quizState)·대화 단계(dlgStep·flag·실제 답)를 코스를 처음부터 다시 할 때만 지웠다.
+//       퀴즈는 퀴즈 단계에 들어갈 때마다(_enterMission), 대화는 장소를 끝낼 때(_markChapterDone) 비운다.
+// 구현일: 2026-09-19 | 작성: ljs (quiz-reset/ljs/v1)
+// ------------------------------------------------------------
 // [v18] 단서 = 퀴즈의 귀띔 — 단서가 어디에도 쓰이지 않던 것을 퀴즈 힌트로.
 // 구현(요약): 퀴즈 바로 앞 장소가 준 단서를 가진 채 퀴즈에 오면 단서 카드가 뜨고 오답 하나가 지워진다
 //       (Quiz.eliminatedFor — 장소마다 고정). 없으면 어디서 받는지 한 줄 안내. 보상 팝업·단서함은
@@ -777,6 +782,8 @@ class _QuestJourneyScreenState extends State<QuestJourneyScreen> with TickerProv
   /// 예전엔 힌트 창을 처음 열거나 퀴즈를 틀릴 때에야 만들어져 "멈춰 있으면 힌트1"(idle60) 타이머가 늦게 켜졌다.
   void _enterMission(String stage) {
     _hint ??= _newHint();
+    // 퀴즈 결과는 장소마다 새로 — 앞 장소에서 맞힌 상태가 남으면 다음 퀴즈가 정답 체크된 채 열린다.
+    if (stage == 'quiz') quizState = 'idle';
     // 코스가 있으면 사진 미션은 실제 카메라 화면(AR 탐색)에서 찍고 서버가 판정한다.
     // 예전 사진 화면은 그림 위에서 타이머만 돌았다 — 데모(코스 없음)에만 남긴다.
     if (stage == 'photo' && widget.scenario != null && _curNode != null) {
@@ -939,10 +946,16 @@ class _QuestJourneyScreenState extends State<QuestJourneyScreen> with TickerProv
   }
 
   /// 챕터를 끝냈다 — 조각 수를 세고 다음 챕터로 넘어간다.
+  /// 대화는 다음 장소 도깨비와 인사부터 새로 — 앞 장소에서 고른 답이 남으면 선택지 없이 그 답이 뜬다.
+  /// (같은 장소에 다시 들어올 땐 그대로 둔다 — 선택 보상이 두 번 들어가지 않게.)
   void _markChapterDone(int idx) {
     _doneChapters.add(idx);
     fragments = _doneChapters.length;
     _chapter = _nextOpenChapter();
+    dlgStep = 0;
+    flag = null;
+    _liveAnswer = null;
+    _dialogueLoading = false;
   }
   _Target get _target => targets[_tIdx];
 
