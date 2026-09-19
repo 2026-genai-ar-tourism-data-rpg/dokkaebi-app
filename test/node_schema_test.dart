@@ -127,7 +127,7 @@ void main() {
     test('전략 코드 추출', () {
       expect(n.strategy, ['S4_PHOTO_TRAIL', 'S3_RIDDLE_UNLOCK']);
       expect(n.strategyCodes, ['S4', 'S3']);
-      expect(strategyLabels['S4'], '사진→추적→파편');
+      expect(strategyLabels['S4'], '불꽃→추적→파편');
     });
 
     test('액션 원자 시퀀스 7개 + 타입별 접근자', () {
