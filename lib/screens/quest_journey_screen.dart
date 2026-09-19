@@ -1,4 +1,11 @@
 // ============================================================
+// [v18] 단서 = 퀴즈의 귀띔 — 단서가 어디에도 쓰이지 않던 것을 퀴즈 힌트로.
+// 구현(요약): 퀴즈 바로 앞 장소가 준 단서를 가진 채 퀴즈에 오면 단서 카드가 뜨고 오답 하나가 지워진다
+//       (Quiz.eliminatedFor — 장소마다 고정). 없으면 어디서 받는지 한 줄 안내. 보상 팝업·단서함은
+//       퀴즈가 쓰는 단서만(Scenario.quizClues) — 예전 코스의 쓰임 없는 단서는 숨긴다. 건너뛰기
+//       안내도 이번 퀴즈의 단서만 짚고, 도착 때 뜨던 "도깨비가 알아보지 못할 것" 스낵바는 뺐다.
+// 구현일: 2026-09-19 | 작성: ljs (quiz-clue/ljs/v1)
+// ------------------------------------------------------------
 // [v17] 엔딩 화면 '처음부터 다시'·'코스 목록으로' 버튼을 같은 너비로(1:14라 앞 버튼이 세로로 접혔다).
 // 구현일: 2026-09-19 | 작성: ljs (reward-ui-polish/ljs/v1)
 // ------------------------------------------------------------
@@ -888,15 +895,27 @@ class _QuestJourneyScreenState extends State<QuestJourneyScreen> with TickerProv
     _skippedClues = _cluesSkippedBefore(_chapter);
   }
 
-  /// [chapter]보다 앞인데 안 끝낸 장소가 주는 단서 중 아직 없는 것.
+  /// [chapter] 퀴즈의 귀띔 단서를 주는 앞 장소를 안 끝내 그 단서가 없는 경우(단서 · 주는 장소).
   /// 순서대로 오면 늘 비어 있다 — 코스 상세에서 뒤 장소를 먼저 골랐을 때만 생긴다.
-  List<({String clue, String place})> _cluesSkippedBefore(int chapter) => [
-        for (var i = 0; i < chapter && i < targets.length; i++)
-          if (!_doneChapters.contains(i) &&
-              targets[i].node?.clueName != null &&
-              !pstate.clues.contains(targets[i].node!.clueName))
-            (clue: targets[i].node!.clueName!, place: targets[i].name),
-      ];
+  List<({String clue, String place})> _cluesSkippedBefore(int chapter) {
+    final need = chapter < targets.length ? targets[chapter].node?.quizClue : null;
+    if (need == null || pstate.clues.contains(need)) return const [];
+    return [
+      for (var i = 0; i < chapter; i++)
+        if (!_doneChapters.contains(i) && targets[i].node?.clueName == need) (clue: need, place: targets[i].name),
+    ];
+  }
+
+  /// 보여 줄 단서인가 — 퀴즈가 쓰는 귀띔만(예전 코스의 쓰임 없는 단서는 숨김). 코스 없는 데모는 전부.
+  bool _shownClue(String clue) => widget.scenario?.quizClues.contains(clue) ?? true;
+
+  /// [clue]를 주는 장소 이름 — 퀴즈에서 단서가 없을 때 어디서 받는지 알려 준다.
+  String? _clueGiver(String clue) {
+    for (final t in targets) {
+      if (t.node?.clueName == clue) return t.name;
+    }
+    return null;
+  }
 
   /// 시작 챕터 — 코스 상세에서 고른 장소가 있고 아직 안 끝났으면 거기서, 아니면 안 끝난 첫 장소.
   /// 피날레는 다른 조각을 다 모아야 열리므로, 먼저 고르더라도 안 끝난 첫 장소로 돌린다.
@@ -1142,10 +1161,6 @@ class _QuestJourneyScreenState extends State<QuestJourneyScreen> with TickerProv
       // D1/D2: 피날레 하드 requires 미충족 → 안내 모드(미완료 거점 짚어주기)
       setState(() => guidance = check);
       return;
-    }
-    if (check != null && check.softMissing) {
-      // D4: 소프트 미충족 → 진행은 하되 연계 대사를 못 받는다는 것만 알린다
-      _snack('${check.missing.map((m) => m.label).join('·')} 없이 왔구나. 도깨비가 알아보지 못할 것이야.');
     }
 
     // ── 갈림길: 이 노드가 분기점이면 선택을 먼저 받는다 ──
@@ -1436,16 +1451,6 @@ class _QuestJourneyScreenState extends State<QuestJourneyScreen> with TickerProv
     });
   }
 
-  void _snack(String msg) {
-    if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-      content: Text(msg, style: _gowun(13.5, _cream)),
-      backgroundColor: _inkDeep,
-      behavior: SnackBarBehavior.floating,
-      duration: const Duration(seconds: 3),
-    ));
-  }
-
   void _restart() {
     _walkTimer?.cancel();
     _scanTimer?.cancel();
@@ -1570,9 +1575,9 @@ class _QuestJourneyScreenState extends State<QuestJourneyScreen> with TickerProv
         child: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.start, children: [
           Center(child: Container(width: 44, height: 5, decoration: BoxDecoration(color: const Color(0xFFC9B88F), borderRadius: BorderRadius.circular(999)))),
           const SizedBox(height: 14),
-          Text('앞 장소의 단서 없이 왔느니라', style: dokkaebiTitle(size: 20, color: _parchInk)),
+          Text('앞 장소의 귀띔 없이 왔느니라', style: dokkaebiTitle(size: 20, color: _parchInk)),
           const SizedBox(height: 8),
-          Text('${_target.name}에 먼저 왔구나. 아래 단서는 앞 장소를 끝내야 얻는다 — 없이 가면 도깨비가 알아보지 못할 수 있느니.',
+          Text('${_target.name}에 먼저 왔구나. 이곳 시험의 오답 하나를 지워 주는 귀띔은 앞 장소를 끝내야 얻는다 — 없어도 풀 수는 있느니.',
               style: dokkaebiTitle(size: 14.5, color: _parchInk, height: 1.6)),
           const SizedBox(height: 14),
           for (final s in _skippedClues)
@@ -2959,6 +2964,10 @@ class _QuestJourneyScreenState extends State<QuestJourneyScreen> with TickerProv
     // [v3] 시안 문제('운현궁은 누구의 집?')를 노드 퀴즈로 교체.
     //      AI가 QUIZ_FIND 미션에서 만들어 준 문제를 그대로 쓴다.
     final quiz = _curQuiz;
+    // 앞 장소가 준 귀띔 단서 — 가지고 왔으면 오답 하나를 지운다(장소마다 같은 보기).
+    final clue = _curNode?.quizClue;
+    final hasClue = clue != null && pstate.clues.contains(clue);
+    final eliminated = hasClue ? quiz?.eliminatedFor(_curNode!.nodeId) : null;
     final answers = quiz == null
         ? const [('1', '세종대왕', false), ('2', '흥선대원군', true), ('3', '정조', false)]
         : [
@@ -2982,8 +2991,16 @@ class _QuestJourneyScreenState extends State<QuestJourneyScreen> with TickerProv
                             ? '"${quiz!.q}"'
                             : '"글씨를 찾으려면 이 집의 주인을 알아야 하느니. 운현궁은 누구의 집이었더냐?"',
                         style: dokkaebiTitle(size: 17, color: _parchInk, height: 1.55)),
+                    if (clue != null) ...[
+                      const SizedBox(height: 12),
+                      _quizClueCard(clue, hasClue: hasClue && eliminated != null),
+                    ],
                     const SizedBox(height: 16),
-                    for (final a in answers) Padding(padding: const EdgeInsets.only(bottom: 9), child: _quizOption(a.$1, a.$2, a.$3)),
+                    for (var i = 0; i < answers.length; i++)
+                      Padding(
+                        padding: const EdgeInsets.only(bottom: 9),
+                        child: _quizOption(answers[i].$1, answers[i].$2, answers[i].$3, eliminated: i == eliminated),
+                      ),
                     if (quizState == 'wrong') ...[
                       const SizedBox(height: 12),
                       Container(
@@ -3040,8 +3057,53 @@ class _QuestJourneyScreenState extends State<QuestJourneyScreen> with TickerProv
         child: Text(s, style: TextStyle(fontSize: 11, fontWeight: FontWeight.w900, color: c)),
       );
 
-  Widget _quizOption(String num, String label, bool correct) {
+  /// 퀴즈 위 귀띔 카드 — 가져왔으면 무엇을 지웠는지, 없으면 어디서 받는지.
+  Widget _quizClueCard(String clue, {required bool hasClue}) {
+    final giver = _clueGiver(clue);
+    return Container(
+      key: ValueKey('quiz-clue-${hasClue ? 'held' : 'missing'}'),
+      width: double.infinity,
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+      decoration: BoxDecoration(
+        color: (hasClue ? _verm : _bronze).withOpacity(0.08),
+        borderRadius: BorderRadius.circular(11),
+        border: Border.all(color: (hasClue ? _verm : _bronze).withOpacity(0.4)),
+      ),
+      child: Text(
+        hasClue
+            ? '단서 「$clue」 — 오답 하나를 지웠느니라.'
+            : '${giver ?? '앞 장소'}에 들렀다면 오답 하나를 지워 주는 귀띔을 받았을 것이니라.',
+        style: _gowun(13, hasClue ? const Color(0xFF8A3320) : _bronze),
+      ),
+    );
+  }
+
+  Widget _quizOption(String num, String label, bool correct, {bool eliminated = false}) {
     final picked = quizState == 'correct' && correct;
+    if (eliminated) {
+      // 귀띔으로 지운 오답 — 누를 수 없다.
+      return Opacity(
+        key: ValueKey('quiz-eliminated-$num'),
+        opacity: 0.4,
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 15, vertical: 13),
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(13),
+            border: Border.all(color: const Color(0xFFC9B88F), width: 1.5),
+          ),
+          child: Row(children: [
+            Container(
+              width: 26, height: 26, alignment: Alignment.center,
+              decoration: BoxDecoration(shape: BoxShape.circle, border: Border.all(color: const Color(0xFFB7A374), width: 2)),
+              child: Text(num, style: const TextStyle(color: _bronze, fontWeight: FontWeight.w900, fontSize: 13)),
+            ),
+            const SizedBox(width: 12),
+            Expanded(child: Text(label, style: const TextStyle(color: _parchInk, fontWeight: FontWeight.w700, fontSize: 15, decoration: TextDecoration.lineThrough))),
+            const Text('귀띔으로 지움', style: TextStyle(fontSize: 11, color: _bronze, fontWeight: FontWeight.w900)),
+          ]),
+        ),
+      );
+    }
     return GestureDetector(
       onTap: () {
         if (quizState == 'correct') return;
@@ -3865,8 +3927,10 @@ class _QuestJourneyScreenState extends State<QuestJourneyScreen> with TickerProv
     final t = targets[c.chapterIdx.clamp(0, targets.length - 1)];
     final reward = c.reward;
     final region = widget.scenario?.region ?? _defaultRegion;
-    // 단서는 노드가 준 것 우선 — 코스 없는 데모 모드만 시안 기본 체인(申時→ㄱ→ㅏ).
-    final clue = t.clue ?? (widget.scenario == null ? _defaultClues[c.chapterIdx.clamp(0, 3)] : '');
+    // 단서는 퀴즈가 쓰는 귀띔만 — 코스 없는 데모 모드만 시안 기본 체인(申時→ㄱ→ㅏ).
+    final clue = t.clue != null
+        ? (_shownClue(t.clue!) ? t.clue! : '')
+        : (widget.scenario == null ? _defaultClues[c.chapterIdx.clamp(0, 3)] : '');
     // 이 챕터에서 실제로 지급한 쿠폰만(발자국 미션 등) — 없으면 줄 자체를 빼고 보여주지 않는다.
     final coupons = c.extra.where((r) => r.kind == StateKind.coupon && (r.amount ?? 0) > 0).toList();
     final couponAmount = coupons.fold<int>(0, (sum, r) => sum + (r.amount ?? 0));
@@ -3919,6 +3983,11 @@ class _QuestJourneyScreenState extends State<QuestJourneyScreen> with TickerProv
                 if (clue.isNotEmpty) ...[
                   const SizedBox(height: 7),
                   _rewardRow('단서 「$clue」', '신규', _verm),
+                  if (widget.scenario != null) ...[
+                    const SizedBox(height: 4),
+                    Text('다음 장소 시험에서 오답 하나를 지워 주느니라.',
+                        textAlign: TextAlign.center, style: _gowun(12, _bronze)),
+                  ],
                 ],
                 if (couponAmount > 0) ...[
                   const SizedBox(height: 7),
@@ -4069,11 +4138,11 @@ class _QuestJourneyScreenState extends State<QuestJourneyScreen> with TickerProv
             Container(height: 1, color: const Color(0xFFDDD0B0)),
             const SizedBox(height: 14),
             // 단서함 — 상태 그래프에 실제로 모인 단서(申時→ㄱ→ㅏ 체인)
-            if (pstate.clues.isNotEmpty) ...[
+            if (pstate.clues.any(_shownClue)) ...[
               Text('단서함', style: dokkaebiTitle(size: 14, color: _bronze)),
               const SizedBox(height: 7),
               Wrap(spacing: 6, runSpacing: 6, children: [
-                for (final c in pstate.clues) _stateChip(c, got: true),
+                for (final c in pstate.clues.where(_shownClue)) _stateChip(c, got: true),
                 if (pstate.flags.isNotEmpty)
                   for (final f in pstate.flags)
                     Container(

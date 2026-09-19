@@ -48,6 +48,10 @@
 //      지급·저장되는지, 발자국 대사가 AI 데이터에서
 //      오는지(trailWhisper), 힌트 사다리가 미션에 들어간 순간부터 시간을 세는지.
 // 구현일: 2026-09-13 | 작성: ljs (jongno-hardcode-cleanup/ljs/v1)
+// ------------------------------------------------------------
+// [v10] 퀴즈 귀띔 단서 — 단서를 가져오면 오답 하나가 지워지고 누를 수 없는지, 없으면 어디서 받는지 안내,
+//       보상 팝업엔 퀴즈가 쓰는 단서만. 건너뛰기 안내는 이번 퀴즈의 단서만 짚는다.
+// 구현일: 2026-09-19 | 작성: ljs (quiz-clue/ljs/v1)
 // ============================================================
 import 'dart:convert';
 
@@ -1075,7 +1079,14 @@ void main() {
               }),
               'clue': '별빛',
             },
-            _rich('q2', '월성', 'RESTORE_AR'),
+            // 별빛은 월성 퀴즈의 귀띔 — 퀴즈에 쓰이는 단서라야 획득 팝업에 뜬다.
+            {
+              ..._rich('q2', '월성', 'QUIZ_FIND',
+                  quiz: {'q': '?', 'options': ['가', '나', '다'], 'answer': 0, 'wrong_hint': ''}),
+              'strategy': ['S3_RIDDLE_UNLOCK'],
+              'requires': ['clue:별빛'],
+              'requires_mode': 'soft',
+            },
           ],
         });
 
@@ -1592,6 +1603,7 @@ void main() {
           reason: '조각 1개를 "다음은 2장"으로 세면 이미 끝낸 장소를 다시 하게 된다');
     });
 
+    // 인사동이 퀴즈 — 익선동의 ㄱ이 그 귀띔. 운현궁의 申時는 어느 퀴즈에도 안 쓰인다(예전 코스 모양).
     Scenario clueChain() => Scenario.fromJson({
           'scenario_id': 'clue_chain',
           'title': '종로구의 기억석',
@@ -1599,36 +1611,42 @@ void main() {
           'node_sequence': [
             _stone('k1', '운현궁', grants: ['fragment:frag_k1', 'clue:申時']),
             _stone('k2', '익선동', grants: ['fragment:frag_k2', 'clue:ㄱ']),
-            _stone('k3', '인사동', grants: ['fragment:frag_k3']),
+            {
+              ..._stone('k3', '인사동', grants: ['fragment:frag_k3'], requires: ['clue:ㄱ'], mode: 'soft'),
+              'strategy': ['S3_RIDDLE_UNLOCK'],
+              'quiz': {'q': '?', 'options': ['가', '나', '다'], 'answer': 0},
+            },
             _stone('k4', '광화문', finale: true),
           ],
         });
 
-    testWidgets('앞 장소를 건너뛰면 못 받은 단서를 알리고, 확인하면 그 장소부터 진행한다', (tester) async {
+    testWidgets('퀴즈 장소로 건너뛰면 그 퀴즈의 귀띔만 알리고, 확인하면 그 장소부터 진행한다', (tester) async {
       final sc = clueChain();
       await ScenarioStore.I.add(sc);
       await _toMap(tester, sc, startNodeId: 'k3');
 
-      expect(find.text('앞 장소의 단서 없이 왔느니라'), findsOneWidget);
-      expect(find.text('단서 「申時」'), findsOneWidget);
+      expect(find.text('앞 장소의 귀띔 없이 왔느니라'), findsOneWidget);
       expect(find.text('단서 「ㄱ」'), findsOneWidget);
-      expect(find.text('운현궁'), findsWidgets);
+      expect(find.text('단서 「申時」'), findsNothing, reason: '어느 퀴즈도 쓰지 않는 단서');
+      expect(find.text('익선동'), findsWidgets);
 
       await tester.tap(find.text('그래도 여기부터'));
       await tester.pump();
 
-      expect(find.text('앞 장소의 단서 없이 왔느니라'), findsNothing);
+      expect(find.text('앞 장소의 귀띔 없이 왔느니라'), findsNothing);
       expect(find.text('제 3 장 진행 중'), findsOneWidget);
     });
 
-    testWidgets('앞 장소를 이미 끝냈거나 순서대로 들어오면 단서 안내가 없다', (tester) async {
+    testWidgets('퀴즈가 아닌 장소로 건너뛰거나 귀띔을 이미 받았으면 안내가 없다', (tester) async {
       final sc = clueChain();
       await ScenarioStore.I.add(sc);
-      await ScenarioStore.I.completeNodeWithGrants(sc.scenarioId, sc.nodeSequence[0]);
-      await _toMap(tester, sc, startNodeId: 'k2'); // 앞 장소(운현궁)는 끝냄
-
-      expect(find.text('앞 장소의 단서 없이 왔느니라'), findsNothing);
+      await _toMap(tester, sc, startNodeId: 'k2'); // 운현궁을 건너뛰었지만 익선동은 퀴즈가 아니다
+      expect(find.text('앞 장소의 귀띔 없이 왔느니라'), findsNothing);
       expect(find.text('제 2 장 진행 중'), findsOneWidget);
+
+      await ScenarioStore.I.completeNodeWithGrants(sc.scenarioId, sc.nodeSequence[1]); // ㄱ을 받음
+      await _toMap(tester, sc, startNodeId: 'k3');
+      expect(find.text('앞 장소의 귀띔 없이 왔느니라'), findsNothing);
     });
 
     testWidgets('건너뛴 장소를 끝내면 다음 차례는 안 끝난 첫 장소로 돌아간다', (tester) async {
@@ -1668,6 +1686,108 @@ void main() {
       }
       expect(find.text('제 1 장 진행 중'), findsOneWidget,
           reason: '2장을 먼저 끝냈으면 다음은 3장이 아니라 안 끝난 1장이다');
+    });
+  });
+
+  // quiz-clue/ljs/v1 — 퀴즈 바로 앞 장소가 준 단서를 가져오면 오답 하나가 지워진다.
+  group('퀴즈 귀띔 단서', () {
+    const giverClue = 'clue:대릉원 시험의 귀띔';
+    Map<String, dynamic> quizNode(String id, String name, {required String requires, List<String> grants = const []}) => {
+          ..._rich(id, name, 'QUIZ_FIND', quiz: {
+            'q': '$name에 잠든 이는 누구더냐?',
+            'options': ['신라 왕', '고려 왕', '조선 왕', '백제 왕'],
+            'answer': 0,
+            'wrong_hint': '천 년 전을 보거라',
+          }),
+          'strategy': ['S3_RIDDLE_UNLOCK'],
+          'grants': ['fragment:frag_$id', ...grants],
+          'requires': [requires],
+          'requires_mode': 'soft',
+        };
+    Scenario clueQuiz({List<String> quizGrants = const []}) => Scenario.fromJson({
+          'scenario_id': 'clue_quiz',
+          'title': '경주시의 기억석',
+          'region': '경주시',
+          'node_sequence': [
+            _stone('g1', '첨성대', grants: ['fragment:frag_g1', giverClue]),
+            quizNode('g2', '대릉원', requires: giverClue, grants: quizGrants),
+            quizNode('g3', '월성', requires: 'clue:월성 시험의 귀띔'),
+          ],
+        });
+
+    /// 대릉원(g2)부터 열어 도착 → 대화 → 시험 화면까지. 건너뛰기 안내가 뜨면 닫고 간다.
+    Future<void> toQuiz(WidgetTester tester, Scenario sc) async {
+      final server = _FakeQuestServer(scenarioId: sc.scenarioId);
+      await ScenarioStore.I.add(sc);
+      await _toMap(tester, sc, runSession: server.session(), location: _atSpot, startNodeId: 'g2');
+      if (find.text('그래도 여기부터').evaluate().isNotEmpty) {
+        await tester.tap(find.text('그래도 여기부터'));
+        await tester.pump();
+      }
+      await tester.tap(find.text('이동 시작 — GPS 추적'));
+      await tester.pump(const Duration(milliseconds: 50));
+      await tester.tap(find.text('GPS 도착 인증'));
+      await tester.pump(const Duration(milliseconds: 50));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 1600));
+      await tester.tap(find.text('말 걸기'));
+      await tester.pump();
+      await tester.tap(find.text('"그냥 빨리 찾겠소."'));
+      await tester.pump();
+      await tester.tap(find.text('계속 — 도깨비의 시험'));
+      await tester.pump();
+    }
+
+    testWidgets('귀띔을 가져오면 오답 하나가 지워지고 누를 수 없다', (tester) async {
+      final sc = clueQuiz(quizGrants: const ['clue:월성 시험의 귀띔']);
+      await ScenarioStore.I.add(sc);
+      await ScenarioStore.I.completeNodeWithGrants(sc.scenarioId, sc.nodeSequence[0]); // 첨성대 → 귀띔
+      await toQuiz(tester, sc);
+
+      expect(tester.takeException(), isNull);
+      expect(find.byKey(const ValueKey('quiz-clue-held')), findsOneWidget);
+      expect(find.text('단서 「대릉원 시험의 귀띔」 — 오답 하나를 지웠느니라.'), findsOneWidget);
+      final gone = sc.nodeById('g2')!.quiz!.eliminatedFor('g2')!;
+      expect(find.byKey(ValueKey('quiz-eliminated-${gone + 1}')), findsOneWidget);
+      expect(find.text('귀띔으로 지움'), findsOneWidget);
+
+      await tester.tap(find.text(sc.nodeById('g2')!.quiz!.options[gone]));
+      await tester.pump();
+      expect(find.textContaining('페널티는 없다'), findsNothing, reason: '지운 보기는 눌러도 오답 처리되지 않는다');
+
+      await tester.tap(find.text('신라 왕'));
+      await tester.pump();
+      await tester.tap(find.text('계속하기'));
+      await tester.pump(const Duration(milliseconds: 100));
+      await tester.pump(const Duration(milliseconds: 100));
+      // 대릉원이 준 단서는 다음 퀴즈(월성)의 귀띔 — 보상 팝업에 쓰임과 함께 뜬다.
+      expect(find.text('단서 「월성 시험의 귀띔」'), findsOneWidget);
+      expect(find.text('다음 장소 시험에서 오답 하나를 지워 주느니라.'), findsOneWidget);
+    });
+
+    testWidgets('귀띔 없이 오면 지우지 않고 어디서 받는지 알려 준다', (tester) async {
+      final sc = clueQuiz();
+      await toQuiz(tester, sc);
+
+      expect(tester.takeException(), isNull);
+      expect(find.byKey(const ValueKey('quiz-clue-missing')), findsOneWidget);
+      expect(find.text('첨성대에 들렀다면 오답 하나를 지워 주는 귀띔을 받았을 것이니라.'), findsOneWidget);
+      for (var i = 1; i <= 4; i++) {
+        expect(find.byKey(ValueKey('quiz-eliminated-$i')), findsNothing);
+      }
+    });
+
+    testWidgets('퀴즈에 안 쓰이는 단서는 보상 팝업에 뜨지 않는다 — 예전 코스', (tester) async {
+      final sc = clueQuiz(quizGrants: const ['clue:三影']);
+      await toQuiz(tester, sc);
+      await tester.tap(find.text('신라 왕'));
+      await tester.pump();
+      await tester.tap(find.text('계속하기'));
+      await tester.pump(const Duration(milliseconds: 100));
+      await tester.pump(const Duration(milliseconds: 100));
+
+      expect(find.text('가방에 넣기 — 지도로'), findsOneWidget);
+      expect(find.text('단서 「三影」'), findsNothing);
     });
   });
 

@@ -11,6 +11,9 @@
 // ------------------------------------------------------------
 // [v3] 장소 누르기(C2) — 끝낸 장소는 요약만, 나머지는 코스 진행 화면을 그 장소부터(장소 단위 화면으로 새지 않음).
 // 구현일: 2026-09-17 | 작성: ljs (play-screen-sync/ljs/v1)
+// ------------------------------------------------------------
+// [v4] 단서는 퀴즈가 쓰는 귀띔만 — 픽스처의 익선동을 퀴즈(S3)로, 퀴즈에 안 쓰이는 단서는 단서함에서 숨는지.
+// 구현일: 2026-09-19 | 작성: ljs (quiz-clue/ljs/v1)
 // ============================================================
 import 'package:dokkaebi_app/models/scenario.dart';
 import 'package:dokkaebi_app/screens/quest_journey_screen.dart';
@@ -33,6 +36,7 @@ Map<String, dynamic> _n(
   bool finale = false,
   String kind = 'spot',
   Map<String, dynamic>? branch,
+  bool quiz = false,
 }) =>
     {
       'node_id': id,
@@ -47,6 +51,10 @@ Map<String, dynamic> _n(
       'map_y': 37.57,
       'dist_m': 500,
       if (branch != null) 'branch': branch,
+      if (quiz) ...{
+        'strategy': ['S3_RIDDLE_UNLOCK'],
+        'quiz': {'q': '?', 'options': ['가', '나', '다', '라'], 'answer': 1},
+      },
     };
 
 Scenario _jongno() => Scenario.fromJson({
@@ -55,7 +63,8 @@ Scenario _jongno() => Scenario.fromJson({
       'region': '종로',
       'node_sequence': [
         _n('n1', '운현궁', grants: ['fragment:글씨조각1', 'clue:申時']),
-        _n('n2', '익선동', grants: ['fragment:글씨조각2', 'clue:ㄱ'], requires: ['clue:申時'], mode: 'soft'),
+        // 익선동은 퀴즈 — 운현궁의 申時가 그 귀띔. 익선동이 주는 ㄱ은 어느 퀴즈에도 안 쓰인다.
+        _n('n2', '익선동', grants: ['fragment:글씨조각2', 'clue:ㄱ'], requires: ['clue:申時'], mode: 'soft', quiz: true),
         _n('n4', '광화문',
             requires: ['fragment:글씨조각1', 'fragment:글씨조각2'], mode: 'hard', finale: true),
       ],
@@ -134,6 +143,19 @@ void main() {
     expect(find.text('申時'), findsWidgets); // 단서 칩
     expect(find.text('호기심'), findsWidgets); // 성향 칩
     expect(find.textContaining('성향'), findsWidgets);
+  });
+
+  testWidgets('퀴즈에 안 쓰이는 단서는 단서함에 없다', (tester) async {
+    final sc = _jongno();
+    await ScenarioStore.I.add(sc);
+    await ScenarioStore.I.completeNodeWithGrants(sid, sc.nodeSequence[0]);
+    await ScenarioStore.I.completeNodeWithGrants(sid, sc.nodeSequence[1]);
+
+    await _pump(tester, sc);
+    expect(tester.takeException(), isNull);
+    expect(sc.quizClues, {'申時'});
+    expect(find.text('申時'), findsWidgets);
+    expect(find.text('ㄱ'), findsNothing, reason: '어느 퀴즈도 쓰지 않는 단서');
   });
 
   testWidgets('조각이 덜 모이면 피날레 잠금 안내가 뜬다', (tester) async {
