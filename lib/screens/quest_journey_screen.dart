@@ -3157,7 +3157,7 @@ class _QuestJourneyScreenState extends State<QuestJourneyScreen> with TickerProv
     // 지령을 받은 뒤 실제로 갈 미션 화면 — strategy 기반(_missionStageFor).
     final stage = _missionStageFor(_curNode);
     final ctaLabel = switch (stage) {
-      'photo' => '지령 받기 — 사진 인증 시작',
+      'photo' => '지령 받기 — 도깨비불 모으기',   // [fire-capture] 촬영 → 도깨비불 길들이기
       'cafe' => '지령 받기 — 주문하러 가기',
       'gather' => '지령 받기 — 수집 시작',
       _ => '지령 받기 — 사냥 시작',

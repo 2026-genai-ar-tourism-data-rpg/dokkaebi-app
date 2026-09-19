@@ -1860,7 +1860,7 @@ void main() {
       await tester.pump();
       await tester.tap(find.text('계속 — 지령 받기'));
       await tester.pump();
-      await tester.tap(find.text('지령 받기 — 사진 인증 시작'));
+      await tester.tap(find.text('지령 받기 — 도깨비불 모으기'));
       await tester.pump();
       await tester.pump(const Duration(milliseconds: 400)); // 화면 전환
     }
@@ -1898,7 +1898,7 @@ void main() {
       Navigator.of(tester.element(find.byType(ArSearchScreen))).pop(false);
       await settle(tester);
 
-      await tester.tap(find.text('지령 받기 — 사진 인증 시작'));
+      await tester.tap(find.text('지령 받기 — 도깨비불 모으기'));
       await settle(tester);
       Navigator.of(tester.element(find.byType(ArSearchScreen))).pop(true);
       await settle(tester);
@@ -1916,7 +1916,7 @@ void main() {
 
       expect(ScenarioStore.I.doneOf(sc.scenarioId), isEmpty);
       expect(find.text('획 득'), findsNothing);
-      expect(find.text('지령 받기 — 사진 인증 시작'), findsOneWidget, reason: '다시 찍으러 들어갈 수 있어야 한다');
+      expect(find.text('지령 받기 — 도깨비불 모으기'), findsOneWidget, reason: '다시 찍으러 들어갈 수 있어야 한다');
     });
   });
 }
