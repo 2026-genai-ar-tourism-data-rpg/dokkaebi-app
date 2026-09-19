@@ -52,6 +52,9 @@
 // [v10] 퀴즈 귀띔 단서 — 단서를 가져오면 오답 하나가 지워지고 누를 수 없는지, 없으면 어디서 받는지 안내,
 //       보상 팝업엔 퀴즈가 쓰는 단서만. 건너뛰기 안내는 이번 퀴즈의 단서만 짚는다.
 // 구현일: 2026-09-19 | 작성: ljs (quiz-clue/ljs/v1)
+// ------------------------------------------------------------
+// [v11] 앞 장소를 끝내고 오면 다음 장소 대화는 선택지부터, 퀴즈는 정답 체크 없이 열리는지(재현 테스트).
+// 구현일: 2026-09-19 | 작성: ljs (quiz-reset/ljs/v1)
 // ============================================================
 import 'dart:convert';
 
@@ -1712,6 +1715,7 @@ void main() {
             _stone('g1', '첨성대', grants: ['fragment:frag_g1', giverClue]),
             quizNode('g2', '대릉원', requires: giverClue, grants: quizGrants),
             quizNode('g3', '월성', requires: 'clue:월성 시험의 귀띔'),
+            _stone('g4', '불국사', finale: true),
           ],
         });
 
@@ -1775,6 +1779,44 @@ void main() {
       for (var i = 1; i <= 4; i++) {
         expect(find.byKey(ValueKey('quiz-eliminated-$i')), findsNothing);
       }
+    });
+
+    testWidgets('앞 장소를 끝내고 오면 다음 장소 대화는 인사부터, 퀴즈는 정답 체크 없이 열린다', (tester) async {
+      final sc = clueQuiz(quizGrants: const ['clue:월성 시험의 귀띔']);
+      await ScenarioStore.I.add(sc);
+      await ScenarioStore.I.completeNodeWithGrants(sc.scenarioId, sc.nodeSequence[0]);
+      await toQuiz(tester, sc); // 대릉원 퀴즈
+      await tester.tap(find.text('신라 왕'));
+      await tester.pump();
+      await tester.tap(find.text('계속하기'));
+      await tester.pump(const Duration(milliseconds: 100));
+      await tester.pump(const Duration(milliseconds: 100));
+      await tester.tap(find.text('가방에 넣기 — 지도로'));
+      for (var i = 0; i < 6; i++) {
+        await tester.pump(const Duration(milliseconds: 100));
+      }
+
+      // 다음 장소(월성) — 대릉원에서 받은 귀띔을 들고 퀴즈까지
+      await tester.tap(find.text('이동 시작 — GPS 추적'));
+      await tester.pump(const Duration(milliseconds: 50));
+      await tester.tap(find.text('GPS 도착 인증'));
+      await tester.pump(const Duration(milliseconds: 50));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 1600));
+      await tester.tap(find.text('말 걸기'));
+      await tester.pump();
+      expect(find.text('"그냥 빨리 찾겠소."'), findsOneWidget, reason: '앞 장소에서 고른 답이 남으면 선택지가 안 뜬다');
+      expect(find.text('계속 — 도깨비의 시험'), findsNothing);
+      await tester.tap(find.text('"그냥 빨리 찾겠소."'));
+      await tester.pump();
+      await tester.tap(find.text('계속 — 도깨비의 시험'));
+      await tester.pump();
+
+      expect(tester.takeException(), isNull);
+      expect(find.textContaining('월성에 잠든 이는 누구더냐?'), findsOneWidget);
+      expect(find.byKey(const ValueKey('quiz-clue-held')), findsOneWidget);
+      expect(find.text('정답!'), findsNothing, reason: '앞 퀴즈의 정답 상태가 남으면 정답이 체크된 채 열린다');
+      expect(find.text('계속하기'), findsNothing);
     });
 
     testWidgets('퀴즈에 안 쓰이는 단서는 보상 팝업에 뜨지 않는다 — 예전 코스', (tester) async {
