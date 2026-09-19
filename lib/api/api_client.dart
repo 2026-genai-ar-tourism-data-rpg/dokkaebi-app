@@ -25,6 +25,9 @@
 // ------------------------------------------------------------
 // [v4] wishlist_only 전달 — 위시리스트 '코스 생성'은 고른 장소로만(서버 DTO·AI 요청 v7).
 // 구현일: 2026-09-19 | 작성: ljs (wishlist-course/ljs/v1)
+// ------------------------------------------------------------
+// [v5] 레벨 — 노드 완료에 피날레 엔딩(ending)을 보내고, 내 레벨(GET /v1/me)을 읽는다.
+// 구현일: 2026-09-19 | 작성: ljs (ending-level/ljs/v1)
 // ============================================================
 import 'dart:convert';
 
@@ -320,18 +323,30 @@ class ApiClient {
   }
 
   /// 노드 완료·보상. [choiceId]는 갈림길에서 고른 갈래(main|b1) — 다음 노드 산출에 쓰인다.
+  /// [ending]은 피날레에서 고른 엔딩(good|normal) — 굿 엔딩 코스 수가 레벨이 된다.
   Future<NodeReward> completeNode({
     required String runId,
     required String nodeId,
     String? choiceId,
+    String? ending,
   }) async {
     final res = await _http.post(
       Uri.parse('$baseUrl/v1/runs/$runId/nodes/$nodeId/complete'),
       headers: _headers,
-      body: jsonEncode({if (choiceId != null) 'choice_id': choiceId}),
+      body: jsonEncode({
+        if (choiceId != null) 'choice_id': choiceId,
+        if (ending != null) 'ending': ending,
+      }),
     );
     _check('노드 완료', res);
     return NodeReward.fromJson(jsonDecode(utf8.decode(res.bodyBytes)));
+  }
+
+  /// 내 레벨·등급 — 굿 엔딩으로 끝낸 코스 수 기준(GET /v1/me).
+  Future<PlayerLevel> myLevel() async {
+    final res = await _http.get(Uri.parse('$baseUrl/v1/me'), headers: _headers);
+    _check('내 정보', res);
+    return PlayerLevel.fromJson(jsonDecode(utf8.decode(res.bodyBytes)));
   }
 }
 

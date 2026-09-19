@@ -5,6 +5,10 @@
 //            서버(dokkaebi-server#9) 응답 필드명을 그대로 따른다 — 이름이 어긋나면
 //            런타임에 조용히 null이 되므로 여기서 한 번에 잡는다.
 // 구현일: 2026-08-04 | 작성: kys (game-loop-wiring/kys/v1)
+// ------------------------------------------------------------
+// [v2] 레벨 — NodeReward.level·tier·levelUp(피날레 굿 엔딩으로 올랐는지), PlayerLevel(/me).
+//      레벨은 굿 엔딩으로 끝낸 코스 수로 서버가 정한다(dokkaebi-server src/user/level.ts).
+// 구현일: 2026-09-19 | 작성: ljs (ending-level/ljs/v1)
 // ============================================================
 
 /// GPS 인증 거절 사유 — 앱이 안내 문구를 고르는 기준.
@@ -152,6 +156,13 @@ class NodeReward {
   final int required;
   final String? nextNodeId;
 
+  /// 완료 뒤 내 레벨·등급 — 굿 엔딩 코스 수 기준. 옛 서버면 null.
+  final int? level;
+  final String? tier;
+
+  /// 이번 완료(피날레 굿 엔딩)로 레벨이 올랐나.
+  final bool levelUp;
+
   const NodeReward({
     required this.state,
     required this.expGained,
@@ -163,6 +174,9 @@ class NodeReward {
     this.progress = 0,
     this.required = 0,
     this.nextNodeId,
+    this.level,
+    this.tier,
+    this.levelUp = false,
   });
 
   factory NodeReward.fromJson(Map<String, dynamic> j) => NodeReward(
@@ -176,5 +190,33 @@ class NodeReward {
         progress: (j['progress'] as num?)?.toInt() ?? 0,
         required: (j['required'] as num?)?.toInt() ?? 0,
         nextNodeId: j['next_node_id'] as String?,
+        level: (j['level'] as num?)?.toInt(),
+        tier: j['tier'] as String?,
+        levelUp: j['level_up'] == true,
+      );
+}
+
+/// 내 레벨(GET /v1/me) — 굿 엔딩으로 끝낸 코스 수로 정한다. 같은 코스는 한 번만 센다.
+class PlayerLevel {
+  final int level;
+  final String tier;       // 탐사 등급 — 초급·중급·숙련 탐사자, 기억의 수호자, 전설의 수호자
+  final int goodEndings;   // 굿 엔딩으로 끝낸 코스 수
+  final int nextLevelAt;   // 다음 레벨에 필요한 누적 굿 엔딩 수
+
+  const PlayerLevel({
+    required this.level,
+    required this.tier,
+    required this.goodEndings,
+    required this.nextLevelAt,
+  });
+
+  /// 다음 레벨까지 남은 굿 엔딩 수.
+  int get toNextLevel => (nextLevelAt - goodEndings).clamp(0, nextLevelAt);
+
+  factory PlayerLevel.fromJson(Map<String, dynamic> j) => PlayerLevel(
+        level: (j['level'] as num?)?.toInt() ?? 1,
+        tier: (j['tier'] ?? '').toString(),
+        goodEndings: (j['good_endings'] as num?)?.toInt() ?? 0,
+        nextLevelAt: (j['next_level_at'] as num?)?.toInt() ?? 1,
       );
 }

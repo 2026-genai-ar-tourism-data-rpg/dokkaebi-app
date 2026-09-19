@@ -1,4 +1,8 @@
 // ============================================================
+// [v9] 레벨·탐사 등급 — 닉네임 아래 'Lv.N · 등급'과 '다음 레벨까지 굿 엔딩 M번'(GET /v1/me).
+//      레벨은 굿 엔딩으로 끝낸 코스 수로 서버가 정한다. 탭을 열 때마다 읽고, 못 읽으면 숨긴다.
+// 구현일: 2026-09-19 | 작성: ljs (ending-level/ljs/v1)
+// ------------------------------------------------------------
 // [v8] 도감 통계를 도깨비 하나로 뭉뚱그리던 것 → 도깨비/기억석 분리 표시.
 // 구현(요약): 기억석 도감(dex_screen.dart)이 생기면서 도감 StatTile 하나로는
 //            둘 다 못 나타낸다. ScenarioStore.collectedStones() 추가 연결해
@@ -59,6 +63,8 @@
 // ============================================================
 import 'package:flutter/material.dart';
 
+import '../game/run_session.dart';
+import '../models/run.dart';
 import '../session.dart';
 import '../store.dart';
 import '../theme.dart';
@@ -66,8 +72,30 @@ import '../widgets/ui.dart';
 import 'onboarding_screen.dart';
 import 'settings_screen.dart';
 
-class ProfileScreen extends StatelessWidget {
-  const ProfileScreen({super.key});
+class ProfileScreen extends StatefulWidget {
+  const ProfileScreen({super.key, this.runSession});
+
+  /// 레벨을 읽을 세션 — 테스트에서 가짜 서버를 주입한다(없으면 RunSession.I).
+  final RunSession? runSession;
+
+  @override
+  State<ProfileScreen> createState() => _ProfileScreenState();
+}
+
+class _ProfileScreenState extends State<ProfileScreen> {
+  PlayerLevel? _level;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadLevel();
+  }
+
+  /// 내 레벨 — 탭을 열 때마다 새로 읽는다(탭을 바꾸면 화면이 새로 만들어진다). 못 읽으면 숨긴다.
+  Future<void> _loadLevel() async {
+    final lv = await (widget.runSession ?? RunSession.I).myLevel();
+    if (mounted && lv != null) setState(() => _level = lv);
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -93,9 +121,19 @@ class ProfileScreen extends StatelessWidget {
                 ),
                 const SizedBox(width: 14),
                 Expanded(
-                  child: Text(Session.nickname ?? '용사님',
-                      style: const TextStyle(
-                          color: AppColors.textPrimary, fontSize: 18, fontWeight: FontWeight.bold)),
+                  child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                    Text(Session.nickname ?? '용사님',
+                        style: const TextStyle(
+                            color: AppColors.textPrimary, fontSize: 18, fontWeight: FontWeight.bold)),
+                    if (_level != null) ...[
+                      const SizedBox(height: 4),
+                      Text('Lv.${_level!.level} · ${_level!.tier}',
+                          style: const TextStyle(color: AppColors.gold, fontSize: 13, fontWeight: FontWeight.w700)),
+                      const SizedBox(height: 2),
+                      Text('다음 레벨까지 굿 엔딩 ${_level!.toNextLevel}번',
+                          style: const TextStyle(color: AppColors.textMuted, fontSize: 12)),
+                    ],
+                  ]),
                 ),
               ]),
             ),

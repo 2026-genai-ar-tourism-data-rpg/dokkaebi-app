@@ -1,4 +1,9 @@
 // ============================================================
+// [v21] 레벨 — 피날레 완료 기록에 고른 엔딩(good|normal)을 실어 보낸다(서버가 굿 엔딩 코스 수로 레벨).
+//       상단 HUD에 Lv.N(코스를 열 때 서버에서 읽고, 못 읽으면 숨김), 굿 엔딩으로 오르면 엔딩 화면에
+//       '레벨 업! Lv.N · 등급'.
+// 구현일: 2026-09-19 | 작성: ljs (ending-level/ljs/v1)
+// ------------------------------------------------------------
 // [v20] 쿠폰 보상 제거 + 친밀도로 굿 엔딩 잠금.
 // 구현(요약): 쿠폰은 실제 가게에서 못 쓰는 게임 속 할인이었다 — 대화 B의 쿠폰+100(태그는 '보상 듣기'),
 //       퀴즈 정답 쿠폰, 획득 팝업 쿠폰 줄, 식음 화면 '보유 쿠폰 적용'을 걷어냈다. 친밀도(대화 A '사연'
@@ -276,7 +281,7 @@ typedef _RecordFailure = ({String message, bool canSkip});
 
 /// 서버 기록을 기다리는 챕터 확정 — 다시 시도·기록 없이 계속이 같은 챕터를 이어받는다.
 /// [onClaimed]는 확정된 뒤의 화면 반영(조각 수·획득 팝업·엔딩 등).
-typedef _PendingClaim = ({int chapterIdx, List<StateRef> extra, Future<void> Function() onClaimed});
+typedef _PendingClaim = ({int chapterIdx, List<StateRef> extra, Future<void> Function() onClaimed, String? ending});
 
 /// 조각 서버 기록 결과 — 실패 사유(성공이면 null)와 서버가 준 보상(기록하지 않았으면 null).
 typedef _RecordResult = ({_RecordFailure? failure, NodeReward? reward});
@@ -439,6 +444,9 @@ class _QuestJourneyScreenState extends State<QuestJourneyScreen> with TickerProv
   /// 방금 확정된 조각 — 획득 팝업이 읽는다(확정되면 조각 수가 올라 "지금 챕터"는 다음 장소가 된다).
   _ClaimedReward? _claimed;
 
+  /// 내 레벨(굿 엔딩 코스 수 기준) — 서버에서 못 읽었으면 null이고 HUD에 안 보인다.
+  int? _level;
+
   /// 도착 인증을 건너뛴 장소(서버가 좌표 없는 장소라고 함) — 서버가 기록을 거절하니 시도하지 않는다.
   final Set<String> _unrecordedNodeIds = {};
   // A/B("사연이오?"/"보상은?")는 dialogueTurn으로 실제 장소 정보를 물어 받는다.
@@ -593,7 +601,15 @@ class _QuestJourneyScreenState extends State<QuestJourneyScreen> with TickerProv
       if (mounted) setState(() => _arSupported = ok);
     });
     _ensureRun();
+    _loadLevel();
     _startGpsPolling();
+  }
+
+  /// HUD의 Lv.N — 코스를 열 때 한 번 읽는다(데모·로그인 전·실패면 숨김).
+  Future<void> _loadLevel() async {
+    if (widget.scenario == null) return;
+    final lv = await _session.myLevel();
+    if (mounted && lv != null) setState(() => _level = lv.level);
   }
 
   /// 서버 run을 연다(이미 열려 있으면 그대로 쓴다).
@@ -1334,15 +1350,15 @@ class _QuestJourneyScreenState extends State<QuestJourneyScreen> with TickerProv
   /// 챕터 조각 확정 — 서버 기록(collect·complete)이 성공해야 화면(onClaimed)과 로컬 진행(_grantChapter)에
   /// 반영한다. 실패하면 공통 팝업(_recordSheet)으로 이유와 다시 시도를 보여준다 — 조각의 주인은 서버다.
   Future<void> _claimChapter(int idx,
-      {List<StateRef> extra = const [], required Future<void> Function() onClaimed}) async {
+      {List<StateRef> extra = const [], required Future<void> Function() onClaimed, String? ending}) async {
     if (_recording) return;
-    final claim = (chapterIdx: idx, extra: extra, onClaimed: onClaimed);
+    final claim = (chapterIdx: idx, extra: extra, onClaimed: onClaimed, ending: ending);
     setState(() {
       _recording = true;
       _recordFailure = null;
       _pendingClaim = claim;
     });
-    final result = await _recordOnServer(targets[idx.clamp(0, targets.length - 1)].node);
+    final result = await _recordOnServer(targets[idx.clamp(0, targets.length - 1)].node, ending: ending);
     if (!mounted) return;
     setState(() {
       _recording = false;
@@ -1360,6 +1376,7 @@ class _QuestJourneyScreenState extends State<QuestJourneyScreen> with TickerProv
       _claimed = (chapterIdx: claim.chapterIdx, extra: claim.extra, reward: reward);
       // 경험치는 서버가 실제로 준 값만 모은다(이미 받은 보상이면 0) — 화면용 가산 숫자는 없앴다.
       if (reward != null && !reward.alreadyRewarded) exp += reward.expGained;
+      if (reward?.level != null) _level = reward!.level;
     });
     await claim.onClaimed();
     await _grantChapter(claim.chapterIdx, extra: claim.extra);
@@ -1371,7 +1388,7 @@ class _QuestJourneyScreenState extends State<QuestJourneyScreen> with TickerProv
   ///
   /// 위치는 다시 확인하지 않는다 — 도착 인증(_arrive)에서 서버에 방문이 이미 남았다.
   /// 서버 run이 없으면(앱 재시작 후 복원 실패 등) 여기서 다시 연다 — 다시 시도가 곧 재연결이다.
-  Future<_RecordResult> _recordOnServer(QuestNode? n) async {
+  Future<_RecordResult> _recordOnServer(QuestNode? n, {String? ending}) async {
     final s = widget.scenario;
     // 데모 모드(코스 없음)·노드 없는 챕터·도착 인증을 건너뛴 장소는 서버가 기록할 수 없다 — 로컬만.
     if (s == null || n == null || _unrecordedNodeIds.contains(n.nodeId)) {
@@ -1389,6 +1406,7 @@ class _QuestJourneyScreenState extends State<QuestJourneyScreen> with TickerProv
     final reward = await _session.complete(
       n.nodeId,
       choiceId: branchChoices[n.nodeId],   // 갈림길을 골랐으면 그 갈래를 함께 보낸다
+      ending: ending,                      // 피날레에서 고른 엔딩 — 굿 엔딩 코스 수가 레벨
     );
     return reward == null ? fail() : (failure: null, reward: reward);
   }
@@ -1449,7 +1467,7 @@ class _QuestJourneyScreenState extends State<QuestJourneyScreen> with TickerProv
     final resolved = choiceId != null ? pick : ((pick == 'good' && curious) ? 'good' : 'normal');
     // 챕터 번호 하드코딩(옛 4챕터 종로 대본) 제거 — 피날레는 늘 마지막 챕터다.
     // 피날레 조각도 서버 기록이 성공해야 엔딩으로 넘어간다(_claimChapter).
-    await _claimChapter(_stoneTotal - 1, onClaimed: () async {
+    await _claimChapter(_stoneTotal - 1, ending: resolved, onClaimed: () async {
       setState(() {
         ending = resolved;
         _endingChoiceId = choiceId;
@@ -2277,6 +2295,10 @@ class _QuestJourneyScreenState extends State<QuestJourneyScreen> with TickerProv
         ],
         const SizedBox(width: 7),
         _hudStat('붓털 $brush', _soft),
+        if (_level != null) ...[
+          const SizedBox(width: 7),
+          _hudStat('Lv.$_level', _gold),
+        ],
       ]);
 
   Widget _hudStat(String text, Color color, {bool ring = false}) => Container(
@@ -3805,6 +3827,8 @@ class _QuestJourneyScreenState extends State<QuestJourneyScreen> with TickerProv
     final stone = _finaleNode?.regionStoneName;
     final title = _serverTitle ?? e?.title;
     final lines = e == null || e.npcDialogue.isEmpty ? null : e.npcDialogue.join('\n');
+    // 피날레 굿 엔딩으로 레벨이 올랐으면 서버가 알려 준다(level_up).
+    final levelUp = _claimed?.reward?.levelUp == true ? _claimed!.reward : null;
     return Container(
       decoration: const BoxDecoration(gradient: RadialGradient(center: Alignment(0, -0.32), radius: 1.0, colors: [Color(0xFF3A2E1A), Color(0xFF17120C), Color(0xFF0A0806)], stops: [0, .55, 1])),
       child: LayoutBuilder(builder: (ctx, box) {
@@ -3826,6 +3850,21 @@ class _QuestJourneyScreenState extends State<QuestJourneyScreen> with TickerProv
                 textAlign: TextAlign.center, style: dokkaebiTitle(size: 13, color: const Color(0xFFB3A892), height: 1.7)),
           ])),
           Positioned(left: 20, right: 20, bottom: 34, child: Column(mainAxisSize: MainAxisSize.min, children: [
+            if (levelUp != null) ...[
+              Container(
+                key: const ValueKey('level-up'),
+                width: double.infinity,
+                padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 11),
+                decoration: BoxDecoration(
+                  gradient: _goldGrad,
+                  borderRadius: BorderRadius.circular(13),
+                ),
+                child: Text('레벨 업! Lv.${levelUp.level}${levelUp.tier != null ? ' · ${levelUp.tier}' : ''}',
+                    textAlign: TextAlign.center,
+                    style: const TextStyle(color: Color(0xFF3A2A08), fontWeight: FontWeight.w900, fontSize: 15)),
+              ),
+              const SizedBox(height: 8),
+            ],
             Row(children: [
               // 칭호는 서버가 준 것을 먼저 쓴다(기록 못 한 조각이면 AI 엔딩 보상으로 폴백).
               if (title != null) ...[_endStat('칭호', title, _gold, _gold), const SizedBox(width: 8)],
@@ -3900,7 +3939,7 @@ class _QuestJourneyScreenState extends State<QuestJourneyScreen> with TickerProv
             ),
             const SizedBox(height: 16),
             if (claim != null) ...[
-              _cta('다시 시도', () => _claimChapter(claim.chapterIdx, extra: claim.extra, onClaimed: claim.onClaimed)),
+              _cta('다시 시도', () => _claimChapter(claim.chapterIdx, extra: claim.extra, onClaimed: claim.onClaimed, ending: claim.ending)),
               if (failure.canSkip) ...[
                 const SizedBox(height: 8),
                 _cta('기록 없이 계속', () => _confirmClaim(claim, null), bg: _bronze, fg: _cream),
