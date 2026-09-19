@@ -38,6 +38,16 @@
 //            동일 파일). 상시 회전 대신 은은한 상하 부유로 바꿨다 — 빌보드가 항상 정면을
 //            보므로 Y축 회전 애니메이션과 겹치면 제자리에서 뒤집히는 것처럼 보인다.
 // 구현일: 2026-09-17 | 작성: ljs (character-illustration/ljs/v1)
+// ------------------------------------------------------------
+// [v5] PHOTO_FIND 문양 마커 — 판(면) → 힌트 화살표, 상시 노출 → 지연 노출.
+// 구현(요약): pattern 마커는 세션 시작 카메라 자세 기준 "정면 2.6m 앞"이라는 고정
+//            오프셋일 뿐 실제 타깃 위치가 아닌데, 확정된 위치처럼 보이는 판으로
+//            상시 그려서 실기기 테스트에서 사물과 무관한 자리에 뜨는 것으로 오인됐다
+//            (팀 제보). 화살표 모양으로 바꿔 "추정"임을 드러내고, Dart 쪽에서
+//            kPhotoHintDelaySec(8초)가 지나야 hidden→solid로 보여주게 했다
+//            (ar_mission_controller.dart _tickPhoto). 진짜 이미지 인식이 되면
+//            handleImageAnchor가 이 마커를 실제 위치로 옮기는 동작은 그대로다.
+// 구현일: 2026-09-19 | 작성: Claude
 // ============================================================
 import ARKit
 import Flutter
@@ -469,15 +479,34 @@ final class DokkaebiArView: NSObject, FlutterPlatformView, ARSCNViewDelegate, AR
     return SCNNode(geometry: geo)
   }
 
-  /// 문양 — 벽면에 걸린 수직 판. 가까이 가서 정면으로 겨눠야 "스캔"이 된다.
+  /// 문양 힌트 화살표 — Dart(ArMissionController._tickPhoto)가 kPhotoHintDelaySec가
+  /// 지난 뒤에만 이 마커를 드러낸다. "확실한 위치"가 아니라 카메라 시작 자세 기준
+  /// 고정 오프셋의 "대략 이쯤"이라는 추정이라, 확정된 타깃처럼 보이는 판(면) 대신
+  /// 그 자리 위에서 아래를 가리키는 화살표로 그린다 — 진짜 이미지 인식(handleImageAnchor)이
+  /// 되면 이 자리 자체가 실제 위치로 옮겨진다.
   private func patternNode(color: UIColor, label: String) -> SCNNode {
-    let geo = SCNPlane(width: 0.4, height: 0.4)
-    geo.cornerRadius = 0.02
-    geo.materials = [glowMaterial(color, intensity: 0.4)]
-    let node = SCNNode(geometry: geo)
+    let node = SCNNode()
+    let head = SCNCone(topRadius: 0, bottomRadius: 0.09, height: 0.16)
+    head.materials = [glowMaterial(color, intensity: 0.6)]
+    let headNode = SCNNode(geometry: head)
+    headNode.eulerAngles.x = Float.pi   // 원뿔 끝이 아래(대상)를 가리키게 뒤집는다
+    headNode.position = SCNVector3(0, -0.06, 0)
+    node.addChildNode(headNode)
+
+    let shaft = SCNCylinder(radius: 0.03, height: 0.14)
+    shaft.materials = [glowMaterial(color, intensity: 0.6)]
+    let shaftNode = SCNNode(geometry: shaft)
+    shaftNode.position = SCNVector3(0, 0.09, 0)
+    node.addChildNode(shaftNode)
+
     let billboard = SCNBillboardConstraint()
     billboard.freeAxes = .Y
     node.constraints = [billboard]
+    // 통통 튀며 "여기를 보라"는 힌트임을 알린다.
+    node.runAction(.repeatForever(.sequence([
+      .moveBy(x: 0, y: 0.05, z: 0, duration: 0.45),
+      .moveBy(x: 0, y: -0.05, z: 0, duration: 0.45),
+    ])))
     return node
   }
 

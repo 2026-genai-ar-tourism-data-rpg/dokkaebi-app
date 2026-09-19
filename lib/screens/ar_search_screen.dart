@@ -82,9 +82,6 @@ class ArSearchScreen extends StatefulWidget {
 }
 
 class _ArSearchScreenState extends State<ArSearchScreen> with SingleTickerProviderStateMixin {
-  String _mode = 'scan'; // hint | scan | npc
-  bool _scanned = false;
-  int _hintShown = 1; // 방탈출: 처음 1개만, "다음 힌트"로 단계 노출
   bool? _arSupported; // null=확인 중, true=실제 ARKit, false=2D 폴백(시뮬레이터 등)
   bool _arError = false;
 
@@ -260,8 +257,6 @@ class _ArSearchScreenState extends State<ArSearchScreen> with SingleTickerProvid
     }
     if (id == 'fragment') {
       Navigator.pop(context, true);
-    } else if (id == 'dokkaebi') {
-      setState(() => _mode = 'npc');
     }
   }
 
@@ -330,7 +325,7 @@ class _ArSearchScreenState extends State<ArSearchScreen> with SingleTickerProvid
       body: Stack(children: [
         // 배경: 실기기(ARKit 지원)면 실제 카메라+3D 마커, 아니면(시뮬레이터·구형·Android·
         // 확인 중) 검은 placeholder + 아래 2D 고정 마커로 폴백.
-        if (_arSupported == true && _mode == 'scan' && !_arError)
+        if (_arSupported == true && !_arError)
           _zoomable(NativeArView(
             markers: _markers,
             referenceImages: widget.arReferenceImages,
@@ -355,180 +350,109 @@ class _ArSearchScreenState extends State<ArSearchScreen> with SingleTickerProvid
             child: const Center(child: Icon(Icons.camera_alt_outlined, color: Colors.white10, size: 90)),
           ),
 
-        // 상단: 장소 + 진행 + 닫기
+        // 상단: 장소 + 진행 + 닫기, 그 아래 지령 한 줄.
+        // 힌트 탭(단계별 힌트 목록)·NPC 탭(고정 문구)은 걷어냈다 — AR 판정이 거리 기반이라
+        // 근처를 비추기만 하면 되고, 실제 탐색 난이도에 기여하지 않아 기능적 가치가 없었다
+        // (팀 판단). 장소별로 실제 다른 지령(order) 한 줄만 상시 노출로 남긴다.
         SafeArea(
           child: Padding(
             padding: const EdgeInsets.all(12),
-            child: Row(children: [
-              _chip(Icons.place, widget.placeName.isEmpty ? 'AR 탐색' : widget.placeName),
-              const Spacer(),
-              _chip(Icons.diamond, '${widget.collected}/${widget.total}', color: AppColors.teal),
-              const SizedBox(width: 8),
-              IconButton(
-                onPressed: () => Navigator.pop(context, false),
-                icon: const Icon(Icons.close, color: Colors.white70),
-              ),
+            child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+              Row(children: [
+                _chip(Icons.place, widget.placeName.isEmpty ? 'AR 탐색' : widget.placeName),
+                const Spacer(),
+                _chip(Icons.diamond, '${widget.collected}/${widget.total}', color: AppColors.teal),
+                const SizedBox(width: 8),
+                IconButton(
+                  onPressed: () => Navigator.pop(context, false),
+                  icon: const Icon(Icons.close, color: Colors.white70),
+                ),
+              ]),
+              if (widget.order.isNotEmpty) ...[
+                const SizedBox(height: 8),
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 9),
+                  decoration: BoxDecoration(
+                    color: Colors.black.withValues(alpha: 0.55),
+                    borderRadius: BorderRadius.circular(12),
+                    border: Border.all(color: AppColors.gold.withValues(alpha: 0.4)),
+                  ),
+                  child: Text('🧙 "${widget.order}"',
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(color: Colors.white, fontSize: 12.5, height: 1.4, fontWeight: FontWeight.w600)),
+                ),
+              ],
             ]),
           ),
         ),
 
         // 미션 HUD — 남은 거리 + 지금 뭘 해야 하는지. 실기기에서 이게 없으면
         // "가까이 가야 하는 줄" 자체를 모른 채 헤맨다.
-        if (_mission != null && _arSupported == true && _mode == 'scan' && !_arError)
+        if (_mission != null && _arSupported == true && !_arError)
           _MissionHud(progress: _mission!.progress, statusOverride: _verdictLine),
 
         // admin 전용 — 방향키로 "다가가기/물러서기"(실외 이동 없이 발자국·AR 미션 테스트).
-        if (_mission != null && Session.isAdmin && _arSupported == true && _mode == 'scan' && !_arError)
+        if (_mission != null && Session.isAdmin && _arSupported == true && !_arError)
           Positioned(right: 12, top: 130, child: _adminArPanel()),
 
         // 촬영 미션 셔터 — 찾기 단계가 끝난 뒤에만. 검증 중엔 눌리지 않는다.
-        if (_isPhotoMission && _photoReady && _arSupported == true && _mode == 'scan' && !_arError)
+        if (_isPhotoMission && _photoReady && _arSupported == true && !_arError)
           Positioned(
             bottom: 108, left: 0, right: 0,
             child: Center(child: _ShutterButton(busy: _verifying, onTap: _shoot)),
           ),
 
-        // 힌트 모드 (방탈출: 지령 + 단계 힌트)
-        if (_mode == 'hint')
-          Center(
-            child: Container(
-              margin: const EdgeInsets.symmetric(horizontal: 28),
-              padding: const EdgeInsets.all(20),
-              decoration: BoxDecoration(
-                color: Colors.black.withOpacity(0.75),
-                borderRadius: BorderRadius.circular(16),
-                border: Border.all(color: AppColors.gold.withOpacity(0.5)),
-              ),
-              child: Column(mainAxisSize: MainAxisSize.min, children: [
-                const Icon(Icons.assignment_outlined, color: AppColors.gold, size: 28),
-                const SizedBox(height: 10),
-                if (widget.order.isNotEmpty)
-                  Text('🧙 "${widget.order}"',
-                      textAlign: TextAlign.center,
-                      style: const TextStyle(color: Colors.white, height: 1.5, fontWeight: FontWeight.w600)),
-                const SizedBox(height: 12),
-                ...List.generate(
-                  widget.hints.take(_hintShown).length,
-                  (i) => Padding(
-                    padding: const EdgeInsets.only(top: 6),
-                    child: Text('힌트 ${i + 1}. ${widget.hints[i]}',
-                        textAlign: TextAlign.center,
-                        style: const TextStyle(color: AppColors.gold, fontSize: 13, height: 1.4)),
-                  ),
-                ),
-                if (_hintShown < widget.hints.length) ...[
-                  const SizedBox(height: 12),
-                  OutlinedButton(
-                    onPressed: () => setState(() => _hintShown++),
-                    child: const Text('다음 힌트 보기', style: TextStyle(color: AppColors.gold)),
-                  ),
-                ],
-              ]),
-            ),
-          ),
-
-        // NPC 모드
-        if (_mode == 'npc')
-          Center(child: _panel(Icons.local_fire_department, AppColors.purple,
-              '이 곳의 도깨비가 지켜보고 있다. 대화로 받은 단서를 떠올려 보자.')),
-
-        // 스캔 모드 2D 폴백 마커 — 실제 AR(NativeArView) 사용 중이면 안 그림(중복 방지).
+        // 실제 AR을 못 쓰는 기기(시뮬레이터·구형)의 2D 폴백 마커 — 하위호환(missionType 없는
+        // 호출부, quest_tab_screen.dart)에서만 의미가 있다.
         if (!(_arSupported == true && !_arError)) ...[
-          if (_mode == 'scan' && _scanned) ...[
-            _marker(0.30, 0.40, AppColors.teal, Icons.diamond, '기억석 조각', onTap: () => Navigator.pop(context, true)),
-            _marker(0.68, 0.55, AppColors.purple, Icons.local_fire_department, '도깨비', onTap: () => setState(() => _mode = 'npc')),
-          ],
-          if (_mode == 'scan' && !_scanned)
-            const Center(child: Text('아래 "스캔"으로 주변을 살펴보세요',
-                style: TextStyle(color: Colors.white54))),
+          _marker(0.30, 0.40, AppColors.teal, Icons.diamond, '기억석 조각', onTap: () => Navigator.pop(context, true)),
+          _marker(0.68, 0.55, AppColors.purple, Icons.local_fire_department, '도깨비'),
         ],
         // 실제 AR 로딩 중 안내(마커가 뜨기 전 잠깐 표시).
-        if (_arSupported == true && _mode == 'scan' && !_arError)
+        if (_arSupported == true && !_arError)
           const Positioned(
             bottom: 120, left: 0, right: 0,
             child: Center(child: Text('천천히 주변을 비춰 보세요 — 도깨비가 나타납니다',
                 style: TextStyle(color: Colors.white54, fontSize: 12))),
           ),
-
-        // 하단 토글 (힌트 / 스캔 / NPC)
-        Align(
-          alignment: Alignment.bottomCenter,
-          child: Padding(
-            padding: const EdgeInsets.only(bottom: 28, left: 16, right: 16),
-            child: Container(
-              padding: const EdgeInsets.all(6),
-              decoration: BoxDecoration(
-                color: Colors.black.withOpacity(0.6),
-                borderRadius: BorderRadius.circular(28),
-                border: Border.all(color: AppColors.border),
-              ),
-              child: Row(children: [
-                _tab('hint', Icons.lightbulb_outline, '힌트'),
-                _tab('scan', Icons.radar, '스캔'),
-                _tab('npc', Icons.face_retouching_natural, 'NPC'),
-              ]),
-            ),
-          ),
-        ),
       ]),
     );
   }
 
-  Widget _tab(String mode, IconData icon, String label) {
-    final on = _mode == mode;
-    return Expanded(
+  // Positioned는 Stack의 직계 자식이어야 하는데, LayoutBuilder를 거치면(그 안에서도 쓰지
+  // 않는 constraints 대신 MediaQuery.size를 썼다) "호환 안 되는 ParentData" 예외가 난다
+  // (State 자체의 context로 충분해 애초에 LayoutBuilder가 필요 없었다).
+  Widget _marker(double x, double y, Color c, IconData icon, String label, {VoidCallback? onTap}) {
+    final size = MediaQuery.of(context).size;
+    return Positioned(
+      left: size.width * x - 36,
+      top: size.height * y - 36,
       child: GestureDetector(
-        onTap: () => setState(() {
-          _mode = mode;
-          if (mode == 'scan') _scanned = true; // 스캔 누르면 마커 등장
-        }),
-        child: Container(
-          padding: const EdgeInsets.symmetric(vertical: 10),
-          decoration: BoxDecoration(
-            color: on ? AppColors.teal.withOpacity(0.18) : Colors.transparent,
-            borderRadius: BorderRadius.circular(22),
-          ),
+        onTap: onTap,
+        child: ScaleTransition(
+          scale: Tween(begin: 0.9, end: 1.1).animate(_ac),
           child: Column(mainAxisSize: MainAxisSize.min, children: [
-            Icon(icon, color: on ? AppColors.teal : Colors.white60, size: 20),
-            Text(label, style: TextStyle(color: on ? AppColors.teal : Colors.white60, fontSize: 11)),
+            Container(
+              width: 64, height: 64,
+              decoration: BoxDecoration(
+                color: c.withOpacity(0.2),
+                shape: BoxShape.circle,
+                border: Border.all(color: c, width: 2),
+                boxShadow: [BoxShadow(color: c.withOpacity(0.5), blurRadius: 24, spreadRadius: 2)],
+              ),
+              child: Icon(icon, color: c, size: 28),
+            ),
+            const SizedBox(height: 4),
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+              decoration: BoxDecoration(color: Colors.black54, borderRadius: BorderRadius.circular(10)),
+              child: Text(label, style: TextStyle(color: c, fontSize: 11)),
+            ),
           ]),
         ),
       ),
     );
-  }
-
-  Widget _marker(double x, double y, Color c, IconData icon, String label, {VoidCallback? onTap}) {
-    return LayoutBuilder(builder: (context, _) {
-      final size = MediaQuery.of(context).size;
-      return Positioned(
-        left: size.width * x - 36,
-        top: size.height * y - 36,
-        child: GestureDetector(
-          onTap: onTap,
-          child: ScaleTransition(
-            scale: Tween(begin: 0.9, end: 1.1).animate(_ac),
-            child: Column(mainAxisSize: MainAxisSize.min, children: [
-              Container(
-                width: 64, height: 64,
-                decoration: BoxDecoration(
-                  color: c.withOpacity(0.2),
-                  shape: BoxShape.circle,
-                  border: Border.all(color: c, width: 2),
-                  boxShadow: [BoxShadow(color: c.withOpacity(0.5), blurRadius: 24, spreadRadius: 2)],
-                ),
-                child: Icon(icon, color: c, size: 28),
-              ),
-              const SizedBox(height: 4),
-              Container(
-                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
-                decoration: BoxDecoration(color: Colors.black54, borderRadius: BorderRadius.circular(10)),
-                child: Text(label, style: TextStyle(color: c, fontSize: 11)),
-              ),
-            ]),
-          ),
-        ),
-      );
-    });
   }
 
   Widget _chip(IconData icon, String text, {Color color = Colors.white}) => Container(
@@ -542,21 +466,6 @@ class _ArSearchScreenState extends State<ArSearchScreen> with SingleTickerProvid
           Icon(icon, size: 14, color: color),
           const SizedBox(width: 5),
           Text(text, style: TextStyle(color: color, fontSize: 13, fontWeight: FontWeight.w600)),
-        ]),
-      );
-
-  Widget _panel(IconData icon, Color color, String text) => Container(
-        margin: const EdgeInsets.symmetric(horizontal: 32),
-        padding: const EdgeInsets.all(20),
-        decoration: BoxDecoration(
-          color: Colors.black.withOpacity(0.7),
-          borderRadius: BorderRadius.circular(16),
-          border: Border.all(color: color.withOpacity(0.5)),
-        ),
-        child: Column(mainAxisSize: MainAxisSize.min, children: [
-          Icon(icon, color: color, size: 32),
-          const SizedBox(height: 12),
-          Text(text, textAlign: TextAlign.center, style: const TextStyle(color: Colors.white, height: 1.5)),
         ]),
       );
 }

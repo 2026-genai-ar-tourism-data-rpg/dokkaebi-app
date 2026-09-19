@@ -60,6 +60,10 @@ const double kScanBestM = 1.2;
 /// 스캔 완료까지 정면으로 머물러야 하는 시간.
 const double kScanHoldSec = 2.5;
 
+/// PHOTO_FIND 방향 화살표(힌트)가 나타나기까지 기다리는 시간 — 그 전엔 숨겨서,
+/// 진짜 이미지 인식이나 스스로 찾는 시도를 어림짐작 위치로 방해하지 않는다.
+const double kPhotoHintDelaySec = 8.0;
+
 /// 숨은 도깨비의 기척이 느껴지기 시작하는 거리.
 const double kFindSenseM = 8.0;
 
@@ -129,6 +133,9 @@ class ArMissionController extends ChangeNotifier {
 
   ArViewController? _view;
   final Set<String> _done = {};
+
+  /// 미션이 시작된 시각 — PHOTO_FIND 힌트 노출 지연([kPhotoHintDelaySec]) 판정용.
+  final DateTime _startedAt = DateTime.now();
 
   /// 조준을 시작한 시각 — 머무는 시간 판정용.
   final Map<String, DateTime> _aimStart = {};
@@ -251,7 +258,11 @@ class ArMissionController extends ChangeNotifier {
     );
     final read = r[target.id];
     if (read == null) return;
-    _push(target.id, ArMarkerState.solid);
+    // 힌트(방향 화살표)는 어림짐작 위치일 뿐이다 — 곧바로 보여주면 그 자리를
+    // 진짜 타깃인 것처럼 믿게 된다. 스스로 찾을 시간을 준 뒤에만 드러낸다.
+    final hintReady =
+        DateTime.now().difference(_startedAt).inMilliseconds >= kPhotoHintDelaySec * 1000;
+    _push(target.id, hintReady ? ArMarkerState.solid : ArMarkerState.hidden);
 
     if (read.distance > kScanStartM) {
       _aimStart.remove(target.id);
@@ -400,7 +411,8 @@ List<ArMarkerDef> buildArMarkers({
           forward: 2.6,
           right: 0,
           down: 0.1,
-          state: ArMarkerState.solid,
+          // 힌트 화살표는 kPhotoHintDelaySec가 지나야 드러난다(ArMissionController._tickPhoto).
+          state: ArMarkerState.hidden,
         ),
       ];
 
