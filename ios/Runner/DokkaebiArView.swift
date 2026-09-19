@@ -57,6 +57,15 @@
 //            (ar_mission_controller.dart _tickPhoto). 진짜 이미지 인식이 되면
 //            handleImageAnchor가 이 마커를 실제 위치로 옮기는 동작은 그대로다.
 // 구현일: 2026-09-19 | 작성: Claude
+// ------------------------------------------------------------
+// [v7] 도깨비불 길들이기 지원 (AR 미션 교체 명세 v1.0, 2026-09-19).
+// 구현(요약): ① kind=fire 마커 — 발광 구체+점광원, 작은 깜빡임. 바닥 스냅 제외(눈높이).
+//            ② 텔레메트리에 dyaw(부호 있는 수평 각, +면 목표가 오른쪽) → 좌우 힌트.
+//            ③ ARKit tracking 상태를 trackingState 이벤트로 — Dart가 불안정 시 게이지를 버린다.
+//            ④ absorbMarker: 흡수 연출(커졌다 작아지며 사라짐) 후 노드 제거.
+//            목표는 세션 시작 카메라 기준 월드 좌표에 고정(placeMarkers가 이미 그렇다).
+//            카메라 자식으로 두면 화면을 돌려도 따라붙어 게임이 성립하지 않는다 — 명세의 금지 사항.
+// 구현일: 2026-09-19 | 작성: kys (fire-capture/kys/v1)
 // ============================================================
 import ARKit
 import Flutter
@@ -70,6 +79,7 @@ enum ArMarkerKind: String {
   case pattern     // PHOTO_FIND — 벽면 문양(수직 판)
   case hidden      // FIND       — 숨은 도깨비 자리의 풀숲
   case beacon      // 범용 — 기본 캐릭터 일러스트 빌보드(하위호환 기본값)
+  case fire        // 도깨비불 길들이기 — 눈높이에 떠 있는 불꽃(바닥 스냅 제외)
 }
 
 /// 마커 표시 상태 — Dart가 거리·조준을 보고 지시한다.
@@ -143,6 +153,16 @@ func arAimError(cameraTransform: simd_float4x4, target: simd_float3) -> Float {
   // 두 단위벡터의 내적 = cos(각). 부동소수 오차로 |dot|>1이 되면 acos가 NaN을 뱉는다.
   let dot = simd_dot(simd_normalize(toTarget), simd_normalize(forwardAxis))
   return acos(max(-1, min(1, dot)))
+}
+
+/// 카메라 전방 대비 목표의 **부호 있는 수평 각**(라디안). +면 목표가 오른쪽.
+/// 카메라 로컬 좌표로 옮겨 atan2(x, z) — 좌우 힌트("오른쪽으로 천천히")의 입력.
+func arSignedYaw(cameraTransform: simd_float4x4, target: simd_float3) -> Float {
+  let camPos = simd_make_float3(cameraTransform.columns.3)
+  let d = target - camPos
+  let right = simd_make_float3(cameraTransform.columns.0)
+  let forward = -simd_make_float3(cameraTransform.columns.2)
+  return atan2(simd_dot(d, right), simd_dot(d, forward))
 }
 
 final class DokkaebiArViewFactory: NSObject, FlutterPlatformViewFactory {
@@ -231,6 +251,9 @@ final class DokkaebiArView: NSObject, FlutterPlatformView, ARSCNViewDelegate, AR
             scale: Float((a["scale"] as? Double) ?? 1.0)
           )
         }
+        result(nil)
+      case "absorbMarker":
+        if let id = call.arguments as? String { self?.absorbMarker(id: id) }
         result(nil)
       case "snapshot":
         // ARSCNView.snapshot()은 카메라 프레임 + SceneKit 오버레이를 합친 이미지 — 메인 스레드 전용.
@@ -348,6 +371,7 @@ final class DokkaebiArView: NSObject, FlutterPlatformView, ARSCNViewDelegate, AR
         "id": id,
         "dist": Double(simd_distance(camPos, pos)),
         "aim": Double(arAimError(cameraTransform: camTransform, target: pos)),
+        "dyaw": Double(arSignedYaw(cameraTransform: camTransform, target: pos)),
       ]
     }
     DispatchQueue.main.async { [weak self] in
@@ -380,6 +404,17 @@ final class DokkaebiArView: NSObject, FlutterPlatformView, ARSCNViewDelegate, AR
     channel.invokeMethod("sessionError", arguments: error.localizedDescription)
   }
 
+  /// tracking 품질 — Dart는 normal이 아니면 도깨비불 유지 시간을 버린다(명세 3쪽).
+  func session(_ session: ARSession, cameraDidChangeTrackingState camera: ARCamera) {
+    let state: String
+    switch camera.trackingState {
+    case .normal: state = "normal"
+    case .limited: state = "limited"
+    case .notAvailable: state = "notAvailable"
+    }
+    channel.invokeMethod("trackingState", arguments: state)
+  }
+
   // MARK: - 마커 배치·탭
 
   private func placeMarkers(cameraTransform: simd_float4x4) {
@@ -391,7 +426,7 @@ final class DokkaebiArView: NSObject, FlutterPlatformView, ARSCNViewDelegate, AR
         down: spec.down
       )
       // 바닥을 이미 찾았으면 바닥에 앉힌다(부재·도깨비는 공중에 뜨면 안 된다. 엽전은 바닥 위로 띄운다).
-      if let y = floorY, spec.kind != .pattern { pos.y = floorHeight(y, for: spec.kind) }
+      if let y = floorY, spec.kind != .pattern, spec.kind != .fire { pos.y = floorHeight(y, for: spec.kind) }
 
       let node = markerNode(spec: spec)
       node.simdPosition = pos
@@ -402,7 +437,7 @@ final class DokkaebiArView: NSObject, FlutterPlatformView, ARSCNViewDelegate, AR
 
       // 등장 애니메이션 + 은은한 오르내림(떠 있는 것들).
       node.runAction(.scale(to: CGFloat(spec.state == .hidden ? 0.01 : 1.0), duration: 0.4))
-      if spec.kind == .beacon || spec.kind == .part || spec.kind == .coin {
+      if spec.kind == .beacon || spec.kind == .part || spec.kind == .coin || spec.kind == .fire {
         node.runAction(.repeatForever(.sequence([
           .moveBy(x: 0, y: 0.06, z: 0, duration: 1.1),
           .moveBy(x: 0, y: -0.06, z: 0, duration: 1.1),
@@ -414,7 +449,7 @@ final class DokkaebiArView: NSObject, FlutterPlatformView, ARSCNViewDelegate, AR
 
   /// 이미 놓인 마커를 바닥 높이로 내려앉힌다(평면을 늦게 찾은 경우).
   private func snapMarkersToFloor(y: Float) {
-    for spec in markerSpecs where spec.kind != .pattern {
+    for spec in markerSpecs where spec.kind != .pattern && spec.kind != .fire {
       guard let node = sceneView.scene.rootNode.childNode(withName: "marker:\(spec.id)", recursively: false) else { continue }
       var p = node.simdPosition
       p.y = floorHeight(y, for: spec.kind)
@@ -461,6 +496,7 @@ final class DokkaebiArView: NSObject, FlutterPlatformView, ARSCNViewDelegate, AR
     case .pattern: node = patternNode(color: color, label: spec.label)
     case .hidden: node = grassNode(color: color)
     case .beacon: node = beaconNode(imageAsset: spec.image)
+    case .fire: node = fireNode(color: color)
     }
     // 엽전·문양은 이름표가 오히려 방해된다(바닥의 엽전 위에 글자가 뜬다).
     if spec.kind == .beacon || spec.kind == .part {
@@ -601,6 +637,57 @@ final class DokkaebiArView: NSObject, FlutterPlatformView, ARSCNViewDelegate, AR
     let key = FlutterDartProject.lookupKey(forAsset: asset)
     guard let path = Bundle.main.path(forResource: key, ofType: nil) else { return nil }
     return UIImage(contentsOfFile: path)
+  }
+
+  /// 도깨비불 — 발광 구체 + 점광원. 작은 깜빡임만(판정 중심은 markerPositions로 고정).
+  private func fireNode(color: UIColor) -> SCNNode {
+    let node = SCNNode()
+    let core = SCNSphere(radius: 0.09)
+    let mat = SCNMaterial()
+    mat.diffuse.contents = color
+    mat.emission.contents = color
+    mat.emission.intensity = 1.4
+    mat.lightingModel = .constant
+    core.materials = [mat]
+    let coreNode = SCNNode(geometry: core)
+    node.addChildNode(coreNode)
+
+    let halo = SCNSphere(radius: 0.16)
+    let hmat = SCNMaterial()
+    hmat.diffuse.contents = color.withAlphaComponent(0.18)
+    hmat.emission.contents = color
+    hmat.emission.intensity = 0.5
+    hmat.lightingModel = .constant
+    hmat.transparency = 0.35
+    hmat.isDoubleSided = true
+    halo.materials = [hmat]
+    node.addChildNode(SCNNode(geometry: halo))
+
+    let light = SCNLight()
+    light.type = .omni
+    light.color = color
+    light.intensity = 220
+    light.attenuationEndDistance = 2.0
+    let lightNode = SCNNode()
+    lightNode.light = light
+    node.addChildNode(lightNode)
+
+    coreNode.runAction(.repeatForever(.sequence([
+      .scale(to: 1.06, duration: 0.35), .scale(to: 0.94, duration: 0.45), .scale(to: 1.0, duration: 0.3),
+    ])))
+    return node
+  }
+
+  /// 흡수 연출 — 커졌다가 빠르게 줄며 사라진 뒤 노드 제거. 텔레메트리 대상에서도 빠진다.
+  private func absorbMarker(id: String) {
+    guard let node = sceneView.scene.rootNode.childNode(withName: "marker:\(id)", recursively: false) else { return }
+    markerPositions.removeValue(forKey: id)
+    node.removeAllActions()
+    node.runAction(.sequence([
+      .scale(to: 1.5, duration: 0.18),
+      .group([.scale(to: 0.02, duration: 0.5), .fadeOut(duration: 0.5)]),
+      .removeFromParentNode(),
+    ]))
   }
 
   private func textGeometry(_ text: String, color: UIColor) -> SCNText {

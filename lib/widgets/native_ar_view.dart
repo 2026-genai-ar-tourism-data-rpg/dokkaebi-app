@@ -13,6 +13,9 @@
 //            그래서 "몇 미터부터 켤지, 몇 초 겨눠야 드러날지" 같은 실기기 튜닝이
 //            Dart 핫리로드로 끝난다(Xcode 재빌드 불필요).
 // 구현일: 2026-09-16 | 작성: kys (ar-realtime/kys/v1)
+// ------------------------------------------------------------
+// [v3] 도깨비불 길들이기 지원 — fire 마커, 부호 있는 yaw(좌우 힌트), tracking 상태, 흡수 연출.
+// 구현일: 2026-09-19 | 작성: kys (fire-capture/kys/v1)
 // ============================================================
 import 'dart:io' show Platform;
 
@@ -28,6 +31,7 @@ enum ArMarkerKind {
   pattern, // PHOTO_FIND — 벽면 문양
   hidden, // FIND       — 숨은 자리의 풀숲
   beacon, // 범용(구 동작)
+  fire, // 도깨비불 길들이기 — 눈높이 불꽃(바닥 스냅 제외)
 }
 
 /// 마커 표시 상태. Swift의 ArMarkerState와 **문자열이 같아야 한다**.
@@ -82,7 +86,10 @@ class ArMarkerReading {
   /// 화면 정중앙에서 벗어난 각(라디안). 0이면 정확히 겨눈 상태.
   final double aimError;
 
-  const ArMarkerReading({required this.distance, required this.aimError});
+  /// 부호 있는 수평 각(라디안). +면 목표가 오른쪽 → "오른쪽으로 돌려라". 구 네이티브면 0.
+  final double yawDelta;
+
+  const ArMarkerReading({required this.distance, required this.aimError, this.yawDelta = 0});
 
   /// 조준으로 인정할지 — 시야 중앙 약 17°(0.3rad) 안.
   bool get isAimed => aimError <= 0.30;
@@ -122,6 +129,19 @@ class ArViewController {
       // 네이티브가 없는 환경(테스트·폴백) — 무시한다.
     } on PlatformException {
       // 뷰가 이미 내려갔을 수 있다. 연출 실패가 플레이를 막아선 안 된다.
+    }
+  }
+
+  /// 흡수 연출 후 마커 제거 — 도깨비불 수집 순간. 이후 텔레메트리에서도 빠진다.
+  Future<void> absorbMarker(String id) async {
+    final ch = _channel;
+    if (ch == null) return;
+    try {
+      await ch.invokeMethod('absorbMarker', id);
+    } on MissingPluginException {
+      // 네이티브가 없는 환경 — 무시.
+    } on PlatformException {
+      // 뷰가 이미 내려갔을 수 있다.
     }
   }
 
@@ -178,6 +198,9 @@ class NativeArView extends StatefulWidget {
   /// 네이티브가 마커를 놓은 직후. 그 전에 보낸 상태 지시는 받을 마커가 없어 사라졌다.
   final VoidCallback? onMarkersPlaced;
 
+  /// ARKit tracking 품질(true=normal). 불안정하면 도깨비불 게이지를 버린다.
+  final ValueChanged<bool>? onTrackingChanged;
+
   /// 두 손가락 확대·축소를 감싼 Flutter 위젯(ar_search_screen._zoomable)까지
   /// 올려 보낼지. 기본은 false — UiKitView는 기본적으로 자기 영역의 제스처를
   /// 네이티브가 먼저 가져가므로, 이걸 켜야 ScaleGestureRecognizer가 경쟁에 끼어
@@ -197,6 +220,7 @@ class NativeArView extends StatefulWidget {
     this.onImageDetected,
     this.enablePinchZoom = false,
     this.onMarkersPlaced,
+    this.onTrackingChanged,
   });
 
   @override
@@ -233,6 +257,7 @@ class _NativeArViewState extends State<NativeArView> {
           out[id] = ArMarkerReading(
             distance: (m['dist'] as num?)?.toDouble() ?? 0,
             aimError: (m['aim'] as num?)?.toDouble() ?? 0,
+            yawDelta: (m['dyaw'] as num?)?.toDouble() ?? 0,
           );
         }
         cb(out);
@@ -247,6 +272,9 @@ class _NativeArViewState extends State<NativeArView> {
         return; // 마커가 인식된 이미지 위치로 옮겨졌다 — 텔레메트리에 자연히 반영된다
       case 'markersPlaced':
         widget.onMarkersPlaced?.call();
+        return;
+      case 'trackingState':
+        widget.onTrackingChanged?.call((call.arguments ?? 'normal').toString() == 'normal');
         return;
     }
   }

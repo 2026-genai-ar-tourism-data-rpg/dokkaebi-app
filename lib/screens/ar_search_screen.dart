@@ -34,16 +34,30 @@
 //      마지막 엽전은 효과가 보이도록 잠시 뒤에 닫는다. 마커 배치 직후 상태를 다시 보내고
 //      (admin에서 엽전이 안 보이던 원인), admin 방향키 한 칸은 1m→0.5m.
 // 구현일: 2026-09-18 | 작성: ljs (npc-character-set/ljs/v1)
+// ------------------------------------------------------------
+// [v6] 촬영 미션 → 도깨비불 길들이기 (AR 미션 교체 명세 v1.0, 2026-09-19).
+// 구현(요약): PHOTO_FIND·PATH_TRACE는 더 이상 셔터·촬영·OCR 검증을 타지 않는다. 제자리에서
+//            폰을 돌려 불꽃 3마리를 각 2초 조준해 모으면 초롱이 켜지고 pop(true) — 조각·collect는
+//            기존대로 상위 화면(quest_play_screen) 담당. 판정은 fire_capture_controller.dart.
+//            AR 미지원·카메라 거부·원격 체험은 "터치 모드"(드래그로 시야 회전, 같은 규칙).
+//            모은 불꽃은 로컬(userId+runId+nodeId+버전)에 저장해 이탈·재진입 시 복원한다.
+//            구 시나리오의 "현판을 찍어라" 지령은 여기서 불빛 모으기 문구로 치환한다.
+//            촬영·검증 코드(_shoot 등)는 남겨 두되 이 경로에서는 호출하지 않는다.
+// 구현일: 2026-09-19 | 작성: kys (fire-capture/kys/v1)
 // ============================================================
 import 'dart:async';
+import 'dart:convert';
 import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 import '../api/api_client.dart';
 import '../models/scenario.dart';
 
 import '../game/ar_mission_controller.dart';
+import '../game/fire_capture_controller.dart';
+import '../game/run_session.dart';
 import '../session.dart';
 import '../theme.dart';
 import '../widgets/native_ar_view.dart';
@@ -86,9 +100,31 @@ class ArSearchScreen extends StatefulWidget {
   State<ArSearchScreen> createState() => _ArSearchScreenState();
 }
 
-class _ArSearchScreenState extends State<ArSearchScreen> with SingleTickerProviderStateMixin {
+class _ArSearchScreenState extends State<ArSearchScreen>
+    with SingleTickerProviderStateMixin, WidgetsBindingObserver {
   bool? _arSupported; // null=확인 중, true=실제 ARKit, false=2D 폴백(시뮬레이터 등)
   bool _arError = false;
+
+  // ── 도깨비불 길들이기 (사진 미션 대체) ──
+  FireCaptureController? _fire;
+  Timer? _fireTick;                 // 흡수 연출(800ms) 종료 판정용
+  bool _fireTracking = true;        // ARKit tracking 정상 여부(네이티브 이벤트)
+  bool _fireIntroShown = true;      // 인트로(초롱 소개 + 시작) 표시 중
+  String? _fireKey;                 // 로컬 저장 키
+
+  bool get _isFireMission => _fire != null;
+  /// AR을 못 쓰는 경우(미지원·에러·원격) — 터치 모드로 같은 규칙을 돌린다.
+  bool get _fireTouchMode => _isFireMission && !(_arSupported == true && !_arError);
+
+  /// 구 시나리오의 촬영 지령을 불빛 모으기 문구로 — 데이터는 그대로 두고 표시만 바꾼다.
+  String get _displayOrder {
+    if (!_isFireMission) return widget.order;
+    final o = widget.order;
+    if (o.isEmpty || RegExp(r'(찍|촬영|사진|담아|문양|현판)').hasMatch(o)) {
+      return '골목에 흩어진 불빛 세 마리를 모아 초롱을 깨워라';
+    }
+    return o;
+  }
 
   static const _fragmentMarker = ArMarkerDef(
     id: 'fragment', label: '기억석 조각', color: AppColors.teal,
@@ -214,6 +250,10 @@ class _ArSearchScreenState extends State<ArSearchScreen> with SingleTickerProvid
     final raw = widget.missionType;
     if (raw == null || raw.isEmpty) {
       _markers = const [_fragmentMarker, _dokkaebiMarker];
+    } else if (arMissionTypeOf(raw) == ArMissionType.photo) {
+      // 사진 미션 → 도깨비불 길들이기. ArMissionController·셔터·검증은 만들지 않는다.
+      _markers = _fireMarkers(FireTarget.defaults());
+      _setupFire();
     } else {
       final type = arMissionTypeOf(raw);
       var built = buildArMarkers(
@@ -269,12 +309,140 @@ class _ArSearchScreenState extends State<ArSearchScreen> with SingleTickerProvid
     }
   }
 
+  // ── 도깨비불: 마커·컨트롤러·저장 ────────────────────────
+  /// 불꽃 3개를 시작 카메라 기준 yaw 방향(+32°, -26°, +12°) 2.4m 눈높이에 둔다.
+  /// 활성 불꽃만 solid, 나머지는 hidden — 동시에 1마리만 보인다.
+  static List<ArMarkerDef> _fireMarkers(List<FireTarget> targets, {Set<String> collected = const {}}) {
+    String? active;
+    for (final t in targets) {
+      if (!collected.contains(t.id)) { active = t.id; break; }
+    }
+    return [
+      for (final t in targets)
+        if (!collected.contains(t.id))
+          ArMarkerDef(
+            id: t.id, label: '도깨비불', color: AppColors.gold, kind: ArMarkerKind.fire,
+            forward: kFireDistanceM * math.cos(t.yawRad),
+            right: kFireDistanceM * math.sin(t.yawRad),
+            down: 0.0,
+            state: t.id == active ? ArMarkerState.solid : ArMarkerState.hidden,
+          ),
+    ];
+  }
+
+  void _setupFire() {
+    _fireKey = fireProgressKey(
+      userId: Session.userId ?? 'guest',
+      runId: RunSession.I.runId ?? '-',
+      nodeId: widget.nodeId ?? widget.placeName,
+    );
+    _fire = FireCaptureController(
+      onCaptured: _onFireCaptured,
+      onAllCaptured: _onAllFiresCaptured,
+    )..addListener(() { if (mounted) setState(() {}); });
+    WidgetsBinding.instance.addObserver(this);
+    _restoreFire();
+  }
+
+  /// 이탈·재시작 뒤 모은 수량 복원(게이지는 버림). 이미 완료면 곧장 마무리로.
+  Future<void> _restoreFire() async {
+    final key = _fireKey;
+    if (key == null) return;
+    try {
+      final p = await SharedPreferences.getInstance();
+      final raw = p.getString(key);
+      if (raw == null || !mounted) return;
+      final d = jsonDecode(raw) as Map<String, dynamic>;
+      final ids = ((d['collected'] as List?) ?? const []).map((e) => e.toString()).toSet();
+      if (ids.isEmpty) return;
+      _fire?.dispose();
+      _fire = FireCaptureController(
+        restoredCollected: ids,
+        onCaptured: _onFireCaptured,
+        onAllCaptured: _onAllFiresCaptured,
+      )..addListener(() { if (mounted) setState(() {}); });
+      setState(() => _markers = _fireMarkers(FireTarget.defaults(), collected: ids));
+    } catch (_) {
+      // 저장소를 못 읽으면 처음부터 — 복원 실패가 플레이를 막으면 안 된다.
+    }
+  }
+
+  Future<void> _persistFire({bool done = false}) async {
+    final key = _fireKey; final f = _fire;
+    if (key == null || f == null) return;
+    try {
+      final p = await SharedPreferences.getInstance();
+      await p.setString(key, jsonEncode({'collected': f.collectedIds.toList(), 'done': done}));
+    } catch (_) {}
+  }
+
+  void _startFire() {
+    setState(() => _fireIntroShown = false);
+    _fire?.start();
+    _fireTick ??= Timer.periodic(const Duration(milliseconds: 100), (_) {
+      _fire?.tick();
+      if (_fireTouchMode) _pushTouchObservation();
+    });
+  }
+
+  void _onFireCaptured(String id) {
+    _arController?.absorbMarker(id);
+    _persistFire();
+    // 800ms 뒤 다음 불꽃을 켠다(컨트롤러가 capture→seek로 넘어가는 시점과 같다).
+    Future<void>.delayed(const Duration(milliseconds: kFireCaptureMs), () {
+      final next = _fire?.activeTarget?.id;
+      if (next != null && mounted) _arController?.setMarkerState(next, ArMarkerState.solid);
+    });
+  }
+
+  Future<void> _onAllFiresCaptured() async {
+    await _persistFire(done: true);
+    // 초롱 점등 연출을 잠깐 보여주고 닫는다. 조각·collect·재시도는 상위 화면 담당.
+    await Future<void>.delayed(const Duration(milliseconds: 1400));
+    if (!mounted) return;
+    _fire?.markSynced();
+    Navigator.pop(context, true);
+  }
+
+  /// 네이티브 텔레메트리 → 활성 불꽃 관측 1건.
+  void _onFireTelemetry(Map<String, ArMarkerReading> r) {
+    final f = _fire; final id = f?.activeTarget?.id;
+    if (f == null || id == null) return;
+    final read = r[id];
+    if (read == null) return;
+    f.observe(FireObservation(aimErrorRad: read.aimError, yawDeltaRad: read.yawDelta, tracking: _fireTracking));
+  }
+
+  // ── 터치 모드: 드래그·버튼으로 가상 시야(yaw)를 돌린다 ──
+  double _touchYaw = 0;                       // 가상 카메라 yaw(라디안)
+  static const double _touchFovRad = 70 * math.pi / 180;
+
+  void _pushTouchObservation() {
+    final f = _fire; final t = f?.activeTarget;
+    if (f == null || t == null) return;
+    var d = t.yawRad - _touchYaw;
+    while (d > math.pi) { d -= 2 * math.pi; }
+    while (d < -math.pi) { d += 2 * math.pi; }
+    f.observe(FireObservation(aimErrorRad: d.abs(), yawDeltaRad: d, tracking: true));
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (!_isFireMission) return;
+    if (state == AppLifecycleState.resumed) {
+      _fire?.resume();
+    } else {
+      _fire?.pause();
+    }
+  }
+
   void _onNativeMarkerTapped(String id) {
     final m = _mission;
     if (m != null) {
       m.onTapped(id);
       return;
     }
+    if (_isFireMission) return;       // 불꽃은 탭으로 안 줍힌다 — 조준 유지만
     if (id == 'fragment') {
       Navigator.pop(context, true);
     }
@@ -333,6 +501,9 @@ class _ArSearchScreenState extends State<ArSearchScreen> with SingleTickerProvid
   @override
   void dispose() {
     _adminArTimer?.cancel();
+    _fireTick?.cancel();
+    if (_isFireMission) WidgetsBinding.instance.removeObserver(this);
+    _fire?.dispose();
     _mission?.dispose();
     _ac.dispose();
     super.dispose();
@@ -357,8 +528,9 @@ class _ArSearchScreenState extends State<ArSearchScreen> with SingleTickerProvid
             },
             // admin은 실기기 텔레메트리 대신 방향키로 넣은 값만 쓴다 — 안 끊으면 실측(제자리라
             // 거리 그대로)이 10Hz로 덮어써서 방향키 조작이 즉시 지워진다.
-            onTelemetry: Session.isAdmin ? null : _mission?.onTelemetry,
+            onTelemetry: _isFireMission ? _onFireTelemetry : (Session.isAdmin ? null : _mission?.onTelemetry),
             onImageDetected: _mission?.onImageDetected,
+            onTrackingChanged: _isFireMission ? (ok) => _fireTracking = ok : null,
             enablePinchZoom: _isPhotoMission,
             // 배치 전에 보낸 상태는 사라졌다 — 다시 보내게 하고, admin은 거리 값을 바로 다시 넣는다
             // (실기기 텔레메트리는 배치 뒤에 오지만 admin 이동은 뷰가 뜨기 전부터 돈다).
@@ -367,6 +539,17 @@ class _ArSearchScreenState extends State<ArSearchScreen> with SingleTickerProvid
               if (Session.isAdmin && !widget.remote) _pushAdminTelemetry();
             },
           ))
+        else if (_fireTouchMode)
+          // 터치 모드 — 카메라 없이 같은 3마리·2초 규칙. 드래그로 시야를 돌린다.
+          _FireTouchView(
+            backdrop: widget.remote ? _RemoteBackdrop(anim: _ac) : null,
+            yaw: _touchYaw,
+            fov: _touchFovRad,
+            active: _fire?.activeTarget,
+            collected: _fire?.collectedIds ?? const {},
+            holdRatio: _fire?.progress.holdRatio ?? 0,
+            onYaw: (y) => setState(() => _touchYaw = y),
+          )
         else if (widget.remote)
           // 원격 체험 배경 — 그 자리에 없으니 카메라 대신 도깨비 기운이 도는 밤 풍경.
           _RemoteBackdrop(anim: _ac)
@@ -394,7 +577,7 @@ class _ArSearchScreenState extends State<ArSearchScreen> with SingleTickerProvid
                   icon: const Icon(Icons.close, color: Colors.white70),
                 ),
               ]),
-              if (widget.order.isNotEmpty) ...[
+              if (_displayOrder.isNotEmpty) ...[
                 const SizedBox(height: 8),
                 Container(
                   padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 9),
@@ -403,7 +586,7 @@ class _ArSearchScreenState extends State<ArSearchScreen> with SingleTickerProvid
                     borderRadius: BorderRadius.circular(12),
                     border: Border.all(color: AppColors.gold.withValues(alpha: 0.4)),
                   ),
-                  child: Text('🧙 "${widget.order}"',
+                  child: Text('🧙 "$_displayOrder"',
                       maxLines: 2,
                       overflow: TextOverflow.ellipsis,
                       style: const TextStyle(color: Colors.white, fontSize: 12.5, height: 1.4, fontWeight: FontWeight.w600)),
@@ -417,6 +600,14 @@ class _ArSearchScreenState extends State<ArSearchScreen> with SingleTickerProvid
         // "가까이 가야 하는 줄" 자체를 모른 채 헤맨다.
         if (_mission != null && _arSupported == true && !_arError)
           _MissionHud(progress: _mission!.progress, statusOverride: _verdictLine),
+
+        // 도깨비불 HUD — 수집 수, 중앙 조준 원(게이지), 좌우 힌트, 안내 한 줄.
+        if (_isFireMission && !_fireIntroShown && _arSupported != null)
+          _FireHud(progress: _fire!.progress),
+
+        // 도깨비불 인트로 — 초롱 소개 + 시작. GPS 인증은 이미 상위 화면에서 끝났다.
+        if (_isFireMission && _fireIntroShown && _arSupported != null)
+          _FireIntro(placeName: widget.placeName, onStart: _startFire),
 
         // 엽전 획득 효과 — 주울 때마다 키가 바뀌어 처음부터 다시 재생된다.
         if (_coinPicks > 0)
@@ -435,12 +626,12 @@ class _ArSearchScreenState extends State<ArSearchScreen> with SingleTickerProvid
 
         // 실제 AR을 못 쓰는 기기(시뮬레이터·구형)의 2D 폴백 마커 — 하위호환(missionType 없는
         // 호출부, quest_tab_screen.dart)에서만 의미가 있다.
-        if (!(_arSupported == true && !_arError)) ...[
+        if (!(_arSupported == true && !_arError) && !_isFireMission) ...[
           _marker(0.30, 0.40, AppColors.teal, Icons.diamond, '기억석 조각', onTap: () => Navigator.pop(context, true)),
           _marker(0.68, 0.55, AppColors.purple, Icons.local_fire_department, '도깨비'),
         ],
         // 실제 AR 로딩 중 안내(마커가 뜨기 전 잠깐 표시).
-        if (_arSupported == true && !_arError)
+        if (_arSupported == true && !_arError && !_isFireMission)
           const Positioned(
             bottom: 120, left: 0, right: 0,
             child: Center(child: Text('천천히 주변을 비춰 보세요 — 도깨비가 나타납니다',
@@ -701,5 +892,220 @@ class _ShutterButton extends StatelessWidget {
       ),
     );
   }
+}
+
+// ═══════════════════════════════════════════════════════════
+// 도깨비불 길들이기 — 위젯
+// ═══════════════════════════════════════════════════════════
+
+/// 인트로 — 초롱 소개와 시작. 명세 2쪽 "도착·소개" 단계.
+class _FireIntro extends StatelessWidget {
+  final String placeName;
+  final VoidCallback onStart;
+  const _FireIntro({required this.placeName, required this.onStart});
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      color: Colors.black.withValues(alpha: 0.55),
+      child: Center(
+        child: Container(
+          margin: const EdgeInsets.symmetric(horizontal: 28),
+          padding: const EdgeInsets.fromLTRB(22, 22, 22, 18),
+          decoration: BoxDecoration(
+            color: const Color(0xFF14110C).withValues(alpha: 0.96),
+            borderRadius: BorderRadius.circular(18),
+            border: Border.all(color: AppColors.gold.withValues(alpha: 0.5)),
+          ),
+          child: Column(mainAxisSize: MainAxisSize.min, children: [
+            const Icon(Icons.light_outlined, color: AppColors.gold, size: 44),
+            const SizedBox(height: 10),
+            const Text('잠든 초롱을 깨워줘',
+                style: TextStyle(color: Colors.white, fontSize: 19, fontWeight: FontWeight.w700)),
+            const SizedBox(height: 8),
+            Text(
+              '${placeName.isEmpty ? '이곳' : placeName}의 골목에 불빛 세 마리가 흩어졌어요.\n'
+              '제자리에서 폰을 천천히 돌려 불빛을 가운데에 두고 2초만 기다리세요.',
+              textAlign: TextAlign.center,
+              style: const TextStyle(color: Colors.white70, fontSize: 13.5, height: 1.5),
+            ),
+            const SizedBox(height: 16),
+            SizedBox(
+              width: double.infinity,
+              child: FilledButton(
+                style: FilledButton.styleFrom(backgroundColor: AppColors.gold, foregroundColor: Colors.black),
+                onPressed: onStart,
+                child: const Text('시작', style: TextStyle(fontWeight: FontWeight.w700)),
+              ),
+            ),
+          ]),
+        ),
+      ),
+    );
+  }
+}
+
+/// HUD — 수집 수 · 중앙 조준 원(유지 게이지) · 좌우 힌트 · 안내.
+class _FireHud extends StatelessWidget {
+  final FireProgress progress;
+  const _FireHud({required this.progress});
+
+  @override
+  Widget build(BuildContext context) {
+    final p = progress;
+    final aimed = p.aimed;
+    final ringColor = aimed ? AppColors.gold : Colors.white.withValues(alpha: 0.7);
+    final showArrow = !aimed && (p.state == FireState.seek || p.state == FireState.hold) &&
+        (p.hint == FireHint.left || p.hint == FireHint.right);
+    final arrowSize = p.stalled ? 64.0 : 40.0;
+    return IgnorePointer(
+      child: Stack(children: [
+        // 수집 수
+        SafeArea(
+          child: Align(
+            alignment: Alignment.topCenter,
+            child: Padding(
+              padding: const EdgeInsets.only(top: 96),
+              child: Container(
+                padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
+                decoration: BoxDecoration(
+                  color: Colors.black.withValues(alpha: 0.55),
+                  borderRadius: BorderRadius.circular(999),
+                  border: Border.all(color: AppColors.gold.withValues(alpha: 0.5)),
+                ),
+                child: Text('${p.collected} / ${p.total}',
+                    style: const TextStyle(color: AppColors.gold, fontSize: 18, fontWeight: FontWeight.w700)),
+              ),
+            ),
+          ),
+        ),
+        // 중앙 조준 원 + 게이지 (6° 허용 범위를 원 크기로 표현)
+        Center(
+          child: SizedBox(
+            width: 96, height: 96,
+            child: Stack(fit: StackFit.expand, children: [
+              CircularProgressIndicator(
+                value: p.holdRatio,
+                strokeWidth: 5,
+                backgroundColor: Colors.white.withValues(alpha: 0.18),
+                valueColor: AlwaysStoppedAnimation(ringColor),
+              ),
+              Center(
+                child: Container(
+                  width: 12, height: 12,
+                  decoration: BoxDecoration(shape: BoxShape.circle, color: ringColor),
+                ),
+              ),
+            ]),
+          ),
+        ),
+        // 좌우 힌트 화살표 — 진전이 없으면(8초) 더 크게
+        if (showArrow)
+          Align(
+            alignment: p.hint == FireHint.left ? const Alignment(-0.85, 0) : const Alignment(0.85, 0),
+            child: Icon(
+              p.hint == FireHint.left ? Icons.chevron_left : Icons.chevron_right,
+              color: AppColors.gold, size: arrowSize,
+            ),
+          ),
+        // 안내 한 줄
+        Align(
+          alignment: Alignment.bottomCenter,
+          child: Container(
+            margin: const EdgeInsets.only(bottom: 92),
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+            decoration: BoxDecoration(
+              color: Colors.black.withValues(alpha: 0.55),
+              borderRadius: BorderRadius.circular(999),
+            ),
+            child: Text(p.status, style: const TextStyle(color: Colors.white, fontSize: 13.5)),
+          ),
+        ),
+      ]),
+    );
+  }
+}
+
+/// 터치 모드 — 카메라 대신 가상 시야. 드래그(또는 좌우 버튼)로 yaw를 돌리고,
+/// 활성 불꽃을 (목표 yaw − 시야 yaw)에 따라 가로 위치로 그린다. 판정 규칙은 AR과 동일.
+class _FireTouchView extends StatelessWidget {
+  final Widget? backdrop;
+  final double yaw;
+  final double fov;
+  final FireTarget? active;
+  final Set<String> collected;
+  final double holdRatio;
+  final ValueChanged<double> onYaw;
+  const _FireTouchView({
+    required this.backdrop, required this.yaw, required this.fov, required this.active,
+    required this.collected, required this.holdRatio, required this.onYaw,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final size = MediaQuery.of(context).size;
+    double? fireX;
+    if (active != null) {
+      var d = active!.yawRad - yaw;
+      while (d > math.pi) { d -= 2 * math.pi; }
+      while (d < -math.pi) { d += 2 * math.pi; }
+      fireX = size.width / 2 + (d / (fov / 2)) * (size.width / 2);
+    }
+    return GestureDetector(
+      behavior: HitTestBehavior.opaque,
+      // 화면 폭을 다 끌면 시야각(70°)만큼 돈다 — 실제 폰을 돌리는 감각에 가깝게.
+      onHorizontalDragUpdate: (d) => onYaw(yaw - d.delta.dx / size.width * fov),
+      child: Stack(fit: StackFit.expand, children: [
+        backdrop ??
+            Container(
+              decoration: const BoxDecoration(
+                gradient: LinearGradient(
+                  begin: Alignment.topCenter, end: Alignment.bottomCenter,
+                  colors: [Color(0xFF0B0E16), Color(0xFF17131B), Color(0xFF221A18)],
+                ),
+              ),
+            ),
+        if (fireX != null && fireX > -60 && fireX < size.width + 60)
+          Positioned(
+            left: fireX - 30, top: size.height * 0.45 - 30,
+            child: _Glow(color: AppColors.gold, size: 60 + 20 * holdRatio, opacity: 0.75),
+          ),
+        // 좌우 버튼 — 드래그가 어려운 경우(접근성)
+        Positioned(
+          left: 12, bottom: 150,
+          child: _TouchTurnButton(icon: Icons.chevron_left, onTap: () => onYaw(yaw - 6 * math.pi / 180)),
+        ),
+        Positioned(
+          right: 12, bottom: 150,
+          child: _TouchTurnButton(icon: Icons.chevron_right, onTap: () => onYaw(yaw + 6 * math.pi / 180)),
+        ),
+        const Positioned(
+          left: 0, right: 0, bottom: 128,
+          child: Center(child: Text('터치 모드 — 화면을 좌우로 끌어 시야를 돌리세요',
+              style: TextStyle(color: Colors.white38, fontSize: 11))),
+        ),
+      ]),
+    );
+  }
+}
+
+class _TouchTurnButton extends StatelessWidget {
+  final IconData icon;
+  final VoidCallback onTap;
+  const _TouchTurnButton({required this.icon, required this.onTap});
+
+  @override
+  Widget build(BuildContext context) => GestureDetector(
+        onTap: onTap,
+        child: Container(
+          width: 44, height: 44,
+          decoration: BoxDecoration(
+            color: Colors.black.withValues(alpha: 0.55),
+            shape: BoxShape.circle,
+            border: Border.all(color: AppColors.gold.withValues(alpha: 0.5)),
+          ),
+          child: Icon(icon, color: AppColors.gold),
+        ),
+      );
 }
 
