@@ -55,6 +55,10 @@
 // ------------------------------------------------------------
 // [v11] 앞 장소를 끝내고 오면 다음 장소 대화는 선택지부터, 퀴즈는 정답 체크 없이 열리는지(재현 테스트).
 // 구현일: 2026-09-19 | 작성: ljs (quiz-reset/ljs/v1)
+// ------------------------------------------------------------
+// [v12] 쿠폰 보상 제거 — 대화 B·퀴즈 정답이 쿠폰을 주지 않는지. 친밀도 굿 엔딩 — 모자라면 굿 엔딩이
+//       잠기고 노멀만 고를 수 있는지, 채우면 굿 엔딩을 고를 수 있는지.
+// 구현일: 2026-09-19 | 작성: ljs (coupon-affinity/ljs/v1)
 // ============================================================
 import 'dart:convert';
 
@@ -623,6 +627,24 @@ void main() {
       expect(find.textContaining('마음이 곧은 자로군'), findsNothing);
     });
 
+    testWidgets('선택지 B는 쿠폰 없이 답만 듣는다', (tester) async {
+      final sc = _busan();
+      final client = MockClient((req) async => http.Response('서버 오류', 500));
+      await _toDialogue(tester, sc, apiClient: ApiClient(client: client));
+
+      expect(find.text('보상 듣기'), findsOneWidget);
+      expect(find.text('쿠폰+100'), findsNothing);
+      await tester.tap(find.text('"보상은 무엇이오?"'));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 50));
+
+      expect(tester.takeException(), isNull);
+      expect(find.textContaining('셈부터 빠르구나'), findsOneWidget);
+      expect(find.textContaining('쿠폰'), findsNothing);
+      expect(ScenarioStore.I.stateOf(sc.scenarioId).coupons, isEmpty);
+      expect(ScenarioStore.I.stateOf(sc.scenarioId).flags, {'실리'}, reason: '성향 플래그는 그대로 남는다');
+    });
+
     testWidgets('dialogueTurn이 실패하면 기존 고정 답변으로 폴백한다', (tester) async {
       final client = MockClient((req) async => http.Response('서버 오류', 500));
 
@@ -1187,7 +1209,7 @@ void main() {
       expect(find.textContaining('쿠폰 +'), findsNothing, reason: '데이터에 없는 쿠폰을 박아 주지 않는다');
     });
 
-    // AI가 퀴즈 원자에 담아 보내는 정답 보상 쿠폰 — 예전엔 200원을 박아 두고 저장도 안 해 재진입하면 사라졌다.
+    // 예전 AI가 퀴즈 원자에 담아 보내던 정답 보상 쿠폰 — 쿠폰 보상을 없애 앱이 쓰지 않는다.
     Scenario couponQuizCourse() => Scenario.fromJson({
           'scenario_id': 'gyeongju_quiz_coupon',
           'title': '경주시의 기억석',
@@ -1208,20 +1230,20 @@ void main() {
           ],
         });
 
-    testWidgets('퀴즈 정답 — AI가 준 쿠폰을 보여주고, 조각과 함께 지급해 코스에 저장한다', (tester) async {
+    testWidgets('퀴즈 정답 — 예전 코스에 정답 쿠폰이 있어도 보여 주지도 지급하지도 않는다', (tester) async {
       final sc = couponQuizCourse();
       await toQuizContinue(tester, sc, _FakeQuestServer(scenarioId: sc.scenarioId));
 
-      expect(find.text('쿠폰 +200원'), findsOneWidget, reason: 'AI correct.coupon 값');
-      expect(find.text('경험치 +30'), findsNothing);
+      expect(find.text('"옳거니! 안목이 있구나."'), findsOneWidget);
+      expect(find.textContaining('쿠폰'), findsNothing, reason: '쿠폰 보상은 없앴다');
 
       await tester.tap(find.text('계속하기'));
       await tester.pump(const Duration(milliseconds: 100));
       await tester.pump(const Duration(milliseconds: 100));
 
-      expect(find.text('+200원'), findsOneWidget, reason: '획득 팝업의 쿠폰 줄');
-      expect(ScenarioStore.I.stateOf(sc.scenarioId).couponTotal, 200,
-          reason: '재진입해도 남도록 코스에 저장돼야 한다');
+      expect(find.text('가방에 넣기 — 지도로'), findsOneWidget);
+      expect(find.text('+200원'), findsNothing, reason: '획득 팝업에 쿠폰 줄이 없다');
+      expect(ScenarioStore.I.stateOf(sc.scenarioId).coupons, isEmpty);
     });
   });
 
@@ -1472,6 +1494,54 @@ void main() {
       await tester.tap(find.text('말 걸기'));
       await tester.pump();
     }
+
+    /// 장소 둘 + 피날레 — 두 장소를 끝낸 채 피날레로. 굿 엔딩 기준 = 장소 2곳의 절반 = 친밀도 1.
+    Future<Scenario> afterTwoPlaces({required int affinity}) async {
+      final finale = finaleCourse().nodeSequence.single.toJson();
+      final sc = Scenario.fromJson({
+        'scenario_id': 'gyeongju_affinity',
+        'title': '경주시의 기억석',
+        'region': '경주시',
+        'node_sequence': [_stone('p1', '첨성대'), _stone('p2', '대릉원'), finale],
+      });
+      await ScenarioStore.I.add(sc);
+      await ScenarioStore.I.completeNodeWithGrants(sc.scenarioId, sc.nodeSequence[0]);
+      await ScenarioStore.I.completeNodeWithGrants(sc.scenarioId, sc.nodeSequence[1]);
+      if (affinity > 0) {
+        await ScenarioStore.I.grant(sc.scenarioId, [StateRef(kind: StateKind.affinity, value: '', amount: affinity)]);
+      }
+      return sc;
+    }
+
+    testWidgets('친밀도가 모자라면 굿 엔딩이 잠기고 노멀 엔딩만 고를 수 있다', (tester) async {
+      final sc = await afterTwoPlaces(affinity: 0);
+      await toFinale(tester, sc, _FakeQuestServer(scenarioId: sc.scenarioId));
+
+      expect(find.byKey(const ValueKey('good-ending-locked')), findsOneWidget);
+      expect(find.text('도깨비들의 사연을 더 들어야 굿 엔딩이 열리느니라 · 친밀도 0/1'), findsOneWidget);
+      await tester.tap(find.text('이곳의 기억을 계속 지킬게.'), warnIfMissed: false);
+      await tester.pump(const Duration(milliseconds: 100));
+      expect(find.byType(MemoryStoneRestore), findsNothing, reason: '잠긴 굿 엔딩은 눌러도 넘어가지 않는다');
+
+      await tester.tap(find.text('이제 일상으로 돌아가고 싶어.'));
+      await tester.pump(const Duration(milliseconds: 100));
+      await tester.pump(const Duration(milliseconds: 100));
+      await throughRestore(tester);
+      expect(ScenarioStore.I.endingOf(sc.scenarioId), 'normal');
+    });
+
+    testWidgets('친밀도가 기준 이상이면 굿 엔딩을 고를 수 있다', (tester) async {
+      final sc = await afterTwoPlaces(affinity: 1);
+      await toFinale(tester, sc, _FakeQuestServer(scenarioId: sc.scenarioId));
+
+      expect(find.byKey(const ValueKey('good-ending-locked')), findsNothing);
+      expect(find.byKey(const ValueKey('good-ending-need')), findsNothing);
+      await tester.tap(find.text('이곳의 기억을 계속 지킬게.'));
+      await tester.pump(const Duration(milliseconds: 100));
+      await tester.pump(const Duration(milliseconds: 100));
+      await throughRestore(tester);
+      expect(ScenarioStore.I.endingOf(sc.scenarioId), 'good');
+    });
 
     testWidgets('피날레 화면 — 세종대왕 대신 그 코스의 수호 도깨비와 복원 대사가 뜬다', (tester) async {
       final sc = finaleCourse();

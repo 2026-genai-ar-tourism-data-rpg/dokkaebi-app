@@ -141,29 +141,6 @@ void main() {
       expect(n.actions[2].answerIdx, 1);
     });
 
-    // AI가 모든 퀴즈 노드의 answer 원자에 담아 보내는 정답 보상. 경험치는 앱이 읽지 않는다(서버 기준).
-    test('answer 원자의 정답 보상 쿠폰을 읽는다', () {
-      expect(n.actions[2].correctCoupon, 200);
-    });
-
-    test('정답 보상 쿠폰이 없거나 0이면 null — answer가 아닌 원자도 null', () {
-      expect(ActionAtom.fromJson({'a': 'answer', 'quiz': {'answer_idx': 0}}).correctCoupon, isNull);
-      expect(
-          ActionAtom.fromJson({
-            'a': 'answer',
-            'quiz': {'answer_idx': 0, 'correct': {'exp': 10}},
-          }).correctCoupon,
-          isNull,
-          reason: '구매 없이 인증하는 퀴즈는 경험치만 준다');
-      expect(
-          ActionAtom.fromJson({
-            'a': 'answer',
-            'quiz': {'correct': {'coupon': 0}},
-          }).correctCoupon,
-          isNull);
-      expect(n.actions[0].correctCoupon, isNull);
-    });
-
     test('선택지 효과는 코드 고정 — 문구(text)는 아직 비어 있어도 파싱된다', () {
       final choices = n.actions[1].choices;
       expect(choices.length, 3);
