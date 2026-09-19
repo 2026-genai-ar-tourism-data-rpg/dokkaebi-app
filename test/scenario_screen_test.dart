@@ -103,6 +103,25 @@ void main() {
     expect(find.text('광화문'), findsWidgets);
   });
 
+  testWidgets("'모은 것'의 기억석 조각은 식별자가 아니라 '첫째 조각 · 장소'로 부른다", (tester) async {
+    final sc = Scenario.fromJson({
+      'scenario_id': 'gwanak_labels',
+      'title': '관악구의 기억석',
+      'region': '관악구',
+      'node_sequence': [
+        {..._n('g1', '자매공원'), 'fragment_id': '관악구_stone_1of2', 'stone_no': 1},
+        {..._n('g2', '관악산', finale: true), 'fragment_id': '관악구_stone_2of2', 'stone_no': 2},
+      ],
+    });
+    await ScenarioStore.I.add(sc);
+    await ScenarioStore.I.completeNodeWithGrants(sc.scenarioId, sc.nodeSequence[0]);
+
+    await _pump(tester, sc);
+    expect(tester.takeException(), isNull);
+    expect(find.text('첫째 조각 · 자매공원'), findsOneWidget);
+    expect(find.text('관악구_stone_1of2'), findsNothing);
+  });
+
   testWidgets('단서함·성향 칩이 상태 그래프에서 온다', (tester) async {
     final sc = _jongno();
     await ScenarioStore.I.add(sc);

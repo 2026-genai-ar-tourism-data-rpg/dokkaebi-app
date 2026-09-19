@@ -1,4 +1,14 @@
 // ============================================================
+// [v3] 위시리스트 — '내 주변 탐험' 카드의 +로 담고, 퀘스트 탭 '위시리스트'에서 골라 바로 코스 생성.
+// 구현(요약): 토글을 [내 주변 탐험 / 시나리오 라이브러리 / 위시리스트] 세 칸으로. 카드 오른쪽의
+//            카메라 아이콘(누르는 기능 없는 장식)을 +/✓ 버튼으로 바꿔 ScenarioStore 위시리스트
+//            (최대 30곳, 앱을 꺼도 유지)에 담고 뺀다. 위시리스트 탭은 여러 곳을 골라(코스 하나에
+//            최대 5곳) '코스 생성'을 누르면 기본 조건(2시간·도보·혼자·보통)으로 바로 만든다 —
+//            고른 장소로만(wishlist_only, 다른 장소로 채우지 않음), 반경은 고른 장소가 모두
+//            들어오게 가장 먼 곳까지(최대 10km). 만든 뒤에도 목록은 남긴다.
+//            카드 자체를 누르면 예전처럼 그 장소 AR 탐색.
+// 구현일: 2026-09-19 | 작성: ljs (wishlist-course/ljs/v1)
+// ------------------------------------------------------------
 // [v2] 화면: 퀘스트 일지 — 04 Library 시안 기반 재구성
 // pipeline: 모바일 클라이언트 / 화면 (퀘스트 탭)
 // 구현(요약): 상단 "새 퀘스트 시작하기"(이어하기)는 유지, 그 아래를
@@ -11,6 +21,8 @@
 // ------------------------------------------------------------
 // [v1] 지역 메인 퀘스트 + 내 코스(상태별 그룹) — 2026-06-18/19 kys (app-scaffold/kys/v1)
 // ============================================================
+import 'dart:math' as math;
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart' show rootBundle;
 import 'package:http/http.dart' as http;
@@ -19,25 +31,31 @@ import 'package:kakao_maps_flutter/kakao_maps_flutter.dart';
 import '../api/api_client.dart';
 import '../game/location_service.dart';
 import '../models/scenario.dart';
+import '../models/explore_draft.dart';
 import '../store.dart';
 import '../theme.dart';
 import '../widgets/ui.dart';
 import 'ar_search_screen.dart';
-import 'create_scenario_screen.dart' show haversineMeters;
+import 'create_scenario_screen.dart' show haversineMeters, kMaxWishlistCount;
 import 'explore_conditions_screen.dart';
+import 'explore_confirm_screen.dart';
 import 'quest_journey_screen.dart';
 import 'scenario_screen.dart';
 
 enum _Sort { latest, completion }
 
 class QuestTabScreen extends StatefulWidget {
-  const QuestTabScreen({super.key});
+  /// 위치·HTTP 주입 지점 — 테스트가 실기기 GPS·서버 없이 주변 탐험·위시리스트를 돌린다.
+  final LocationService locationService;
+  final http.Client? httpClient;
+
+  const QuestTabScreen({super.key, this.locationService = const LocationService(), this.httpClient});
   @override
   State<QuestTabScreen> createState() => _QuestTabScreenState();
 }
 
 class _QuestTabScreenState extends State<QuestTabScreen> {
-  int _section = 1; // 0 = 내 주변 탐험, 1 = 시나리오 라이브러리
+  int _section = 1; // 0 = 내 주변 탐험, 1 = 시나리오 라이브러리, 2 = 위시리스트
   _Sort _sort = _Sort.latest;
 
   double _completion(Scenario s) =>
@@ -70,7 +88,9 @@ class _QuestTabScreenState extends State<QuestTabScreen> {
             const SizedBox(height: 16),
 
             if (_section == 0)
-              const _NearbySection()
+              _NearbySection(locationService: widget.locationService, httpClient: widget.httpClient)
+            else if (_section == 2)
+              _WishlistSection(locationService: widget.locationService, httpClient: widget.httpClient)
             else ...[
               Row(children: [
                 Pill('최신순', active: _sort == _Sort.latest,
@@ -105,7 +125,7 @@ class _QuestTabScreenState extends State<QuestTabScreen> {
   }
 }
 
-/// [내 주변 탐험 / 시나리오 라이브러리] 두 칸 토글 — 활성 칸만 채움.
+/// [내 주변 탐험 / 시나리오 라이브러리 / 위시리스트] 세 칸 토글 — 활성 칸만 채움.
 class _SectionToggle extends StatelessWidget {
   final int section;
   final ValueChanged<int> onChanged;
@@ -123,6 +143,7 @@ class _SectionToggle extends StatelessWidget {
       child: Row(children: [
         _cell('내 주변 탐험', 0),
         _cell('시나리오 라이브러리', 1),
+        _cell('위시리스트', 2),
       ]),
     );
   }
@@ -139,11 +160,16 @@ class _SectionToggle extends StatelessWidget {
             color: active ? AppColors.teal.withOpacity(0.18) : Colors.transparent,
             borderRadius: BorderRadius.circular(9),
           ),
-          child: Text(label,
-              style: TextStyle(
-                  color: active ? AppColors.teal : AppColors.textSecondary,
-                  fontSize: 13,
-                  fontWeight: FontWeight.w600)),
+          // 세 칸이라 좁은 기기에선 '시나리오 라이브러리'가 넘친다 — 줄바꿈 대신 글자를 줄인다.
+          child: FittedBox(
+            fit: BoxFit.scaleDown,
+            child: Text(label,
+                maxLines: 1,
+                style: TextStyle(
+                    color: active ? AppColors.teal : AppColors.textSecondary,
+                    fontSize: 13,
+                    fontWeight: FontWeight.w600)),
+          ),
         ),
       ),
     );
@@ -240,6 +266,21 @@ class _NearbySectionState extends State<_NearbySection> {
     if (!loc.isOk) return;
     final moved = haversineMeters(_lat!, _lng!, loc.lat!, loc.lng!);
     if (moved >= _kAutoRefreshMoveM) await _load();
+  }
+
+  /// 위시리스트에 담기/빼기(+ ↔ ✓). 가득 찼으면 알린다.
+  Future<void> _toggleWish(NearbyPlace p) async {
+    final wish = p.toWish();
+    if (wish == null) return;
+    if (ScenarioStore.I.isWished(wish.contentId)) {
+      await ScenarioStore.I.removeWish(wish.contentId);
+    } else if (!await ScenarioStore.I.addWish(wish)) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+            content: Text('위시리스트는 최대 ${ScenarioStore.wishlistMax}곳까지 담을 수 있어요.')));
+      }
+    }
+    if (mounted) setState(() {});
   }
 
   /// 그 자리에서 바로 AR 탐색 — 코스 없이 단일 지점 조우.
@@ -367,7 +408,12 @@ class _NearbySectionState extends State<_NearbySection> {
       else
         ...visible.map((p) => Padding(
               padding: const EdgeInsets.only(bottom: 10),
-              child: _NearbyCard(place: p, onExplore: () => _explore(p)),
+              child: _NearbyCard(
+                place: p,
+                onExplore: () => _explore(p),
+                wished: p.contentId != null && ScenarioStore.I.isWished(p.contentId!),
+                onToggleWish: p.contentId == null ? null : () => _toggleWish(p),
+              ),
             )),
     ]);
   }
@@ -572,11 +618,18 @@ IconData _iconOf(NearbyCategory c) => switch (c) {
       NearbyCategory.other => Icons.place_outlined,
     };
 
-/// 주변 POI 카드 — 갈래 아이콘·이름·거리·주소 + "AR로 탐색" 진입.
+/// 주변 POI 카드 — 갈래 아이콘·이름·거리·주소. 카드를 누르면 AR 탐색, 오른쪽 +/✓는 위시리스트.
 class _NearbyCard extends StatelessWidget {
   final NearbyPlace place;
   final VoidCallback onExplore;
-  const _NearbyCard({required this.place, required this.onExplore});
+
+  /// 위시리스트에 담겼는지(✓).
+  final bool wished;
+
+  /// 위시리스트 담기/빼기 — null이면(관광공사 content_id 없음) 담을 수 없어 버튼을 숨긴다.
+  final VoidCallback? onToggleWish;
+
+  const _NearbyCard({required this.place, required this.onExplore, this.wished = false, this.onToggleWish});
 
   @override
   Widget build(BuildContext context) {
@@ -615,8 +668,174 @@ class _NearbyCard extends StatelessWidget {
             ],
           ]),
         ),
-        const SizedBox(width: 8),
-        const Icon(Icons.camera_alt_outlined, color: AppColors.teal, size: 20),
+        if (onToggleWish != null)
+          IconButton(
+            key: ValueKey('wish-${place.nodeId}'),
+            onPressed: onToggleWish,
+            icon: Icon(wished ? Icons.check_circle : Icons.add_circle_outline, color: AppColors.teal, size: 24),
+            tooltip: wished ? '위시리스트에서 빼기' : '위시리스트에 담기',
+          ),
+      ]),
+    );
+  }
+}
+
+/// 위시 장소로 바로 만드는 코스의 반경(km) — 고른 장소가 모두 들어오게 가장 먼 곳까지 올리되
+/// 마법사 기본 반경보다 작지 않게, 최대 [_kRadiusMaxM]. 위치를 모르거나 좌표 없는 장소가 있으면 최대.
+int wishCourseRadiusKm(double? lat, double? lng, List<SearchCandidate> places) {
+  final base = ExploreDraft().radiusKm;
+  const maxKm = _kRadiusMaxM ~/ 1000;
+  if (lat == null || lng == null) return maxKm;
+  var farthestM = 0.0;
+  for (final c in places) {
+    if (c.lat == null || c.lng == null) return maxKm;
+    farthestM = math.max(farthestM, haversineMeters(lat, lng, c.lat!, c.lng!));
+  }
+  return (farthestM / 1000).ceil().clamp(base, maxKm);
+}
+
+/// "위시리스트" — '내 주변 탐험'에서 +로 담은 장소. 여러 곳(코스 하나에 최대 5곳)을 골라
+/// '코스 생성'을 누르면 기본 조건으로 바로 만든다(입력 확인 화면이 곧장 생성을 시작한다).
+class _WishlistSection extends StatefulWidget {
+  final LocationService locationService;
+  final http.Client? httpClient;
+  const _WishlistSection({required this.locationService, this.httpClient});
+
+  @override
+  State<_WishlistSection> createState() => _WishlistSectionState();
+}
+
+class _WishlistSectionState extends State<_WishlistSection> {
+  final Set<String> _selected = {};
+  bool _starting = false;
+
+  void _toggle(String contentId) {
+    setState(() {
+      if (_selected.remove(contentId)) return;
+      if (_selected.length >= kMaxWishlistCount) {
+        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+            content: Text('코스 하나엔 최대 $kMaxWishlistCount곳까지 고를 수 있어요.')));
+        return;
+      }
+      _selected.add(contentId);
+    });
+  }
+
+  Future<void> _remove(String contentId) async {
+    setState(() => _selected.remove(contentId));
+    await ScenarioStore.I.removeWish(contentId);
+  }
+
+  Future<void> _create(List<SearchCandidate> items) async {
+    final picked = items.where((c) => _selected.contains(c.contentId)).toList();
+    setState(() => _starting = true);
+    final loc = await widget.locationService.current();
+    if (!mounted) return;
+    setState(() => _starting = false);
+    final draft = ExploreDraft()
+      ..places.addAll(picked)
+      ..wishlistOnly = true // 고른 장소로만 — 다른 장소로 채우지 않는다
+      ..radiusKm = wishCourseRadiusKm(loc.isOk ? loc.lat : null, loc.isOk ? loc.lng : null, picked);
+    await Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (_) => ExploreConfirmScreen(
+          draft: draft,
+          autoGenerate: true,
+          locationService: widget.locationService,
+          httpClient: widget.httpClient,
+        ),
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return ListenableBuilder(
+      listenable: ScenarioStore.I,
+      builder: (context, _) {
+        final items = ScenarioStore.I.wishlist;
+        _selected.removeWhere((id) => !items.any((c) => c.contentId == id)); // 다른 곳에서 뺀 장소
+        final canCreate = _selected.isNotEmpty && !_starting;
+        return Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+          Row(children: [
+            Text('위시리스트 ${items.length}곳',
+                style: const TextStyle(color: AppColors.textSecondary, fontSize: 12)),
+            const Spacer(),
+            FilledButton.icon(
+              // 테마의 최소 크기가 '가로 꽉 참'(Size.fromHeight)이라 한 줄(Row) 안에선 그려지지 않는다.
+              style: FilledButton.styleFrom(minimumSize: const Size(0, 40)),
+              onPressed: canCreate ? () => _create(items) : null,
+              icon: const Icon(Icons.auto_awesome, size: 18),
+              label: Text(_selected.isEmpty ? '코스 생성' : '코스 생성 ${_selected.length}'),
+            ),
+          ]),
+          const SizedBox(height: 4),
+          const Text('코스에 넣을 장소를 골라 주세요 (최대 $kMaxWishlistCount곳)',
+              style: TextStyle(color: AppColors.textMuted, fontSize: 11.5)),
+          const SizedBox(height: 10),
+          if (items.isEmpty)
+            GlowCard(
+              child: const Text('아직 담은 장소가 없어요. "내 주변 탐험"에서 + 를 눌러 담아 보세요.',
+                  style: TextStyle(color: AppColors.textSecondary, fontSize: 13)),
+            )
+          else
+            ...items.map((c) => Padding(
+                  padding: const EdgeInsets.only(bottom: 10),
+                  child: _WishCard(
+                    place: c,
+                    selected: _selected.contains(c.contentId),
+                    onToggle: () => _toggle(c.contentId),
+                    onRemove: () => _remove(c.contentId),
+                  ),
+                )),
+        ]);
+      },
+    );
+  }
+}
+
+/// 위시리스트 한 곳 — 누르면 코스에 넣을지 고르고, 오른쪽 X는 위시리스트에서 뺀다.
+class _WishCard extends StatelessWidget {
+  final SearchCandidate place;
+  final bool selected;
+  final VoidCallback onToggle;
+  final VoidCallback onRemove;
+  const _WishCard({required this.place, required this.selected, required this.onToggle, required this.onRemove});
+
+  @override
+  Widget build(BuildContext context) {
+    return GlowCard(
+      onTap: onToggle,
+      child: Row(children: [
+        Checkbox(
+          key: ValueKey('wish-pick-${place.contentId}'),
+          value: selected,
+          onChanged: (_) => onToggle(),
+          activeColor: AppColors.teal,
+        ),
+        const SizedBox(width: 4),
+        Expanded(
+          child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            Text(place.name ?? '이름 모를 자리',
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(color: AppColors.textPrimary, fontSize: 15, fontWeight: FontWeight.bold)),
+            if (place.addr != null && place.addr!.isNotEmpty) ...[
+              const SizedBox(height: 2),
+              Text(place.addr!,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(color: AppColors.textSecondary, fontSize: 11.5)),
+            ],
+          ]),
+        ),
+        IconButton(
+          key: ValueKey('wish-remove-${place.contentId}'),
+          onPressed: onRemove,
+          icon: const Icon(Icons.close, color: AppColors.textMuted, size: 20),
+          tooltip: '위시리스트에서 빼기',
+        ),
       ]),
     );
   }

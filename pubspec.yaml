@@ -101,11 +101,36 @@ flutter:
   assets:
     - assets/images/my_location.png
     - assets/images/region_pin.png
-    - assets/images/dokkaebi_character.png
-    - assets/images/dokkaebi_character_bust.png
     # 코스 진행(quest_journey_screen) 챕터 마커 — 번호별 PNG(1~12), Pillow로 생성
     # (dart:ui 런타임 인코딩은 네이티브 SDK가 거부해 못 씀, 위 파일의 주석 참고).
     - assets/images/quest_pins/
+    # AR 엽전 줍기(HUNT) — 엽전 그림과 주울 때 뜨는 획득 효과. vfx엔 기억석 복원 빛도 있다.
+    - assets/game/ar/
+    - assets/game/vfx/
+    # 기억석 조각·완성체 — 조각 획득 팝업과 피날레 복원 연출(lib/widgets/memory_stone_restore.dart).
+    - assets/game/memory_stone/
+    # 장소별 도깨비 캐릭터(lib/game/npc_art.dart) — 전신·상반신 기본·상반신 말하기 WebP.
+    # 폴더 등록은 하위 폴더를 포함하지 않아 20개를 모두 적는다.
+    - assets/game/characters/base_youth/
+    - assets/game/characters/heritage_meok/
+    - assets/game/characters/heritage_giwa/
+    - assets/game/characters/heritage_hyeonpan/
+    - assets/game/characters/nature_sol/
+    - assets/game/characters/nature_ikki/
+    - assets/game/characters/nature_mulangae/
+    - assets/game/characters/market_yeopjeon/
+    - assets/game/characters/market_doetbak/
+    - assets/game/characters/market_bottari/
+    - assets/game/characters/food_gamasot/
+    - assets/game/characters/food_chatjan/
+    - assets/game/characters/food_sutbul/
+    - assets/game/characters/leports_baram/
+    - assets/game/characters/leports_jinggeom/
+    - assets/game/characters/festival_tal/
+    - assets/game/characters/festival_deungbul/
+    - assets/game/characters/person_sumun/
+    - assets/game/characters/person_seochaek/
+    - assets/game/characters/guardian_suho/
 
   # An image asset can refer to one or more resolution-specific "variants", see
   # https://flutter.dev/to/resolution-aware-images

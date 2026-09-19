@@ -39,7 +39,16 @@
 //            보므로 Y축 회전 애니메이션과 겹치면 제자리에서 뒤집히는 것처럼 보인다.
 // 구현일: 2026-09-17 | 작성: ljs (character-illustration/ljs/v1)
 // ------------------------------------------------------------
-// [v5] PHOTO_FIND 문양 마커 — 판(면) → 힌트 화살표, 상시 노출 → 지연 노출.
+// [v5] beacon 그림을 장소별 도깨비로 + HUNT 발자국을 엽전으로.
+// 구현(요약): 마커 정의의 image(Flutter 에셋 경로, lib/game/npc_art.dart)를 앱 번들에서 읽어
+//            판에 붙이고, 판 비율도 그 그림에 맞춘다. image가 없거나 못 읽으면 v4의 기본 캐릭터.
+//            HUNT는 바닥의 발자국 대신 도깨비가 흘리고 간 엽전(빌보드 판, 바닥에 세움).
+//            도깨비 판은 키 0.42→1.0m로 키우고 발끝을 바닥에 맞췄다(가운데가 바닥이라 반이 묻혔다).
+//            엽전은 바닥 위 kCoinHoverM에 띄워 오르내리고, 흐릿할 때도 kCoinGhostOpacity로 진하게.
+//            폴백 그림 DokkaebiCharacter도 새 세트의 기본 소년 도깨비(빨간 youth)로 바꿨다.
+// 구현일: 2026-09-18 | 작성: ljs (npc-character-set/ljs/v1)
+// ------------------------------------------------------------
+// [v6] PHOTO_FIND 문양 마커 — 판(면) → 힌트 화살표, 상시 노출 → 지연 노출.
 // 구현(요약): pattern 마커는 세션 시작 카메라 자세 기준 "정면 2.6m 앞"이라는 고정
 //            오프셋일 뿐 실제 타깃 위치가 아닌데, 확정된 위치처럼 보이는 판으로
 //            상시 그려서 실기기 테스트에서 사물과 무관한 자리에 뜨는 것으로 오인됐다
@@ -56,7 +65,7 @@ import UIKit
 
 /// 마커 종류 — 미션별로 그리는 모양이 다르다. Dart의 ArMarkerKind와 문자열이 같아야 한다.
 enum ArMarkerKind: String {
-  case footprint   // HUNT       — 바닥에 찍힌 발자국
+  case coin        // HUNT       — 도깨비가 흘리고 간 엽전
   case part        // RESTORE_AR — 흩어진 부재(주춧돌·기둥)
   case pattern     // PHOTO_FIND — 벽면 문양(수직 판)
   case hidden      // FIND       — 숨은 도깨비 자리의 풀숲
@@ -70,6 +79,12 @@ enum ArMarkerState: String {
   case solid       // 완전히 드러남
 }
 
+/// 엽전이 바닥 위로 떠 있는 높이(m) — 바닥에 두면 발밑이라 폰을 숙여야 보였다.
+private let kCoinHoverM: Float = 0.6
+
+/// 흐릿한(ghost) 엽전의 불투명도 — 다른 마커(0.28)보다 진하게, 카메라 배경에 묻히지 않게.
+private let kCoinGhostOpacity: CGFloat = 0.5
+
 /// 마커 1개 정의 — Dart 쪽에서 creationParams로 전달.
 private struct ArMarkerSpec {
   let id: String
@@ -81,6 +96,7 @@ private struct ArMarkerSpec {
   let down: Float
   let kind: ArMarkerKind
   let state: ArMarkerState
+  let image: String?  // beacon·coin에 붙일 Flutter 에셋 경로 — 없으면 기본 모양
 
   static func parse(_ dict: [String: Any]) -> ArMarkerSpec? {
     guard let id = dict["id"] as? String, let label = dict["label"] as? String else { return nil }
@@ -92,7 +108,8 @@ private struct ArMarkerSpec {
       right: Float((dict["right"] as? Double) ?? 0),
       down: Float((dict["down"] as? Double) ?? 0.2),
       kind: ArMarkerKind(rawValue: (dict["kind"] as? String) ?? "") ?? .beacon,
-      state: ArMarkerState(rawValue: (dict["state"] as? String) ?? "") ?? .solid
+      state: ArMarkerState(rawValue: (dict["state"] as? String) ?? "") ?? .solid,
+      image: dict["image"] as? String
     )
   }
 }
@@ -373,19 +390,19 @@ final class DokkaebiArView: NSObject, FlutterPlatformView, ARSCNViewDelegate, AR
         right: spec.right,
         down: spec.down
       )
-      // 바닥을 이미 찾았으면 바닥에 앉힌다(발자국·부재는 공중에 뜨면 안 된다).
-      if let y = floorY, spec.kind != .pattern { pos.y = y }
+      // 바닥을 이미 찾았으면 바닥에 앉힌다(부재·도깨비는 공중에 뜨면 안 된다. 엽전은 바닥 위로 띄운다).
+      if let y = floorY, spec.kind != .pattern { pos.y = floorHeight(y, for: spec.kind) }
 
       let node = markerNode(spec: spec)
       node.simdPosition = pos
       node.name = "marker:\(spec.id)"
       sceneView.scene.rootNode.addChildNode(node)
       markerPositions[spec.id] = pos
-      applyState(node: node, state: spec.state, scale: 1.0)
+      applyState(node: node, state: spec.state, scale: 1.0, kind: spec.kind)
 
-      // 등장 애니메이션. 발자국은 바닥에 찍히는 것이라 부유시키지 않는다.
+      // 등장 애니메이션 + 은은한 오르내림(떠 있는 것들).
       node.runAction(.scale(to: CGFloat(spec.state == .hidden ? 0.01 : 1.0), duration: 0.4))
-      if spec.kind == .beacon || spec.kind == .part {
+      if spec.kind == .beacon || spec.kind == .part || spec.kind == .coin {
         node.runAction(.repeatForever(.sequence([
           .moveBy(x: 0, y: 0.06, z: 0, duration: 1.1),
           .moveBy(x: 0, y: -0.06, z: 0, duration: 1.1),
@@ -400,23 +417,28 @@ final class DokkaebiArView: NSObject, FlutterPlatformView, ARSCNViewDelegate, AR
     for spec in markerSpecs where spec.kind != .pattern {
       guard let node = sceneView.scene.rootNode.childNode(withName: "marker:\(spec.id)", recursively: false) else { continue }
       var p = node.simdPosition
-      p.y = y
+      p.y = floorHeight(y, for: spec.kind)
       node.simdPosition = p
       markerPositions[spec.id] = p
     }
   }
 
+  /// 바닥 높이 y에 이 종류의 마커를 둘 높이 — 엽전만 바닥 위로 띄운다.
+  private func floorHeight(_ y: Float, for kind: ArMarkerKind) -> Float {
+    kind == .coin ? y + kCoinHoverM : y
+  }
+
   private func setMarkerState(id: String, state: ArMarkerState, scale: Float) {
     guard let node = sceneView.scene.rootNode.childNode(withName: "marker:\(id)", recursively: false) else { return }
-    applyState(node: node, state: state, scale: scale)
+    applyState(node: node, state: state, scale: scale, kind: markerKinds[id])
   }
 
   /// 표시 상태를 실제 재질·크기에 반영. 상태 판단은 전부 Dart에 있다.
-  private func applyState(node: SCNNode, state: ArMarkerState, scale: Float) {
+  private func applyState(node: SCNNode, state: ArMarkerState, scale: Float, kind: ArMarkerKind?) {
     let opacity: CGFloat
     switch state {
     case .hidden: opacity = 0.0
-    case .ghost: opacity = 0.28
+    case .ghost: opacity = kind == .coin ? kCoinGhostOpacity : 0.28
     case .solid: opacity = 1.0
     }
     node.runAction(.group([
@@ -434,13 +456,13 @@ final class DokkaebiArView: NSObject, FlutterPlatformView, ARSCNViewDelegate, AR
     )
     let node: SCNNode
     switch spec.kind {
-    case .footprint: node = footprintNode(color: color)
+    case .coin: node = coinNode(imageAsset: spec.image, color: color)
     case .part: node = partNode(color: color)
     case .pattern: node = patternNode(color: color, label: spec.label)
     case .hidden: node = grassNode(color: color)
-    case .beacon: node = beaconNode()
+    case .beacon: node = beaconNode(imageAsset: spec.image)
     }
-    // 발자국·문양은 이름표가 오히려 방해된다(바닥에 붙은 자국 위에 글자가 뜬다).
+    // 엽전·문양은 이름표가 오히려 방해된다(바닥의 엽전 위에 글자가 뜬다).
     if spec.kind == .beacon || spec.kind == .part {
       let labelNode = SCNNode(geometry: textGeometry(spec.label, color: color))
       labelNode.scale = SCNVector3(0.01, 0.01, 0.01)
@@ -462,13 +484,28 @@ final class DokkaebiArView: NSObject, FlutterPlatformView, ARSCNViewDelegate, AR
     return mat
   }
 
-  /// 발자국 — 바닥에 눕힌 납작한 타원. 걸어오면서 하나씩 켜지는 것이 HUNT의 핵심.
-  private func footprintNode(color: UIColor) -> SCNNode {
-    let geo = SCNPlane(width: 0.16, height: 0.30)
-    geo.cornerRadius = 0.08
-    geo.materials = [glowMaterial(color, intensity: 0.8)]
-    let node = SCNNode(geometry: geo)
-    node.eulerAngles.x = -Float.pi / 2   // 바닥에 눕힌다
+  /// 엽전 — 도깨비가 흘리고 간 것. 그림을 카메라를 향하는 판에 붙여 바닥에 세운다
+  /// (마커 위치=바닥이라 판을 반 높이만큼 올린다). 그림을 못 읽으면 발광 원판.
+  private func coinNode(imageAsset: String?, color: UIColor) -> SCNNode {
+    let size: CGFloat = 0.3  // 기본 지름(m) — 거리별 배율은 Dart(coinScaleFor)가 곱한다
+    let geo = SCNPlane(width: size, height: size)
+    if let image = imageAsset.flatMap({ flutterAssetImage($0) }) {
+      let mat = SCNMaterial()
+      mat.diffuse.contents = image
+      mat.isDoubleSided = true
+      mat.lightingModel = .constant
+      geo.materials = [mat]
+    } else {
+      geo.cornerRadius = size / 2
+      geo.materials = [glowMaterial(color, intensity: 0.8)]
+    }
+    let plane = SCNNode(geometry: geo)
+    plane.position = SCNVector3(0, Float(size / 2), 0)
+    let billboard = SCNBillboardConstraint()
+    billboard.freeAxes = .Y
+    plane.constraints = [billboard]
+    let node = SCNNode()
+    node.addChildNode(plane)
     return node
   }
 
@@ -530,26 +567,40 @@ final class DokkaebiArView: NSObject, FlutterPlatformView, ARSCNViewDelegate, AR
     return node
   }
 
-  /// 범용/하위호환 — 기본 캐릭터 일러스트를 항상 카메라를 향하는 평면에 텍스처로 붙인다.
+  /// 범용/하위호환 — 캐릭터 그림을 항상 카메라를 향하는 평면에 텍스처로 붙인다.
   /// (v1의 피라미드는 사람 형상 이미지를 입체에 입힐 수 없어 빌보드 판으로 교체)
-  private func beaconNode() -> SCNNode {
-    let heightOverWidth: CGFloat = 902.0 / 572.0 // dokkaebi_character.png 원본 픽셀 비율
-    let height: CGFloat = 0.42
+  /// imageAsset(장소 도깨비)을 못 읽으면 기본 캐릭터 DokkaebiCharacter(기본 소년 도깨비와 같은 그림).
+  /// 판의 발끝을 마커 위치(바닥)에 맞춘다 — 전엔 판 가운데가 바닥이라 아래 절반이 바닥에 묻혔다.
+  private func beaconNode(imageAsset: String?) -> SCNNode {
+    let image = imageAsset.flatMap { flutterAssetImage($0) } ?? UIImage(named: "DokkaebiCharacter")
+    let heightOverWidth: CGFloat = image.map { $0.size.height / max($0.size.width, 1) }
+      ?? 768.0 / 573.0 // DokkaebiCharacter.png(기본 소년 도깨비) 픽셀 비율
+    let height: CGFloat = 1.0  // 도깨비 키(m) — 아이 키만큼 보여야 눈에 띈다
     let geo = SCNPlane(width: height / heightOverWidth, height: height)
     let mat = SCNMaterial()
-    mat.diffuse.contents = UIImage(named: "DokkaebiCharacter")
+    mat.diffuse.contents = image
     mat.isDoubleSided = true
     mat.lightingModel = .constant
     geo.materials = [mat]
-    let node = SCNNode(geometry: geo)
+    let plane = SCNNode(geometry: geo)
+    plane.position = SCNVector3(0, Float(height / 2), 0)
     let billboard = SCNBillboardConstraint()
     billboard.freeAxes = .Y
-    node.constraints = [billboard]
+    plane.constraints = [billboard]
+    let node = SCNNode()
+    node.addChildNode(plane)
     node.runAction(.repeatForever(.sequence([
       .moveBy(x: 0, y: 0.04, z: 0, duration: 1.6),
       .moveBy(x: 0, y: -0.04, z: 0, duration: 1.6),
     ])))
     return node
+  }
+
+  /// Flutter 에셋(pubspec에 등록한 경로)을 앱 번들에서 읽는다.
+  private func flutterAssetImage(_ asset: String) -> UIImage? {
+    let key = FlutterDartProject.lookupKey(forAsset: asset)
+    guard let path = Bundle.main.path(forResource: key, ofType: nil) else { return nil }
+    return UIImage(contentsOfFile: path)
   }
 
   private func textGeometry(_ text: String, color: UIColor) -> SCNText {

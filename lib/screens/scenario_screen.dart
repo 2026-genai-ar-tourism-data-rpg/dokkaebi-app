@@ -42,6 +42,10 @@
 //      같은 스트림을 구독해 카메라가 멎을 때마다 중심·줌을 다시 읽어 핀·동선을
 //      재투영한다. IgnorePointer를 걷어내 제스처를 그대로 지도에 흘려보낸다.
 // 구현일: 2026-09-18 | 작성: Claude
+// ------------------------------------------------------------
+// [v8] '모은 것'의 기억석 조각 — 식별자('관악구_stone_1of5') 대신 '첫째 조각 · 자매공원'
+//      (Scenario.fragmentLabel, 갈림길은 실제로 다녀온 장소).
+// 구현일: 2026-09-19 | 작성: ljs (reward-ui-polish/ljs/v1)
 // ============================================================
 import 'dart:async';
 import 'dart:math' as math;
@@ -696,7 +700,7 @@ class _ScenarioScreenState extends State<ScenarioScreen> {
 
               // ── 상태 그래프 — 단서함·성향·쿠폰 ───────────
               if (inventory.isNotEmpty) ...[
-                _StateStrip(state: state),
+                _StateStrip(state: state, fragmentLabel: (f) => scn.fragmentLabel(f, played: done)),
                 const SizedBox(height: 14),
               ],
 
@@ -877,7 +881,10 @@ class _RestoredBanner extends StatelessWidget {
 /// 구 _InventoryStrip(문자열 나열)을 대체 — 어휘별로 갈라 대사 연계·엔딩 분기 근거를 드러낸다.
 class _StateStrip extends StatelessWidget {
   final PlayerState state;
-  const _StateStrip({required this.state});
+
+  /// 조각 식별자 → 화면 이름('첫째 조각 · 자매공원') — 식별자를 그대로 찍으면 '관악구_stone_1of5'.
+  final String Function(String fragmentId) fragmentLabel;
+  const _StateStrip({required this.state, required this.fragmentLabel});
 
   @override
   Widget build(BuildContext context) {
@@ -908,7 +915,7 @@ class _StateStrip extends StatelessWidget {
           Text('기억석 조각', style: hbMono(9, hbTeal2, spacing: 1.5)),
           const SizedBox(height: 6),
           Wrap(spacing: 6, runSpacing: 6, children: [
-            for (final f in state.fragments) _chip(f, hbTealD, hbTeal3),
+            for (final f in state.fragments) _chip(fragmentLabel(f), hbTealD, hbTeal3),
           ]),
         ],
         if (state.flags.isNotEmpty) ...[

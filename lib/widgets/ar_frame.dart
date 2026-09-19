@@ -4,6 +4,9 @@
 // 구현(요약): ArStage(밤하늘→한옥→먹빛 그라디언트 + 한옥 지붕 실루엣 + 비네트),
 //            ArTopHud(← · 장소 · 조각 카운터), DokkaebiNpc(먹 도깨비), ParchmentCard(한지 지령카드).
 // 구현일: 2026-07-08 | 작성: kys (ar-frame/kys/v1) · 시안: 종로의 기억석 UI standalone
+// ------------------------------------------------------------
+// [v2] DokkaebiNpc가 그릴 상반신을 호출부가 넘긴다(asset) — 장소마다 다른 도깨비.
+// 구현일: 2026-09-18 | 작성: ljs (npc-character-set/ljs/v1)
 // ============================================================
 import 'dart:math' as math;
 
@@ -139,13 +142,17 @@ class ArTopHud extends StatelessWidget {
   }
 }
 
-/// 도깨비 NPC — 기본 캐릭터 일러스트(상반신) + Lv 뱃지. 둥실 떠있음.
+/// 도깨비 NPC — [asset] 캐릭터 상반신 + Lv 뱃지. 둥실 떠있음.
 class DokkaebiNpc extends StatefulWidget {
   final String name;
   final int level;
   final double size;
   final bool showBadge;
-  const DokkaebiNpc({super.key, this.name = '먹 도깨비', this.level = 7, this.size = 190, this.showBadge = true});
+
+  /// 이 장소 도깨비의 상반신 그림(NpcArt.bust).
+  final String asset;
+  const DokkaebiNpc(
+      {super.key, this.name = '먹 도깨비', this.level = 7, this.size = 190, this.showBadge = true, required this.asset});
   @override
   State<DokkaebiNpc> createState() => _DokkaebiNpcState();
 }
@@ -185,7 +192,7 @@ class _DokkaebiNpcState extends State<DokkaebiNpc> with SingleTickerProviderStat
         if (widget.showBadge) const SizedBox(height: 10),
         SizedBox(
           width: widget.size, height: widget.size,
-          child: Image.asset('assets/images/dokkaebi_character_bust.png', fit: BoxFit.contain),
+          child: Image.asset(widget.asset, fit: BoxFit.contain),
         ),
       ]),
     );

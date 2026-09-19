@@ -29,6 +29,11 @@
 //            (현장에서 모델 장애로 셔터가 막히면 안 된다). 참조 사진 URL은 ARKit 인식용으로
 //            네이티브에도 넘긴다(arReferenceImages).
 // 구현일: 2026-09-16 | 작성: kys (photo-verify/kys/v1)
+// ------------------------------------------------------------
+// [v5] HUNT 엽전 줍기 — 주울 때마다 엽전 획득 효과를 화면 가운데 잠깐 띄우고,
+//      마지막 엽전은 효과가 보이도록 잠시 뒤에 닫는다. 마커 배치 직후 상태를 다시 보내고
+//      (admin에서 엽전이 안 보이던 원인), admin 방향키 한 칸은 1m→0.5m.
+// 구현일: 2026-09-18 | 작성: ljs (npc-character-set/ljs/v1)
 // ============================================================
 import 'dart:async';
 import 'dart:math' as math;
@@ -94,7 +99,7 @@ class _ArSearchScreenState extends State<ArSearchScreen> with SingleTickerProvid
     forward: 2.1, right: 0.5, down: 0.05,
   );
   // ⚠️ initState에서 생성한다. `late final _ac = AnimationController(...)` 형태로 두면
-  //    지연 생성이라, build가 이 컨트롤러를 안 쓰는 분기(_mode='scan' 등)로만 지나가면
+  //    지연 생성이라, build가 이 컨트롤러를 안 쓰는 분기(2D 폴백 미사용 등)로만 지나가면
   //    dispose()의 _ac.dispose()가 '최초 접근'이 되어 dispose 도중에 컨트롤러를 만든다.
   //    그 시점엔 element가 비활성이라 TickerMode 조회가 터진다
   //    ("Looking up a deactivated widget's ancestor is unsafe").
@@ -109,6 +114,9 @@ class _ArSearchScreenState extends State<ArSearchScreen> with SingleTickerProvid
   bool _verifying = false;
   /// 검증 결과 도깨비 대사 — HUD 문구를 잠시 덮는다.
   String? _verdictLine;
+
+  /// HUNT: 주운 엽전 수 — 바뀔 때마다 획득 효과를 새로 띄운다(효과 위젯의 키).
+  int _coinPicks = 0;
 
   bool get _isPhotoMission => _mission?.type == ArMissionType.photo;
 
@@ -150,6 +158,10 @@ class _ArSearchScreenState extends State<ArSearchScreen> with SingleTickerProvid
     _mission?.onTelemetry(readings);
   }
 
+  /// admin 방향키 한 칸(m). 1m면 엽전 줍기 반경(1.2m)과 간격(1.3m)보다 커서 반짝이는 걸
+  /// 보기도 전에 한 칸에 하나씩 주워졌다.
+  static const double _adminStepM = 0.5;
+
   void _adminWalk(double deltaM) {
     setState(() => _adminWalked = math.max(0, _adminWalked + deltaM));
     _pushAdminTelemetry();
@@ -181,14 +193,14 @@ class _ArSearchScreenState extends State<ArSearchScreen> with SingleTickerProvid
         Text('${_adminWalked.toStringAsFixed(1)}m',
             style: const TextStyle(fontSize: 10, color: Colors.white70)),
         const SizedBox(height: 4),
-        btn('▲', () => _adminWalk(1.0)),
+        btn('▲', () => _adminWalk(_adminStepM)),
         const SizedBox(height: 4),
         btn('⟲', () {
           setState(() => _adminWalked = 0);
           _pushAdminTelemetry();
         }),
         const SizedBox(height: 4),
-        btn('▼', () => _adminWalk(-1.0)),
+        btn('▼', () => _adminWalk(-_adminStepM)),
       ]),
     );
   }
@@ -222,12 +234,20 @@ class _ArSearchScreenState extends State<ArSearchScreen> with SingleTickerProvid
       _mission = ArMissionController(
         type: type,
         markers: _markers,
-        onComplete: () {
+        onCollected: type == ArMissionType.hunt
+            ? (_) {
+                if (mounted) setState(() => _coinPicks++);
+              }
+            : null,
+        onComplete: () async {
           if (!mounted) return;
           if (type == ArMissionType.photo) {
             // 찾았다 → 셔터를 연다. 조각은 촬영·검증이 끝나야 준다.
             setState(() => _photoReady = true);
           } else {
+            // 마지막 엽전의 획득 효과가 보이도록 잠깐 기다린다.
+            if (type == ArMissionType.hunt) await Future<void>.delayed(_coinFxDuration);
+            if (!mounted) return;
             // 목표를 다 찾으면 조각 획득으로 화면을 닫는다 — 호출부가 서버 collect를 한다.
             Navigator.pop(context, true);
           }
@@ -340,6 +360,12 @@ class _ArSearchScreenState extends State<ArSearchScreen> with SingleTickerProvid
             onTelemetry: Session.isAdmin ? null : _mission?.onTelemetry,
             onImageDetected: _mission?.onImageDetected,
             enablePinchZoom: _isPhotoMission,
+            // 배치 전에 보낸 상태는 사라졌다 — 다시 보내게 하고, admin은 거리 값을 바로 다시 넣는다
+            // (실기기 텔레메트리는 배치 뒤에 오지만 admin 이동은 뷰가 뜨기 전부터 돈다).
+            onMarkersPlaced: () {
+              _mission?.resync();
+              if (Session.isAdmin && !widget.remote) _pushAdminTelemetry();
+            },
           ))
         else if (widget.remote)
           // 원격 체험 배경 — 그 자리에 없으니 카메라 대신 도깨비 기운이 도는 밤 풍경.
@@ -392,7 +418,11 @@ class _ArSearchScreenState extends State<ArSearchScreen> with SingleTickerProvid
         if (_mission != null && _arSupported == true && !_arError)
           _MissionHud(progress: _mission!.progress, statusOverride: _verdictLine),
 
-        // admin 전용 — 방향키로 "다가가기/물러서기"(실외 이동 없이 발자국·AR 미션 테스트).
+        // 엽전 획득 효과 — 주울 때마다 키가 바뀌어 처음부터 다시 재생된다.
+        if (_coinPicks > 0)
+          IgnorePointer(child: Center(child: _CoinPickFx(key: ValueKey(_coinPicks)))),
+
+        // admin 전용 — 방향키로 "다가가기/물러서기"(실외 이동 없이 엽전·AR 미션 테스트).
         if (_mission != null && Session.isAdmin && _arSupported == true && !_arError)
           Positioned(right: 12, top: 130, child: _adminArPanel()),
 
@@ -612,6 +642,28 @@ class _MissionHud extends StatelessWidget {
               style: const TextStyle(color: Colors.white, fontSize: 13.5)),
         ),
       ]),
+    );
+  }
+}
+
+const _coinFxDuration = Duration(milliseconds: 700);
+const double _coinFxSize = 220;
+const _coinFxAsset = 'assets/game/vfx/coin_pickup_vfx.webp';
+
+/// 엽전 획득 효과 — 금빛 고리가 커지며 사라진다.
+class _CoinPickFx extends StatelessWidget {
+  const _CoinPickFx({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    return TweenAnimationBuilder<double>(
+      tween: Tween(begin: 0, end: 1),
+      duration: _coinFxDuration,
+      builder: (_, t, child) => Opacity(
+        opacity: 1 - t,
+        child: Transform.scale(scale: 0.6 + 0.6 * t, child: child),
+      ),
+      child: Image.asset(_coinFxAsset, width: _coinFxSize),
     );
   }
 }

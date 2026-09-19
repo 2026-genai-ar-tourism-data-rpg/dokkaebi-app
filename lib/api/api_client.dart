@@ -22,6 +22,9 @@
 //            _check 한 곳으로 모으고, 401이면 Session.clear + AppNav.toLogin.
 //            로그인 요청 자체의 401은 제외(세션이 없으니 보낼 곳이 없다).
 // 구현일: 2026-09-04 | 작성: kys (dev 직접 반영 — 팀 실기기 테스트 중 401 막힘)
+// ------------------------------------------------------------
+// [v4] wishlist_only 전달 — 위시리스트 '코스 생성'은 고른 장소로만(서버 DTO·AI 요청 v7).
+// 구현일: 2026-09-19 | 작성: ljs (wishlist-course/ljs/v1)
 // ============================================================
 import 'dart:convert';
 
@@ -182,6 +185,7 @@ class ApiClient {
     List<String> tags = const [],
     int headcount = 1,
     bool useFixedScript = false,
+    bool wishlistOnly = false,
     bool withDialogue = true,
     int? radiusM,
   }) async {
@@ -209,6 +213,8 @@ class ApiClient {
       'tags': tags,
       'use_fixed_script': useFixedScript,
       'with_dialogue': withDialogue,
+      // 위시 장소로만(거리순 채움·샛길·식음 없음) — 퀘스트 탭 위시리스트 '코스 생성'.
+      if (wishlistOnly) 'wishlist_only': true,
     };
     final res = await _http.post(
       Uri.parse('$baseUrl/v1/scenarios/custom'),

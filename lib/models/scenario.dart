@@ -1,4 +1,11 @@
 // ============================================================
+// [v5] 기억석 조각 표시 이름 — '관악구_stone_1of5'(AI 식별자) 대신 '첫째 조각 · 자매공원'.
+//      식별자는 서버 조각 기록 키라 그대로 두고, 화면에만 코스 데이터(순서·장소)로 이름을 짓는다.
+// 구현일: 2026-09-19 | 작성: ljs (reward-ui-polish/ljs/v1)
+// ------------------------------------------------------------
+// [v4] 위시리스트 — SearchCandidate.toJson(저장), NearbyPlace.contentId/toWish(주변 장소 → 위시 항목).
+// 구현일: 2026-09-19 | 작성: ljs (wishlist-course/ljs/v1)
+// ------------------------------------------------------------
 // [v3] 생성 코스 엔딩(ai #64) — 피날레 노드의 final_restore_dialogue · endings(A/B) ·
 //      final_rewards_common.region_stone을 읽는다. 엔딩 화면이 종로 고정값(訓民正音·집현전 붓)
 //      대신 이 값을 쓴다(계획 A1·B3·B4). 저장된 코스에서도 남도록 toJson에 함께 넣는다.
@@ -542,6 +549,15 @@ class SearchCandidate {
         lat: (j['lat'] as num?)?.toDouble(),
         lng: (j['lng'] as num?)?.toDouble(),
       );
+
+  /// 위시리스트 저장용(fromJson과 같은 키).
+  Map<String, dynamic> toJson() => {
+        'content_id': contentId,
+        if (name != null) 'name': name,
+        if (addr != null) 'addr': addr,
+        if (lat != null) 'lat': lat,
+        if (lng != null) 'lng': lng,
+      };
 }
 
 /// 주변 장소 갈래 — 목록 아이콘·필터칩의 기준.
@@ -587,6 +603,21 @@ class NearbyPlace {
     this.summary,
   });
 
+  /// TourAPI 콘텐츠 ID — 위시리스트(코스 생성 앵커)에 필요하다. AI가 node_id를
+  /// 'tour_<contentid>'로 만든다(dokkaebi-ai tourapi/client.py). 그 밖(OSM 등)은 null.
+  String? get contentId {
+    const prefix = 'tour_';
+    if (!nodeId.startsWith(prefix) || nodeId.length == prefix.length) return null;
+    return nodeId.substring(prefix.length);
+  }
+
+  /// 위시리스트 항목으로 — content_id가 없으면 null(담을 수 없다).
+  SearchCandidate? toWish() {
+    final id = contentId;
+    if (id == null) return null;
+    return SearchCandidate(contentId: id, name: name, addr: addr, lat: lat, lng: lng);
+  }
+
   /// 목록에 보여줄 거리 표기(1km 이상은 km).
   String get distLabel {
     final d = distM;
@@ -604,6 +635,17 @@ class NearbyPlace {
         category: NearbyCategory.parse(j['category'] as String?),
         summary: j['summary'] as String?,
       );
+}
+
+const _koreanOrdinals = ['첫째', '둘째', '셋째', '넷째', '다섯째', '여섯째', '일곱째', '여덟째', '아홉째', '열째', '열한째', '열두째'];
+
+/// 기억석 조각의 화면 이름 — '첫째 조각 · 자매공원'. 순서를 모르면 '기억석 조각 · 장소',
+/// 장소도 모르면 [fallback](보통 fragment_id).
+String fragmentDisplayName(int? stoneNo, String? place, {required String fallback}) {
+  final hasPlace = place != null && place.isNotEmpty;
+  if (stoneNo == null || stoneNo < 1) return hasPlace ? '기억석 조각 · $place' : fallback;
+  final ordinal = stoneNo <= _koreanOrdinals.length ? '${_koreanOrdinals[stoneNo - 1]} 조각' : '$stoneNo번째 조각';
+  return hasPlace ? '$ordinal · $place' : ordinal;
 }
 
 /// 코스 오프닝 프롤로그 대본 한 줄. speaker="beat"면 text 없이 연출 트리거(beat)만 있다.
@@ -658,6 +700,15 @@ class Scenario {
 
   /// 기억석 조각 노드만(식음 제외). 진행률·조각수 표시는 전부 이걸 기준으로.
   List<QuestNode> get stoneNodes => nodeSequence.where((n) => n.isStone).toList();
+
+  /// 조각 식별자(fragment_id) → 화면 이름('첫째 조각 · 자매공원'). 코스에 없는 조각이면 식별자 그대로.
+  /// 갈림길 대체 장소는 본선과 같은 조각을 주므로, [played](끝낸 노드 id) 중 그 조각을 준 곳을 먼저 쓴다.
+  String fragmentLabel(String fragmentId, {Set<String> played = const {}}) {
+    final givers = nodeSequence.where((n) => n.fragmentId == fragmentId).toList();
+    if (givers.isEmpty) return fragmentId;
+    final n = givers.firstWhere((g) => played.contains(g.nodeId), orElse: () => givers.first);
+    return fragmentDisplayName(n.stoneNo, n.name, fallback: fragmentId);
+  }
 
   /// 조각 총수 — 서버값 우선, 없으면 관광 노드 수로 폴백.
   int get stoneTotal => _stoneTotal ?? stoneNodes.length;
