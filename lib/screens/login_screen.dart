@@ -24,18 +24,68 @@
 //      두 provider 다 Supabase 대시보드에 client id/secret을 등록해야 실제로
 //      동작한다 — 코드만으로는 안 됨(README나 PR 설명 참고).
 // 구현일: 2026-09-17 | 작성: jch
+// ------------------------------------------------------------
+// [v4] 인증 오류 메시지 정리 + Apple 로그인 추가 (App Store 심사 반려 조치).
+// 구현(요약): ① 모든 오류 화면 표시가 '$e'로 예외를 그대로 찍고 있었다 — 리뷰어가
+//            회원가입 중 겪은 AuthApiException(email rate limit exceeded, 429,
+//            over_email_send_rate_limit)도 원문 그대로 노출됐다(Guideline 2.1(a)
+//            반려 사유). authErrorMessage로 원인별 한국어 안내로 바꾸고, 원문은
+//            debugPrint로만 남긴다.
+//            ② Apple 로그인 버튼 추가(Guideline 4.8 반려 사유 — 서드파티 로그인은
+//            있는데 동등 요건을 만족하는 로그인이 없다고 지적받음). 카카오·네이버와
+//            같은 방식으로 signInWithIdToken 후 onAuthStateChange 리스너가 마무리한다.
+//            ⚠️ 이 버튼은 Apple Developer에서 App ID에 Sign In with Apple capability를
+//            켜고 프로비저닝 프로파일을 다시 받은 뒤, iOS 쪽 entitlements를 붙여야
+//            실제로 동작한다(그 전엔 무해하게 실패만 한다) — 코드만으로는 안 됨.
+//            Supabase 대시보드의 Apple provider도 별도로 켜야 한다(Client ID=Services ID,
+//            Team ID, Key ID, .p8 키 — Apple Developer에서만 발급 가능).
+// 구현일: 2026-09-19 | 작성: Claude
+// ------------------------------------------------------------
+// [v5] 카카오·네이버·Apple 로그인 전부 제거 — 이메일+게스트만 남긴다.
+// 구현(요약): 실기기 확인 결과 카카오(KOE205)·네이버 둘 다 "서비스 설정 오류"로
+//            로그인 자체가 안 되고 있었다(redirect/callback URL이 카카오·네이버
+//            개발자 콘솔에 등록 안 된 것으로 추정 — 그쪽 계정에서만 고칠 수 있다).
+//            Guideline 4.8은 "서드파티/소셜 로그인 서비스"가 있을 때만 적용된다.
+//            이메일+비밀번호는 외부 업체를 거치지 않고 사용자가 직접 우리 앱에
+//            입력하는 것이라 이 조항 대상이 아니고, 게스트도 외부 서비스가
+//            없어 마찬가지다. 그래서 카카오·네이버·Apple을 전부 빼면 4.8 자체가
+//            적용 대상에서 빠진다 — [v4]에서 추가했던 Apple 로그인(코드는 동작
+//            준비까지 됐지만 Apple Developer·Supabase 쪽 계정 설정이 남아있던
+//            상태)도 더 이상 필요 없어 함께 제거한다.
+// 구현일: 2026-09-19 | 작성: Claude
+// ------------------------------------------------------------
+// [v6] 이메일 로그인/회원가입도 제거 — 게스트만 남긴다(팀 결정, 심사 제출용).
+// 구현(요약): rate limit 크래시([v4])는 Supabase "Confirm email" 끄기로 이미
+//            실증까지 마쳤지만("게스트만" 쪽이 여기서 조금 더 안전하니 심사
+//            통과·출시부터 확실히 하고 이메일 로그인은 출시 후 다시 켜기로 했다.
+//            게스트 로그인(_api.guestLogin)은 Supabase를 아예 거치지 않는
+//            별개 경로라 이번 rate limit 문제와 원래도 무관했다.
+//            이 파일만 되돌리면 이메일 로그인이 복원된다 — 로직 자체는
+//            git 히스토리([v2]~[v5] 커밋)에 그대로 남아 있다.
+//            authErrorMessage는 남긴다: 원인이 Supabase든 서버(ApiException)든
+//            "원본 예외를 화면에 그대로 보여주지 않는다"는 원칙 자체가 심사
+//            지적사항이라 게스트 로그인 오류에도 적용해야 한다 — 다만 이제
+//            Supabase 예외는 이 화면에서 안 나므로 ApiException.message
+//            (서버가 애초에 사용자용으로 보낸 문구)를 우선 보여주는 쪽으로 바꿨다.
+// 구현일: 2026-09-19 | 작성: Claude
 // ============================================================
-import 'dart:async';
-
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
-import 'package:supabase_flutter/supabase_flutter.dart';
 
 import '../api/api_client.dart';
 import '../config.dart';
 import '../main.dart' show MainShell;
 import '../store.dart';
 import '../theme.dart';
+
+/// 오류를 사용자에게 보여줄 메시지로 바꾼다 — 원본 예외를 절대 그대로 노출하지
+/// 않는다(Apple 심사에서 "버그"로 지적받았다). ApiException.message는 서버가
+/// 애초에 사용자용으로 보내는 문구라 그대로 쓰고, 그 외 예외는 로그로만 남긴다.
+String authErrorMessage(Object e) {
+  if (e is ApiException && e.message.isNotEmpty) return e.message;
+  debugPrint('로그인 오류: $e');
+  return '로그인에 실패했습니다. 잠시 후 다시 시도해 주세요.';
+}
 
 class LoginScreen extends StatefulWidget {
   const LoginScreen({super.key});
@@ -84,43 +134,16 @@ class _ServerBanner extends StatelessWidget {
 class _LoginScreenState extends State<LoginScreen> {
   final _api = ApiClient();
   final _nick = TextEditingController();
-  final _email = TextEditingController();
-  final _password = TextEditingController();
   bool _loading = false;
   String? _error;
-  String? _notice; // 오류는 아니지만 알려줘야 하는 것(이메일 확인 요청 등)
-  StreamSubscription<AuthState>? _authSub;
-
-  @override
-  void initState() {
-    super.initState();
-    // OAuth(카카오·네이버)는 브라우저 왕복 후 이 이벤트로만 결과를 알 수 있다.
-    // 이메일 로그인 성공도 여기로 합쳐서 처리 경로를 하나로 유지한다.
-    // Supabase.initialize()가 실패했으면(main.dart에서 실패해도 앱은 계속 띄움 —
-    // 카카오맵 init과 같은 원칙) Supabase.instance 접근 자체가 던진다 — 그래도
-    // 게스트 로그인은 계속 동작해야 하므로 여기서 막는다.
-    try {
-      _authSub =
-          Supabase.instance.client.auth.onAuthStateChange.listen((state) {
-        if (state.event == AuthChangeEvent.signedIn && state.session != null) {
-          _onSupabaseSignedIn(state.session!.accessToken);
-        }
-      });
-    } catch (e) {
-      debugPrint('Supabase auth 리스너 등록 실패 — 이메일/OAuth 로그인만 비활성: $e');
-    }
-  }
 
   @override
   void dispose() {
-    _authSub?.cancel();
     _nick.dispose();
-    _email.dispose();
-    _password.dispose();
     super.dispose();
   }
 
-  /// 로그인 성공 후 공통 처리 — 게스트·이메일·OAuth 로그인 모두 여기로 모인다.
+  /// 로그인 성공 후 공통 처리.
   Future<void> _afterLogin() async {
     await ScenarioStore.I.load(); // 이 유저의 저장된 탐험 복원
     if (!mounted) return;
@@ -128,102 +151,19 @@ class _LoginScreenState extends State<LoginScreen> {
         context, MaterialPageRoute(builder: (_) => const MainShell()));
   }
 
-  /// Supabase 세션이 생긴 뒤(이메일 로그인 또는 OAuth 딥링크 복귀) 공통 처리.
-  Future<void> _onSupabaseSignedIn(String accessToken) async {
-    if (_loading) return; // 이미 처리 중이면 중복 이벤트 무시
-    setState(() {
-      _loading = true;
-      _error = null;
-    });
-    try {
-      await _api.supabaseLogin(accessToken, nickname: _nick.text.trim());
-      await _afterLogin();
-    } catch (e) {
-      if (mounted) setState(() => _error = '$e');
-    } finally {
-      if (mounted) setState(() => _loading = false);
-    }
-  }
-
   Future<void> _guest() async {
     setState(() {
       _loading = true;
       _error = null;
-      _notice = null;
     });
     try {
       await _api
           .guestLogin(_nick.text.trim().isEmpty ? '탐험가' : _nick.text.trim());
       await _afterLogin();
     } catch (e) {
-      setState(() => _error = '$e');
+      setState(() => _error = authErrorMessage(e));
     } finally {
       if (mounted) setState(() => _loading = false);
-    }
-  }
-
-  bool get _canSubmitEmail =>
-      _email.text.trim().isNotEmpty && _password.text.isNotEmpty;
-
-  /// 로그인 자체의 성공 처리는 _onSupabaseSignedIn(리스너)이 한다 — 여기서는
-  /// 잘못된 비밀번호 등 signInWithPassword가 직접 던지는 오류만 잡는다.
-  Future<void> _emailSignIn() async {
-    if (!_canSubmitEmail) return;
-    setState(() {
-      _loading = true;
-      _error = null;
-      _notice = null;
-    });
-    try {
-      await Supabase.instance.client.auth.signInWithPassword(
-        email: _email.text.trim(),
-        password: _password.text,
-      );
-    } catch (e) {
-      setState(() => _error = '$e');
-    } finally {
-      if (mounted) setState(() => _loading = false);
-    }
-  }
-
-  Future<void> _emailSignUp() async {
-    if (!_canSubmitEmail) return;
-    setState(() {
-      _loading = true;
-      _error = null;
-      _notice = null;
-    });
-    try {
-      final res = await Supabase.instance.client.auth.signUp(
-        email: _email.text.trim(),
-        password: _password.text,
-      );
-      // 이메일 확인이 켜져 있으면(기본값) 가입 직후엔 세션이 없다 — 그 경우만
-      // 여기서 안내하고, 세션이 바로 생기는 경우는 _onSupabaseSignedIn이 처리한다.
-      if (res.session == null) {
-        setState(() => _notice = '확인 이메일을 보냈습니다. 메일의 링크를 연 뒤 로그인해 주세요.');
-      }
-    } catch (e) {
-      setState(() => _error = '$e');
-    } finally {
-      if (mounted) setState(() => _loading = false);
-    }
-  }
-
-  /// 카카오·네이버 등 OAuth 로그인 — 브라우저를 열 뿐, 로그인 완료는
-  /// onAuthStateChange 리스너(_onSupabaseSignedIn)로 비동기로 온다.
-  Future<void> _oauthSignIn(OAuthProvider provider) async {
-    setState(() {
-      _error = null;
-      _notice = null;
-    });
-    try {
-      await Supabase.instance.client.auth.signInWithOAuth(
-        provider,
-        redirectTo: AppConfig.oauthRedirectUrl,
-      );
-    } catch (e) {
-      setState(() => _error = '$e');
     }
   }
 
@@ -231,8 +171,7 @@ class _LoginScreenState extends State<LoginScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       body: SafeArea(
-        // 이메일 로그인 필드·버튼이 늘어나면서 작은 화면(iPhone SE 등)에서
-        // 오버플로가 났다 — 화면이 좁으면 스크롤되게 하고, 넉넉하면 기존처럼 중앙 정렬.
+        // 화면이 좁으면 스크롤되게 하고, 넉넉하면 기존처럼 중앙 정렬.
         child: LayoutBuilder(
           builder: (context, constraints) => SingleChildScrollView(
             padding: const EdgeInsets.all(24),
@@ -293,11 +232,6 @@ class _LoginScreenState extends State<LoginScreen> {
                           textAlign: TextAlign.center,
                           style:
                               const TextStyle(color: Colors.red, fontSize: 12)),
-                    if (_notice != null)
-                      Text(_notice!,
-                          textAlign: TextAlign.center,
-                          style: const TextStyle(
-                              color: AppColors.teal, fontSize: 12)),
                     const SizedBox(height: 12),
                     FilledButton(
                       onPressed: _loading ? null : _guest,
@@ -310,73 +244,6 @@ class _LoginScreenState extends State<LoginScreen> {
                     ),
                     const SizedBox(height: 8),
                     const Text('게스트는 앱을 지우거나 로그아웃하면 진행도가 사라집니다',
-                        textAlign: TextAlign.center,
-                        style: TextStyle(
-                            color: AppColors.textSecondary, fontSize: 11)),
-                    const SizedBox(height: 24),
-                    Row(children: const [
-                      Expanded(child: Divider(color: Colors.white24)),
-                      Padding(
-                        padding: EdgeInsets.symmetric(horizontal: 8),
-                        child: Text('또는 이메일로 이어하기',
-                            style: TextStyle(
-                                color: AppColors.textSecondary, fontSize: 11)),
-                      ),
-                      Expanded(child: Divider(color: Colors.white24)),
-                    ]),
-                    const SizedBox(height: 16),
-                    TextField(
-                      controller: _email,
-                      textAlign: TextAlign.center,
-                      keyboardType: TextInputType.emailAddress,
-                      decoration: const InputDecoration(hintText: '이메일'),
-                    ),
-                    const SizedBox(height: 8),
-                    TextField(
-                      controller: _password,
-                      textAlign: TextAlign.center,
-                      obscureText: true,
-                      decoration:
-                          const InputDecoration(hintText: '비밀번호 (6자 이상)'),
-                      onSubmitted: (_) => _emailSignIn(),
-                    ),
-                    const SizedBox(height: 12),
-                    Row(children: [
-                      Expanded(
-                        child: OutlinedButton(
-                          onPressed: _loading || !_canSubmitEmail
-                              ? null
-                              : _emailSignIn,
-                          child: const Text('로그인'),
-                        ),
-                      ),
-                      const SizedBox(width: 8),
-                      Expanded(
-                        child: OutlinedButton(
-                          onPressed: _loading || !_canSubmitEmail
-                              ? null
-                              : _emailSignUp,
-                          child: const Text('회원가입'),
-                        ),
-                      ),
-                    ]),
-                    const SizedBox(height: 16),
-                    OutlinedButton(
-                      onPressed: _loading
-                          ? null
-                          : () => _oauthSignIn(OAuthProvider.kakao),
-                      child: const Text('카카오로 로그인'),
-                    ),
-                    const SizedBox(height: 8),
-                    OutlinedButton(
-                      onPressed: _loading
-                          ? null
-                          : () =>
-                              _oauthSignIn(const OAuthProvider('custom:naver')),
-                      child: const Text('네이버로 로그인'),
-                    ),
-                    const SizedBox(height: 8),
-                    const Text('구글 로그인 (준비 중)',
                         textAlign: TextAlign.center,
                         style: TextStyle(
                             color: AppColors.textSecondary, fontSize: 11)),

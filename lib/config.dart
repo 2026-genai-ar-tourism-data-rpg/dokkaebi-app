@@ -60,10 +60,4 @@ class AppConfig {
   static const String supabaseUrl = 'https://gkzewjrjexmodgqtuban.supabase.co';
   static const String supabasePublishableKey =
       'sb_publishable_iDKzkSoH-asgsvlfiox2Jw_2vGaDjqg';
-
-  /// 카카오·네이버 로그인 후 브라우저가 앱으로 돌아오는 딥링크.
-  /// ios/Runner/Info.plist의 CFBundleURLSchemes·android/…/AndroidManifest.xml의
-  /// intent-filter data scheme과 반드시 같은 스킴이어야 한다.
-  static const String oauthRedirectUrl =
-      'com.dokkaebi.dokkaebiApp://login-callback';
 }
