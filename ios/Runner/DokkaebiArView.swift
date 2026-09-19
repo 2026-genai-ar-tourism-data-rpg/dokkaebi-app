@@ -72,6 +72,20 @@
 //            목표는 세션 시작 카메라 기준 월드 좌표에 고정(placeMarkers가 이미 그렇다).
 //            카메라 자식으로 두면 화면을 돌려도 따라붙어 게임이 성립하지 않는다 — 명세의 금지 사항.
 // 구현일: 2026-09-19 | 작성: kys (fire-capture/kys/v1)
+// ------------------------------------------------------------
+// [v8] coin·part·hidden 마커를 나침반(진북) 고정 배치로 — "눈으로 보는 실제 세계와 맞게".
+// 구현(요약): 이 셋도 지금까지 pattern·fire와 똑같이 "세션 시작 카메라가 우연히 향했던
+//            방향" 기준이었다 — AR을 켤 때 폰이 어디를 보고 있었느냐에 따라 매번 다른
+//            방향(벽 쪽·바닥 쪽 등)에 나타났다. 인식 자체가 랜덤해 보이는 원인 중 하나(팀 제보).
+//            worldAlignment=.gravityAndHeading으로 세션을 열어(GPS로 이미 있는 위치 권한을
+//            나침반에도 씀) 월드 -Z=진북·+X=동쪽으로 고정하고, 이 세 종류만
+//            arMarkerWorldPositionCompassFixed로 배치한다(forward=북쪽 오프셋, right=동쪽).
+//            서버가 개별 마커의 실제 GPS 좌표를 주지 않아(클라이언트가 지어내는 배치) 방위각·
+//            거리 계산은 필요 없고, 나침반 방향만 고정해도 "실행마다 같은 방향"이 보장된다.
+//            pattern은 그대로 둔다(실제 이미지 인식이 대신 위치를 잡아 준다 — handleImageAnchor).
+//            fire도 그대로 둔다(명세상 "어디를 보든 같은 난이도"가 목적이라 나침반 고정은
+//            오히려 방해). 나침반 오차(자성 간섭 등)는 실기기 튜닝 영역.
+// 구현일: 2026-09-19 | 작성: Claude
 // ============================================================
 import ARKit
 import Flutter
@@ -146,6 +160,25 @@ func arMarkerWorldPosition(
     + forwardAxis * forward
     + rightAxis * right
     - upAxis * down
+}
+
+/// 나침반(진북) 기준 상대 오프셋(북/동/아래, 미터)을 월드 좌표로 변환한다.
+/// worldAlignment=.gravityAndHeading 세션에서만 축이 맞다(-Z=북, +X=동, +Y=위).
+/// 카메라가 어느 쪽을 보고 있었는지와 무관하게 실제 나침반 방향에 고정하고 싶은
+/// 마커(엽전·부재·기척)에 쓴다 — pattern·fire는 arMarkerWorldPosition을 그대로 쓴다.
+func arMarkerWorldPositionCompassFixed(
+  cameraPosition: simd_float3,
+  forward: Float,
+  right: Float,
+  down: Float
+) -> simd_float3 {
+  let north = simd_float3(0, 0, -1)
+  let east = simd_float3(1, 0, 0)
+  let up = simd_float3(0, 1, 0)
+  return cameraPosition
+    + north * forward
+    + east * right
+    - up * down
 }
 
 /// 카메라가 목표를 얼마나 정확히 겨누고 있는지(라디안). 0이면 화면 정중앙.
@@ -291,6 +324,8 @@ final class DokkaebiArView: NSObject, FlutterPlatformView, ARSCNViewDelegate, AR
     // v2: 바닥을 찾는다. 못 찾아도 진행하므로(아래 placeMarkers 폴백) 실외에서
     // "바닥을 비춰주세요" 같은 강요는 하지 않는다.
     config.planeDetection = [.horizontal]
+    // v8: 나침반 사용 — coin·part·hidden 마커를 진북 기준으로 고정 배치하기 위함.
+    config.worldAlignment = .gravityAndHeading
     sceneView.session.run(config)
     loadReferenceImages()
   }
@@ -334,6 +369,7 @@ final class DokkaebiArView: NSObject, FlutterPlatformView, ARSCNViewDelegate, AR
       self.referenceImages = Set(built)
       let config = ARWorldTrackingConfiguration()
       config.planeDetection = [.horizontal]
+      config.worldAlignment = .gravityAndHeading
       config.detectionImages = self.referenceImages
       config.maximumNumberOfTrackedImages = 1
       // 옵션 없이 run — 기존 월드 트래킹·앵커를 리셋하지 않고 설정만 갱신한다.
@@ -450,13 +486,21 @@ final class DokkaebiArView: NSObject, FlutterPlatformView, ARSCNViewDelegate, AR
   // MARK: - 마커 배치·탭
 
   private func placeMarkers(cameraTransform: simd_float4x4) {
+    let camPos = simd_make_float3(cameraTransform.columns.3)
     for spec in markerSpecs {
-      var pos = arMarkerWorldPosition(
-        cameraTransform: cameraTransform,
-        forward: spec.forward,
-        right: spec.right,
-        down: spec.down
-      )
+      var pos: simd_float3
+      switch spec.kind {
+      case .coin, .part, .hidden:
+        // 실제 나침반 방향에 고정 — "AR 켤 때 우연히 향했던 쪽"이 아니라 눈으로 보는
+        // 실제 세계(동서남북)와 맞게 둔다(v8).
+        pos = arMarkerWorldPositionCompassFixed(
+          cameraPosition: camPos, forward: spec.forward, right: spec.right, down: spec.down
+        )
+      case .pattern, .fire, .beacon:
+        pos = arMarkerWorldPosition(
+          cameraTransform: cameraTransform, forward: spec.forward, right: spec.right, down: spec.down
+        )
+      }
       // 바닥을 이미 찾았으면 바닥에 앉힌다(부재·도깨비는 공중에 뜨면 안 된다. 엽전은 바닥 위로 띄운다).
       if let y = floorY, spec.kind != .pattern, spec.kind != .fire { pos.y = floorHeight(y, for: spec.kind) }
 

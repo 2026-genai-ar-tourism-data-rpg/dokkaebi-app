@@ -37,7 +37,10 @@ enum ArMarkerKind {
 /// 마커 표시 상태. Swift의 ArMarkerState와 **문자열이 같아야 한다**.
 enum ArMarkerState { hidden, ghost, solid }
 
-/// AR 세션 시작 시점 카메라 기준 상대 배치(미터). forward=정면, right=오른쪽, down=아래.
+/// forward=정면(북), right=오른쪽(동), down=아래(미터) — 기준이 kind마다 다르다.
+/// coin·part·hidden: 나침반(진북) 고정 — forward=북쪽 오프셋, right=동쪽 오프셋.
+/// pattern·beacon·fire: AR 세션 시작 시점 카메라가 향했던 방향 기준 상대 배치(v8 이전과 동일).
+/// 실제 축 변환은 네이티브(DokkaebiArView.swift의 placeMarkers)가 kind로 나눠 한다.
 class ArMarkerDef {
   final String id;
   final String label;
