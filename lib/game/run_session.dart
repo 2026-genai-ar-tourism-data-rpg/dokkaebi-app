@@ -223,7 +223,8 @@ class RunSession extends ChangeNotifier {
       _errorRetryable = e.isRetryable;
       return false;
     } catch (e) {
-      _error = '서버와 통신하지 못했느니라. ($e)';
+      debugPrint('통신 오류: $e');
+      _error = '서버와 통신하지 못했느니라.';
       _errorRetryable = true; // 응답 자체가 없음 — 연결이 돌아오면 될 수 있다
       return false;
     } finally {

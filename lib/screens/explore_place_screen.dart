@@ -185,7 +185,7 @@ class _ExplorePlaceScreenState extends State<ExplorePlaceScreen> {
         _searched = true;
       });
     } catch (e) {
-      setState(() => _searchError = '검색 실패 — 서버가 켜져 있나요? ($e)');
+      setState(() => _searchError = apiErrorMessage(e));
     } finally {
       if (mounted) setState(() => _searching = false);
     }

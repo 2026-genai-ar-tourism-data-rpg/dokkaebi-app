@@ -131,7 +131,7 @@ class _CreateScenarioScreenState extends State<CreateScenarioScreen> {
         _searched = true;
       });
     } catch (e) {
-      setState(() => _searchError = '검색 실패 — 서버가 켜져 있나요? ($e)');
+      setState(() => _searchError = apiErrorMessage(e));
     } finally {
       if (mounted) setState(() => _searching = false);
     }
@@ -190,7 +190,7 @@ class _CreateScenarioScreenState extends State<CreateScenarioScreen> {
       Navigator.push(context,
           MaterialPageRoute(builder: (_) => ScenarioScreen(scenario: scn)));
     } catch (e) {
-      setState(() => _error = '생성 실패 — 서버가 켜져 있나요? ($e)');
+      setState(() => _error = apiErrorMessage(e));
     } finally {
       if (mounted) setState(() => _loading = false);
     }

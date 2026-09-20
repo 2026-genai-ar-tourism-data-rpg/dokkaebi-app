@@ -251,7 +251,8 @@ class _NearbySectionState extends State<_NearbySection> {
     } on ApiException catch (e) {
       if (mounted) setState(() => _error = e.message);
     } catch (e) {
-      if (mounted) setState(() => _error = '주변을 살피지 못했느니라. ($e)');
+      debugPrint('주변 장소 조회 오류: $e');
+      if (mounted) setState(() => _error = '주변을 살피지 못했느니라.');
     } finally {
       if (mounted) setState(() => _loading = false);
     }

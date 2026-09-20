@@ -217,6 +217,53 @@ void main() {
       expect(find.textContaining('위치 권한'), findsOneWidget,
           reason: '왜 종로 코스가 나왔는지 사용자가 알 수 있어야 한다');
     });
+
+    testWidgets('위치 근처에 등록된 장소가 없으면(해외 등) 종로로 다시 시도해 알린다', (tester) async {
+      // App Store 심사(2026-09-20) — 리뷰어의 실제 GPS가 서비스 지역 밖이라
+      // 매번 이 422로 막혀 "나만의 코스 만들기"를 아예 써 볼 수 없었다.
+      var calls = 0;
+      Map<String, dynamic>? firstSent, retrySent;
+      final client = MockClient((req) async {
+        if (req.url.path.endsWith('/v1/scenarios/custom')) {
+          calls++;
+          final body = jsonDecode(req.body) as Map<String, dynamic>;
+          if (calls == 1) {
+            firstSent = body;
+            return http.Response(
+              jsonEncode({
+                'error': {
+                  'code': 'domain_error',
+                  'message': '반경 3000m 내 관광지 없음 (좌표 -122.009,37.3349)',
+                }
+              }),
+              422,
+              headers: {'content-type': 'application/json; charset=utf-8'},
+            );
+          }
+          retrySent = body;
+          return http.Response(jsonEncode(_scenarioJson), 201,
+              headers: {'content-type': 'application/json; charset=utf-8'});
+        }
+        return http.Response('{}', 200);
+      });
+
+      await tester.pumpWidget(MaterialApp(
+        home: ExploreConfirmScreen(
+          draft: ExploreDraft(),
+          locationService: _fixedLocation(37.3349, -122.0090), // 쿠퍼티노 — 위치는 잡히지만 서비스 지역 밖
+          httpClient: client,
+        ),
+      ));
+      await tester.tap(find.text('나만의 코스 만들기'));
+      await tester.pumpAndSettle();
+
+      expect(calls, 2, reason: '실패로 끝나면 안 되고 폴백 좌표로 한 번 더 시도해야 한다');
+      expect(firstSent!['start'], {'lat': 37.3349, 'lng': -122.0090});
+      expect(retrySent!['start'], {'lat': 37.5703, 'lng': 126.9856},
+          reason: '재시도는 종로 폴백 좌표를 써야 한다');
+      expect(find.textContaining('등록된 장소가 없어'), findsOneWidget,
+          reason: '왜 종로 코스가 나왔는지 사용자가 알 수 있어야 한다');
+    });
   });
 
   // QA 1 — 반경을 먼저 고르고 그 반경 안에서 장소를 고른다.

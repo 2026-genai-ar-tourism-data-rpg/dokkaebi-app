@@ -224,7 +224,7 @@ class _QuestPlayScreenState extends State<QuestPlayScreen> {
     } catch (e) {
       // 여기서 멈추면 선택지가 없어 노드가 막힌다 → 재시도/건너뛰기 UI를 띄운다.
       setState(() {
-        _line = '도깨비가 답이 없구나. 잠시 뒤 다시 청해 보거라.\n($e)';
+        _line = '도깨비가 답이 없구나. 잠시 뒤 다시 청해 보거라.\n(${apiErrorMessage(e)})';
         _dialogueFailed = true;
       });
     } finally {

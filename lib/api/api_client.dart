@@ -28,9 +28,19 @@
 // ------------------------------------------------------------
 // [v5] 레벨 — 노드 완료에 피날레 엔딩(ending)을 보내고, 내 레벨(GET /v1/me)을 읽는다.
 // 구현일: 2026-09-19 | 작성: ljs (ending-level/ljs/v1)
+// ------------------------------------------------------------
+// [v6] apiErrorMessage — 화면 7곳이 각자 '$e'를 그대로 문구에 박고 있었다.
+// 구현(요약): ApiException.toString()은 message라 실제로는 비교적 읽히는 한국어가
+//            나오지만, SocketException·TimeoutException 같은 비-ApiException은
+//            영문 기술 텍스트가 그대로 노출된다. App Store 심사(9/19 로그인,
+//            9/20 나만의 코스 만들기)에서 두 번 다 "탭했더니 오류가 떴다"로
+//            지적받아 한곳에 모았다 — 화면마다 authErrorMessage류 함수를 또
+//            만들지 않도록 ApiException 바로 옆에 둔다.
+// 구현일: 2026-09-21 | 작성: Claude
 // ============================================================
 import 'dart:convert';
 
+import 'package:flutter/foundation.dart' show debugPrint;
 import 'package:http/http.dart' as http;
 
 import '../config.dart';
@@ -396,6 +406,18 @@ class ApiException implements Exception {
 
   @override
   String toString() => message;
+}
+
+/// 어떤 예외든 화면에 보여줄 안전한 한국어 문구로 바꾼다.
+///
+/// ApiException.message는 서버가 애초에 사용자용으로 보내는 문구라 그대로 쓴다.
+/// 그 외(SocketException·TimeoutException 등 네트워크 예외)는 영문 기술 텍스트를
+/// 그대로 노출하지 않고 로그로만 남긴다 — 여러 화면이 '$e'를 그대로 찍다가
+/// App Store 심사에서 "버그"로 지적받았다(2026-09-19, 2026-09-20 두 차례).
+String apiErrorMessage(Object e) {
+  if (e is ApiException && e.message.isNotEmpty) return e.message;
+  debugPrint('API 오류: $e');
+  return '요청에 실패했습니다. 잠시 후 다시 시도해 주세요.';
 }
 
 /// 사진 판정 결과. verified: true=일치, false=불일치, null=판정 불가(→ 행위 완료 폴백).

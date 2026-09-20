@@ -28,6 +28,7 @@ import 'package:http/http.dart' as http;
 import '../api/api_client.dart';
 import '../game/location_service.dart';
 import '../models/explore_draft.dart';
+import '../models/scenario.dart';
 import '../store.dart';
 import '../theme.dart';
 import 'scenario_preview_screen.dart';
@@ -103,24 +104,23 @@ class _ExploreConfirmScreenState extends State<ExploreConfirmScreen> {
       final loc = await widget.locationService.current();
       final startLat = loc.isOk ? loc.lat! : _fallbackLat;
       final startLng = loc.isOk ? loc.lng! : _fallbackLng;
-      final notice = loc.isOk ? null : '${loc.message} 종로 기준으로 코스를 만들었느니라.';
+      String? notice = loc.isOk ? null : '${loc.message} 종로 기준으로 코스를 만들었느니라.';
 
-      final scn = await _api.generateScenario(
-        startLat: startLat,
-        startLng: startLng,
-        transport: d.transport,
-        wishlist: d.places,
-        budget: d.budget,
-        noMeals: !d.includeMeals,
-        region: d.region,
-        duration: d.durationCode,
-        companion: d.companionCode,
-        difficulty: d.difficultyCode,
-        tags: d.tagList,
-        headcount: d.headcount,
-        radiusM: d.radiusM,
-        wishlistOnly: d.wishlistOnly,
-      );
+      Scenario scn;
+      try {
+        scn = await _requestScenario(d, startLat, startLng);
+      } on ApiException catch (e) {
+        // 실제 위치가 서비스 지역(국내 관광지 데이터) 밖이면 서버가 422 domain_error를
+        // 준다 — 해외 등 지원 밖 위치에서는 매번 실패만 하고 기능을 아예 못 써 본다.
+        // GPS 실패 폴백과 같은 원리로 종로 기준으로 한 번 더 시도해 최소한 결과는 준다.
+        if (e.code == 'domain_error' && loc.isOk) {
+          notice = '현재 위치 근처엔 등록된 장소가 없어 종로 기준으로 코스를 만들었느니라.';
+          scn = await _requestScenario(d, _fallbackLat, _fallbackLng);
+        } else {
+          rethrow;
+        }
+      }
+
       final name = _nameController.text.trim();
       final named = name.isEmpty ? scn : scn.copyWith(title: name);
       ScenarioStore.I.add(named);
@@ -134,11 +134,30 @@ class _ExploreConfirmScreenState extends State<ExploreConfirmScreen> {
         MaterialPageRoute(builder: (_) => ScenarioPreviewScreen(scenario: named, draft: d)),
       );
     } catch (e) {
-      setState(() => _error = '생성 실패 — 서버가 켜져 있나요? ($e)');
+      setState(() => _error = apiErrorMessage(e));
     } finally {
       _progressTimer?.cancel();
       if (mounted) setState(() => _loading = false);
     }
+  }
+
+  Future<Scenario> _requestScenario(ExploreDraft d, double lat, double lng) {
+    return _api.generateScenario(
+      startLat: lat,
+      startLng: lng,
+      transport: d.transport,
+      wishlist: d.places,
+      budget: d.budget,
+      noMeals: !d.includeMeals,
+      region: d.region,
+      duration: d.durationCode,
+      companion: d.companionCode,
+      difficulty: d.difficultyCode,
+      tags: d.tagList,
+      headcount: d.headcount,
+      radiusM: d.radiusM,
+      wishlistOnly: d.wishlistOnly,
+    );
   }
 
   @override
